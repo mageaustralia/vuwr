@@ -9,8 +9,17 @@ use vuwr_core::{Document, FormatHint};
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
-    /// File to open. Omit, or pass `-`, to read from standard input.
-    file: Option<PathBuf>,
+    /// Files to open. Omit, or pass `-`, to read from standard input.
+    /// More than one is only meaningful with --check.
+    files: Vec<PathBuf>,
+    /// Validate and exit: nothing is displayed, and the exit status says
+    /// whether the input parsed. Replaces `jq empty` and
+    /// `xmllint --noout`, and covers CSV too.
+    #[arg(long)]
+    check: bool,
+    /// With --check, print nothing and rely on the exit status alone.
+    #[arg(short, long)]
+    quiet: bool,
     /// Force the terminal UI
     #[arg(long)]
     tui: bool,
@@ -19,16 +28,98 @@ struct Args {
     gui: bool,
 }
 
+/// Format hint from a file extension. Piped input has no name, so it is
+/// always sniffed.
+fn hint_for(path: &std::path::Path) -> FormatHint {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("csv") => FormatHint::Csv,
+        Some("tsv") => FormatHint::Tsv,
+        Some("json") => FormatHint::Json,
+        Some("xml") => FormatHint::Xml,
+        _ => FormatHint::Auto,
+    }
+}
+
+/// `--check`: parse each input and report where it fails.
+///
+/// Exit status is 0 when everything parsed, 1 when something did not, and
+/// 2 when a file could not be read — so a missing file is distinguishable
+/// from an invalid one in a script.
+fn check(args: &Args) -> ExitCode {
+    let mut worst = 0u8;
+
+    let inputs: Vec<PathBuf> = if args.files.is_empty() {
+        vec![PathBuf::from("-")]
+    } else {
+        args.files.clone()
+    };
+
+    for path in inputs {
+        let stdin = path.as_os_str() == "-";
+        let bytes = if stdin {
+            let mut buf = Vec::new();
+            match std::io::stdin().read_to_end(&mut buf) {
+                Ok(_) => buf,
+                Err(e) => {
+                    if !args.quiet {
+                        eprintln!("vuwr: reading standard input: {e}");
+                    }
+                    worst = worst.max(2);
+                    continue;
+                }
+            }
+        } else {
+            match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    if !args.quiet {
+                        eprintln!("vuwr: {}: {e}", path.display());
+                    }
+                    worst = worst.max(2);
+                    continue;
+                }
+            }
+        };
+
+        let hint = if stdin {
+            FormatHint::Auto
+        } else {
+            hint_for(&path)
+        };
+        match Document::parse(&bytes, hint) {
+            Ok(_) => {}
+            Err(e) => {
+                if !args.quiet {
+                    eprintln!("{}:{}", path.display(), e.located(&bytes));
+                }
+                worst = worst.max(1);
+            }
+        }
+    }
+
+    ExitCode::from(worst)
+}
+
 fn main() -> ExitCode {
     let args = Args::parse();
 
+    if args.check {
+        return check(&args);
+    }
+
+    if args.files.len() > 1 {
+        eprintln!("vuwr: only one file can be opened at a time (use --check for many)");
+        return ExitCode::from(2);
+    }
+    let file = args.files.first().cloned();
+
     // `-` and a bare `vuwr` with something piped in both mean stdin.
-    let from_stdin = match &args.file {
+    let from_stdin = match &file {
         Some(p) => p.as_os_str() == "-",
         None => !std::io::stdin().is_terminal(),
     };
 
-    if args.file.is_none() && !from_stdin {
+    if file.is_none() && !from_stdin {
         eprintln!("vuwr: no file given (and nothing piped in)");
         return ExitCode::from(2);
     }
@@ -41,7 +132,7 @@ fn main() -> ExitCode {
         }
         (buf, PathBuf::from("-"))
     } else {
-        let path = args.file.clone().expect("checked above");
+        let path = file.clone().expect("checked above");
         match std::fs::read(&path) {
             Ok(bytes) => (bytes, path),
             Err(e) => {
@@ -57,19 +148,13 @@ fn main() -> ExitCode {
     let hint = if from_stdin {
         FormatHint::Auto
     } else {
-        match label.extension().and_then(|e| e.to_str()) {
-            Some("csv") => FormatHint::Csv,
-            Some("tsv") => FormatHint::Tsv,
-            Some("json") => FormatHint::Json,
-            Some("xml") => FormatHint::Xml,
-            _ => FormatHint::Auto,
-        }
+        hint_for(&label)
     };
 
     let doc = match Document::parse(&bytes, hint) {
         Ok(doc) => doc,
         Err(e) => {
-            eprintln!("vuwr: {}: {e}", label.display());
+            eprintln!("vuwr: {}:{}", label.display(), e.located(&bytes));
             return ExitCode::FAILURE;
         }
     };

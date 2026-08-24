@@ -726,6 +726,12 @@ fn text_view_refuses_an_edit_that_breaks_the_document() {
 
     assert!(!app.dirty, "a rejected edit must not mark the file dirty");
     assert!(app.status.contains("not applied"), "{}", app.status);
+    // The message must say where, not just that something is wrong.
+    assert!(
+        app.status.contains("2:"),
+        "reports the line the edit broke: {}",
+        app.status
+    );
     assert_eq!(
         String::from_utf8(app.doc.serialize()).unwrap(),
         "{\n  \"a\": 1\n}"

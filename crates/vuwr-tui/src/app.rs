@@ -662,7 +662,9 @@ impl App {
                 self.rebuild_text();
                 self.clamp_cursor();
             }
-            Err(e) => self.status = format!("not applied: {e}"),
+            // Locate against the bytes that failed, so the position
+            // refers to what the user just typed.
+            Err(e) => self.status = format!("not applied — {}", e.located(&bytes)),
         }
     }
 

@@ -17,7 +17,7 @@ pub struct XmlDoc {
 impl XmlDoc {
     pub fn parse(bytes: &[u8]) -> Result<XmlDoc, Error> {
         let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
-        let (children, _rest) = parse_children(text.trim_start())?;
+        let (children, _rest) = parse_children(text, text.trim_start())?;
         // `root`/`root_mut` index into this, so an empty document would
         // panic. Reject it here instead.
         if children.is_empty() {
@@ -201,29 +201,35 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>) {
 
 // --- Parser ---
 
-fn parse_children(input: &str) -> Result<(Vec<Node>, &str), Error> {
+/// Absolute byte offset of `rest` within `full`. Sound because every
+/// parser function only ever receives a suffix of `full`.
+fn offset_of(full: &str, rest: &str) -> usize {
+    full.len() - rest.len()
+}
+
+fn parse_children<'a>(full: &str, input: &'a str) -> Result<(Vec<Node>, &'a str), Error> {
     let mut nodes = Vec::new();
     let mut rest = input;
     loop {
         if rest.is_empty() || rest.starts_with("</") {
             break;
         }
-        let (node, r) = parse_node(rest)?;
+        let (node, r) = parse_node(full, rest)?;
         nodes.push(node);
         rest = r;
     }
     Ok((nodes, rest))
 }
 
-fn parse_node(input: &str) -> Result<(Node, &str), Error> {
+fn parse_node<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
     if input.starts_with("<?xml") || input.starts_with("<?XML") {
-        parse_xml_decl(input)
+        parse_xml_decl(full, input)
     } else if input.starts_with("<!--") {
-        parse_comment(input)
+        parse_comment(full, input)
     } else if input.starts_with("<?") {
-        parse_pi(input)
+        parse_pi(full, input)
     } else if input.starts_with('<') {
-        parse_element(input)
+        parse_element(full, input)
     } else {
         let end = input.find('<').unwrap_or(input.len());
         let text = input[..end].to_string();
@@ -231,8 +237,10 @@ fn parse_node(input: &str) -> Result<(Node, &str), Error> {
     }
 }
 
-fn parse_xml_decl(input: &str) -> Result<(Node, &str), Error> {
-    let end = input.find("?>").ok_or(Error::UnclosedQuote { offset: 0 })?;
+fn parse_xml_decl<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    let end = input.find("?>").ok_or(Error::UnexpectedEof {
+        offset: offset_of(full, input),
+    })?;
     let content = &input[5..end];
     let rest = &input[end + 2..];
 
@@ -259,16 +267,18 @@ fn parse_xml_decl(input: &str) -> Result<(Node, &str), Error> {
     ))
 }
 
-fn parse_comment(input: &str) -> Result<(Node, &str), Error> {
-    let end = input
-        .find("-->")
-        .ok_or(Error::UnclosedQuote { offset: 0 })?;
+fn parse_comment<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    let end = input.find("-->").ok_or(Error::UnexpectedEof {
+        offset: offset_of(full, input),
+    })?;
     let text = input[4..end].to_string();
     Ok((Node::Comment(text), &input[end + 3..]))
 }
 
-fn parse_pi(input: &str) -> Result<(Node, &str), Error> {
-    let end = input.find("?>").ok_or(Error::UnclosedQuote { offset: 0 })?;
+fn parse_pi<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    let end = input.find("?>").ok_or(Error::UnexpectedEof {
+        offset: offset_of(full, input),
+    })?;
     let content = &input[2..end];
     let rest = &input[end + 2..];
     let parts: Vec<&str> = content.splitn(2, ' ').collect();
@@ -277,11 +287,13 @@ fn parse_pi(input: &str) -> Result<(Node, &str), Error> {
     Ok((Node::ProcessingInstruction { target, data }, rest))
 }
 
-fn parse_element(input: &str) -> Result<(Node, &str), Error> {
+fn parse_element<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    let base = offset_of(full, input);
     if !input.starts_with('<') {
-        return Err(Error::InvalidUtf8);
+        return Err(Error::UnexpectedToken { offset: base });
     }
-    let gt_offset = find_tag_end(&input[1..])?; // index of > in input[1..]
+    let gt_offset =
+        find_tag_end(&input[1..]).map_err(|_| Error::UnexpectedEof { offset: full.len() })?; // index of > in input[1..]
     let abs_gt = 1 + gt_offset; // index of > in input
     let tag_content = &input[1..abs_gt]; // between < and >
     let rest = &input[abs_gt + 1..]; // after >
@@ -306,30 +318,35 @@ fn parse_element(input: &str) -> Result<(Node, &str), Error> {
             rest,
         ))
     } else {
-        let (children, rest) = parse_children(rest)?;
+        let (children, rest) = parse_children(full, rest)?;
         let rest = rest.trim_start();
-        if rest.starts_with("</") {
-            let close_end = rest.find('>').ok_or(Error::UnclosedQuote { offset: 0 })?;
-            Ok((
-                Node::Element(Element {
-                    tag: tag.clone(),
-                    attributes: attrs,
-                    children,
-                    self_closing: false,
-                }),
-                &rest[close_end + 1..],
-            ))
-        } else {
-            Ok((
-                Node::Element(Element {
-                    tag,
-                    attributes: attrs,
-                    children,
-                    self_closing: true,
-                }),
-                rest,
-            ))
+        // A missing closing tag used to be silently rewritten as a
+        // self-closing element, so `<a>text` round-tripped as `<a/>` and
+        // the content vanished. And any closing tag was accepted, so
+        // `<r><a></r>` parsed happily. Both are errors.
+        if !rest.starts_with("</") {
+            return Err(Error::UnclosedTag { tag, offset: base });
         }
+        let close_end = rest
+            .find('>')
+            .ok_or(Error::UnexpectedEof { offset: full.len() })?;
+        let closing = rest[2..close_end].trim();
+        if closing != tag {
+            return Err(Error::MismatchedTag {
+                opened: tag,
+                closed: closing.to_string(),
+                offset: offset_of(full, rest),
+            });
+        }
+        Ok((
+            Node::Element(Element {
+                tag,
+                attributes: attrs,
+                children,
+                self_closing: false,
+            }),
+            &rest[close_end + 1..],
+        ))
     }
 }
 

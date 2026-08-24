@@ -139,3 +139,58 @@ fn document_element_skips_the_prolog() {
 fn empty_document_is_an_error_not_a_panic() {
     assert!(Document::parse(b"   ", FormatHint::Xml).is_err());
 }
+
+// --- Well-formedness ---
+//
+// The parser used to accept any closing tag, and to silently rewrite an
+// unclosed element as self-closing — which changed the document rather
+// than rejecting it.
+
+#[test]
+fn a_mismatched_closing_tag_is_an_error() {
+    let Err(e) = Document::parse(b"<r><a></r>", FormatHint::Xml) else {
+        panic!("`<r><a></r>` must not parse");
+    };
+    let msg = e.to_string();
+    assert!(msg.contains("<a>") && msg.contains("</r>"), "{msg}");
+}
+
+/// This is the important one: it was not merely accepted, it was silently
+/// turned into `<a/>` and the text content was discarded on save.
+#[test]
+fn an_unclosed_element_is_an_error_not_a_rewrite() {
+    for src in [&b"<r><a>text"[..], &b"<r><a>text</a>"[..], &b"<a>"[..]] {
+        assert!(
+            Document::parse(src, FormatHint::Xml).is_err(),
+            "{:?} must not parse",
+            String::from_utf8_lossy(src)
+        );
+    }
+}
+
+#[test]
+fn well_formed_documents_still_parse() {
+    for src in [
+        &b"<r><a>text</a></r>"[..],
+        &b"<r><a/></r>"[..],
+        &b"<r><a></a></r>"[..],
+        &b"<?xml version=\"1.0\"?><r><!-- c --><a x=\"1\"/></r>"[..],
+        &b"<r>\n  <a>1</a>\n  <a>2</a>\n</r>"[..],
+    ] {
+        Document::parse(src, FormatHint::Xml)
+            .unwrap_or_else(|e| panic!("{:?}: {e}", String::from_utf8_lossy(src)));
+    }
+}
+
+#[test]
+fn errors_carry_a_position() {
+    let src = b"<r>\n  <a>\n</r>";
+    let Err(e) = Document::parse(src, FormatHint::Xml) else {
+        panic!("expected an error");
+    };
+    let located = e.located(src);
+    assert!(
+        located.starts_with("2:") || located.starts_with("3:"),
+        "points into the document: {located}"
+    );
+}

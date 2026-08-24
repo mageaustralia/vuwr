@@ -89,6 +89,17 @@ pub enum Error {
     EditNotSupported {
         format: &'static str,
     },
+    /// An XML element was never closed.
+    UnclosedTag {
+        tag: String,
+        offset: usize,
+    },
+    /// An XML closing tag names a different element than the open one.
+    MismatchedTag {
+        opened: String,
+        closed: String,
+        offset: usize,
+    },
     /// An edit addressed a node that does not exist.
     NoSuchPath,
     /// A search pattern would not compile.
@@ -102,9 +113,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::InvalidUtf8 => write!(f, "input is not valid UTF-8"),
-            Error::UnclosedQuote { offset } => {
-                write!(f, "quoted field starting at byte {offset} is never closed")
-            }
+            Error::UnclosedQuote { .. } => write!(f, "quoted field is never closed"),
             Error::RowOutOfRange { row, len } => {
                 write!(f, "row {row} is out of range ({len} rows)")
             }
@@ -116,23 +125,70 @@ impl fmt::Display for Error {
             }
             Error::RaggedRows => write!(f, "rows have differing widths"),
             Error::EmptyDocument => write!(f, "document has no rows"),
-            Error::UnexpectedToken { offset } => {
-                write!(f, "unexpected token at byte {offset}")
-            }
-            Error::UnexpectedEof { offset } => {
-                write!(f, "unexpected end of input at byte {offset}")
-            }
-            Error::InvalidEscape { offset } => {
-                write!(f, "invalid escape sequence at byte {offset}")
-            }
+            Error::UnexpectedToken { .. } => write!(f, "unexpected token"),
+            Error::UnexpectedEof { .. } => write!(f, "unexpected end of input"),
+            Error::InvalidEscape { .. } => write!(f, "invalid escape sequence"),
             Error::EditNotSupported { format } => {
                 write!(f, "editing {format} documents is not supported yet")
+            }
+            Error::UnclosedTag { tag, .. } => write!(f, "<{tag}> is never closed"),
+            Error::MismatchedTag { opened, closed, .. } => {
+                write!(f, "<{opened}> is closed by </{closed}>")
             }
             Error::NoSuchPath => write!(f, "no such path in the document"),
             Error::InvalidRegex(msg) => write!(f, "bad pattern: {msg}"),
             Error::NotTableShaped => write!(f, "document has no table-shaped view"),
         }
     }
+}
+
+impl Error {
+    /// The byte offset this error points at, if it has one.
+    pub fn offset(&self) -> Option<usize> {
+        match self {
+            Error::UnclosedQuote { offset }
+            | Error::UnexpectedToken { offset }
+            | Error::UnexpectedEof { offset }
+            | Error::InvalidEscape { offset }
+            | Error::UnclosedTag { offset, .. }
+            | Error::MismatchedTag { offset, .. } => Some(*offset),
+            _ => None,
+        }
+    }
+
+    /// This error as `line:column: message`, given the source it came
+    /// from. A byte offset is useless to a person; a line and column can
+    /// be typed into an editor.
+    pub fn located(&self, source: &[u8]) -> String {
+        match self.offset() {
+            Some(offset) => {
+                let (line, column) = line_col(source, offset);
+                format!("{line}:{column}: {self}")
+            }
+            None => self.to_string(),
+        }
+    }
+}
+
+/// The 1-based line and column of a byte offset.
+///
+/// Columns count characters rather than bytes, so a line containing
+/// non-ASCII text reports the column a person would count to.
+pub fn line_col(source: &[u8], offset: usize) -> (usize, usize) {
+    let offset = offset.min(source.len());
+    let mut line = 1usize;
+    let mut line_start = 0usize;
+    for (i, &b) in source[..offset].iter().enumerate() {
+        if b == b'\n' {
+            line += 1;
+            line_start = i + 1;
+        }
+    }
+    let column = String::from_utf8_lossy(&source[line_start..offset])
+        .chars()
+        .count()
+        + 1;
+    (line, column)
 }
 
 impl std::error::Error for Error {}

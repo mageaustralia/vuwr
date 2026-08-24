@@ -112,3 +112,141 @@ fn unparseable_input_reports_the_error() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("unexpected token"), "useful error: {err}");
 }
+
+// --- --check (phase 5) ---
+
+fn write(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+    let p = dir.join(name);
+    std::fs::write(&p, body).unwrap();
+    p
+}
+
+#[test]
+fn check_succeeds_silently_on_valid_input() {
+    let dir = std::env::temp_dir().join("vuwr-check-ok");
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = [
+        write(&dir, "a.json", "{\"a\": [1, 2, 3]}"),
+        write(&dir, "b.xml", "<?xml version=\"1.0\"?><r><a/></r>"),
+        write(&dir, "c.csv", "x,y\n1,2\n"),
+    ];
+    for f in &files {
+        let out = Command::new(env!("CARGO_BIN_EXE_vuwr"))
+            .arg("--check")
+            .arg(f)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            f.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.stdout.is_empty() && out.stderr.is_empty(),
+            "silent on success"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The whole point of --check: a non-zero status and a position you can
+/// jump to, the way `jq empty` and `xmllint --noout` are used in scripts.
+#[test]
+fn check_fails_with_a_line_and_column() {
+    let dir = std::env::temp_dir().join("vuwr-check-bad");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = write(&dir, "bad.json", "{\n  \"a\": 1,\n  \"b\": ,\n}");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_vuwr"))
+        .arg("--check")
+        .arg(&f)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("bad.json:3:"),
+        "names file, line and column: {err}"
+    );
+    assert!(err.contains("unexpected token"), "{err}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A missing file is a different problem from an invalid one, so scripts
+/// can tell them apart.
+#[test]
+fn check_distinguishes_unreadable_from_invalid() {
+    let out = Command::new(env!("CARGO_BIN_EXE_vuwr"))
+        .args(["--check", "/nonexistent-vuwr/x.json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "unreadable is 2, not 1");
+}
+
+#[test]
+fn check_accepts_many_files_and_reports_each() {
+    let dir = std::env::temp_dir().join("vuwr-check-many");
+    std::fs::create_dir_all(&dir).unwrap();
+    let good = write(&dir, "good.json", "{\"a\":1}");
+    let bad1 = write(&dir, "bad1.json", "{\"a\":}");
+    let bad2 = write(&dir, "bad2.json", "[1,2,");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_vuwr"))
+        .arg("--check")
+        .args([&good, &bad1, &bad2])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("bad1.json"), "{err}");
+    assert!(
+        err.contains("bad2.json"),
+        "reports every failure, not just the first: {err}"
+    );
+    assert!(
+        !err.contains("good.json"),
+        "silent about what passed: {err}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn check_reads_stdin_and_can_be_quiet() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vuwr"))
+        .args(["--check", "--quiet"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"{\"a\":,}")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty(), "--quiet says nothing");
+}
+
+/// CSV gets checked too, which neither jq nor xmllint can do.
+#[test]
+fn check_covers_csv() {
+    let dir = std::env::temp_dir().join("vuwr-check-csv");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = write(&dir, "bad.csv", "a,b\n\"unclosed,2\n");
+    let out = Command::new(env!("CARGO_BIN_EXE_vuwr"))
+        .args(["--check"])
+        .arg(&f)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "an unclosed quote is invalid CSV"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("bad.csv:2:"), "with a position: {err}");
+    std::fs::remove_dir_all(&dir).ok();
+}
