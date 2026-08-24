@@ -146,6 +146,103 @@ column, plus a gutter marker and a status-bar message. A headless
 `xmllint --noout` in scripts and CI. CSV validation covers ragged rows, encoding
 problems, and BOM detection.
 
+### The Sheet trait
+
+Every format that can be shown as rows and columns implements one interface
+in core:
+
+```rust
+pub trait Sheet {
+    fn headers(&self) -> Vec<String>;
+    fn dims(&self) -> (usize, usize);
+    fn cell(&self, row: usize, col: usize) -> Option<String>;
+    fn set_cell(&mut self, row: usize, col: usize, value: &str) -> Result<EditOp, Error>;
+    fn header_is_first_row(&self) -> bool;
+}
+```
+
+Frontends never branch per format. This was added after a match-per-format
+design let the TUI accumulate a private, drifted copy of the XML column
+logic, which meant XML table view had never rendered a row.
+
+`Loader` is the matching input side, and the seam extensions hang off:
+
+```rust
+pub trait Loader {
+    fn detect(&self, bytes: &[u8], ext: Option<&str>) -> bool;
+    fn load(&self, bytes: &[u8]) -> Result<Box<dyn Sheet>, Error>;
+}
+```
+
+### Tree editing
+
+`PathSeg`/`NodePath` address a value in a tree the way `(row, column)`
+addresses one in a sheet. `Index` walks *element* children only, so indices
+match displayed rows; `Attr` and `Text` reach XML attributes and element
+content, which `Index` deliberately cannot.
+
+`EditOp::SetNode` is its own inverse — applying it returns the displaced
+value — so undo stays byte-exact for trees as it is for CSV.
+
+**JSON edits preserve the existing type.** `30` edited to `31` stays a
+number, not `"31"`. A value that does not fit the old type becomes a
+string, which is visible in the display, rather than being silently
+coerced or rejected. Deliberate type changes get their own command later.
+This is the tree analogue of the no-type-inference rule for CSV: never
+guess, never silently change meaning.
+
+## Extensibility
+
+Not plugins in the dynamic-loading sense, at least not first. Three tiers,
+all behind the same `Loader`/`Sheet` traits, so the choice stays reversible:
+
+| Tier | Mechanism | Targets | Status |
+|------|-----------|---------|--------|
+| 1 | `rhai` scripts | desktop, wasm, iOS, Android | planned |
+| 2 | native dylibs (`libloading`/`abi_stable`) | desktop, Android | opt-in feature, deferred |
+| 3 | wasm plugins (`wasmtime`/`extism`) | desktop, Android | only if third-party distribution matters |
+
+Tier 1 is `rhai` (MIT OR Apache-2.0): pure Rust, so no unsafe FFI boundary
+and no ABI-skew segfaults; compiles to `wasm32`; and the interpreter ships
+inside the signed binary, so iPadOS stays possible. Its `unchecked` feature
+must never be enabled — that strips the operation and call-depth limits
+that stop a bad script hanging the UI.
+
+Native dylibs are ruled out as the *primary* mechanism, not on taste: they
+cannot work in the browser build, and iOS forbids loading executable code
+that was not in the signed bundle. They remain available on desktop behind
+a feature flag.
+
+`rhai` lives in a separate `vuwr-script` crate so `vuwr-core` stays lean.
+Derived columns evaluate lazily per visible row — a tree-walking
+interpreter is fine for the ~50 rows on screen, not for eagerly computing
+8,000.
+
+## Ideas taken from csvlens
+
+`csvlens` (MIT) solves the same viewing problem well. Adopted as ideas, not
+code, to keep provenance clean:
+
+- **stdin** — `… | vuwr`. The current TTY check tests stdout, so
+  `vuwr f.csv | head` wrongly tries to launch the GUI.
+- **Shell composability** — `m`/`M` to mark rows, `Ctrl-e` to print marked
+  rows and exit, `--echo-column` plus Enter to print a cell and exit,
+  `--prompt` for the status bar. This makes the viewer an interactive
+  picker in pipelines; combined with editing, that is something neither
+  csvlens nor VisiData offers.
+- **Frozen columns** (`f<n>`) — the biggest usability win on wide files.
+- **Regex find and filter** over rows and columns, with `--find`,
+  `--filter`, `--columns` as startup flags.
+- **Natural sort** alongside lexical, as a separate binding. This fits the
+  no-type-inference rule exactly: the user picks the ordering rather than
+  the parser guessing.
+- **`--no-headers`**, `-d auto` delimiter detection.
+- **Packaging breadth** — brew, winget, pacman, BSD ports.
+
+Not adopted: its background-indexing design for large files, which relies
+on threads that the wasm-clean core rules out. Its `Tab` binding also
+conflicts with ours (view cycling); selection mode can take `v`.
+
 ## Portability
 
 ### WebAssembly
