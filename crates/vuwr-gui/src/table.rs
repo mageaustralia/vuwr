@@ -367,14 +367,18 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
             .id_salt("text-gutter")
             .vertical_scroll_offset(session.text_scroll)
             .show_rows(ui, row_height, lines, |ui, range| {
-                ui.set_width(gutter_width);
-                for n in range {
-                    ui.label(
-                        RichText::new(format!("{:>1$}", n + 1, lines.to_string().len().max(2)))
-                            .monospace()
-                            .weak(),
-                    );
-                }
+                // Explicitly vertical: this sits inside a horizontal
+                // layout, and without it every row lands on one line.
+                ui.vertical(|ui| {
+                    ui.set_width(gutter_width);
+                    for n in range {
+                        ui.label(
+                            RichText::new(format!("{:>1$}", n + 1, lines.to_string().len().max(2)))
+                                .monospace()
+                                .weak(),
+                        );
+                    }
+                });
             });
         let _ = gutter;
 
@@ -385,25 +389,30 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
             row_height,
             lines,
             |ui, range| {
-                // Lines extend rather than wrap, so the gutter stays in
-                // step and long lines scroll sideways instead of folding.
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                for n in range {
-                    if editing && n == cursor_row {
-                        ui.label(caret_text(session));
-                        continue;
+                // Explicitly vertical: this sits inside a horizontal
+                // layout, and without it every line lands on one row.
+                ui.vertical(|ui| {
+                    // Lines extend rather than wrap, so the gutter stays
+                    // in step and long lines scroll sideways instead of
+                    // folding.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    for n in range {
+                        if editing && n == cursor_row {
+                            ui.label(caret_text(session));
+                            continue;
+                        }
+                        let line = session.table_cell(n, 0).unwrap_or_default();
+                        let response = ui
+                            .selectable_label(n == cursor_row, coloured_line(&line, grammar, dark));
+                        if response.clicked() {
+                            session.grid.cursor = (n, 0);
+                        }
+                        if response.double_clicked() {
+                            session.grid.cursor = (n, 0);
+                            edit = true;
+                        }
                     }
-                    let line = session.table_cell(n, 0).unwrap_or_default();
-                    let response =
-                        ui.selectable_label(n == cursor_row, coloured_line(&line, grammar, dark));
-                    if response.clicked() {
-                        session.grid.cursor = (n, 0);
-                    }
-                    if response.double_clicked() {
-                        session.grid.cursor = (n, 0);
-                        edit = true;
-                    }
-                }
+                });
             },
         );
         // Feed the content's position back to the gutter. A frame behind,

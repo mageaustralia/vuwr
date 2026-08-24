@@ -129,7 +129,7 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
         }
 
         ui.separator();
-        if button(ui, "write", "Write the file (Ctrl+S)").clicked() {
+        if button(ui, "save", "Save the file (Ctrl+S)").clicked() {
             clicked = Some(Command::Save);
         }
     });

@@ -5,6 +5,7 @@
 //! cannot. No behaviour is decided here — that is why the two frontends
 //! cannot drift apart.
 
+mod files;
 mod fonts;
 mod input;
 mod table;
@@ -66,6 +67,9 @@ pub struct VuwrApp {
     pub(crate) want_paste: bool,
     /// The large-value editor: what is being edited, if anything.
     large_edit: Option<String>,
+    /// A file dialog's answer, when it arrives.
+    pending_open: files::Pending,
+    pending_save: std::sync::Arc<std::sync::Mutex<Option<files::SaveResult>>>,
 }
 
 impl VuwrApp {
@@ -96,6 +100,8 @@ impl VuwrApp {
             diagnostic_index: 0,
             want_paste: false,
             large_edit: None,
+            pending_open: files::pending(),
+            pending_save: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -111,6 +117,8 @@ impl VuwrApp {
             diagnostic_index: 0,
             want_paste: false,
             large_edit: None,
+            pending_open: files::pending(),
+            pending_save: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -160,6 +168,39 @@ impl VuwrApp {
         self.session.is_some()
     }
 
+    /// Take whatever a file dialog has finished with.
+    fn drain_file_dialogs(&mut self, ctx: &egui::Context) {
+        let picked = self.pending_open.lock().ok().and_then(|mut s| s.take());
+        if let Some(files::Picked { path, name, bytes }) = picked {
+            let label = path.clone().unwrap_or_else(|| PathBuf::from(&name));
+            match self.load(Some(label), &bytes) {
+                Ok(()) => {
+                    // A file chosen in the browser has no path to write
+                    // back to; keep the name for the title regardless.
+                    self.path = path.or_else(|| Some(PathBuf::from(&name)));
+                    self.report_status(format!("opened {name}"));
+                }
+                Err(e) => self.report_load_error(format!("{name}: {}", e.located(&bytes))),
+            }
+            ctx.request_repaint();
+        }
+
+        let saved = self.pending_save.lock().ok().and_then(|mut s| s.take());
+        match saved {
+            Some(files::SaveResult::Written { path, name }) => {
+                if path.is_some() {
+                    self.path = path;
+                }
+                if let Some(s) = self.session.as_mut() {
+                    s.mark_saved(&name);
+                }
+                ctx.request_repaint();
+            }
+            Some(files::SaveResult::Failed(e)) => self.report_status(format!("save failed: {e}")),
+            None => {}
+        }
+    }
+
     /// Carry out something the tree asked for.
     fn apply_tree_action(&mut self, action: table::TreeAction, ctx: &egui::Context) {
         use table::{NodeAction, TreeAction};
@@ -202,6 +243,29 @@ impl VuwrApp {
 
     /// Run a command and carry out whatever it asks for.
     pub fn run(&mut self, cmd: Command, ctx: &egui::Context) {
+        match cmd {
+            Command::Open => {
+                files::open(self.pending_open.clone());
+                self.report_status("choose a file…");
+                return;
+            }
+            Command::SaveAs => {
+                let name = self
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "untitled.json".to_string());
+                let bytes = self
+                    .session
+                    .as_ref()
+                    .map(|s| s.doc.serialize())
+                    .unwrap_or_default();
+                files::save_as(&name, bytes, self.pending_save.clone());
+                return;
+            }
+            _ => {}
+        }
         if cmd == Command::EditLarge {
             self.large_edit = self.session.as_ref().and_then(|s| s.large_edit_text());
             if self.large_edit.is_none() {
@@ -350,6 +414,7 @@ impl VuwrApp {
 
 impl eframe::App for VuwrApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.drain_file_dialogs(ctx);
         input::handle(self, ctx);
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu_bar(ui, ctx));
@@ -390,8 +455,17 @@ impl VuwrApp {
     fn menu_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("Write").clicked() {
+                if ui.button("Open…").clicked() {
+                    self.run(Command::Open, ctx);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Save").clicked() {
                     self.run(Command::Save, ctx);
+                    ui.close();
+                }
+                if ui.button("Save As…").clicked() {
+                    self.run(Command::SaveAs, ctx);
                     ui.close();
                 }
                 if ui.button("Copy document").clicked() {
@@ -402,7 +476,7 @@ impl VuwrApp {
                 ui.separator();
                 for cmd in MENU_ONLY {
                     let label = match cmd {
-                        Command::SaveAndQuit => "Write and quit",
+                        Command::SaveAndQuit => "Save and quit",
                         Command::ForceQuit => "Quit without saving",
                         other => other.description(),
                     };

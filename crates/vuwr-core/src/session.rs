@@ -564,6 +564,9 @@ impl Session {
                 };
             }
 
+            // Opening and Save As need a file dialog, which core cannot
+            // reach; the frontend takes them.
+            Command::Open | Command::SaveAs => return Effect::None,
             Command::Save => return Effect::Save,
             Command::Quit => {
                 return if self.dirty {

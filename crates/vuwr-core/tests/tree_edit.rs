@@ -272,3 +272,21 @@ fn pasting_nothing_does_nothing() {
     s.paste("");
     assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
 }
+
+/// The GUI says Save; a terminal still answers to `:w`. Both must reach
+/// the same command, or the two frontends have diverged in vocabulary.
+#[test]
+fn save_answers_to_both_vocabularies() {
+    for name in ["save", "w", "write", "w!"] {
+        assert_eq!(Command::from_name(name), Some(Command::Save), ":{name}");
+    }
+    for name in ["save-quit", "wq", "x"] {
+        assert_eq!(
+            Command::from_name(name),
+            Some(Command::SaveAndQuit),
+            ":{name}"
+        );
+    }
+    assert_eq!(Command::from_name("save-as"), Some(Command::SaveAs));
+    assert_eq!(Command::from_name("open"), Some(Command::Open));
+}

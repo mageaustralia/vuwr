@@ -22,6 +22,8 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
     // Platform shortcuts first: Cmd on macOS, Ctrl elsewhere.
     if mods.command {
         return match key {
+            Key::O => Some(Command::Open),
+            Key::S if mods.shift => Some(Command::SaveAs),
             Key::S => Some(Command::Save),
             Key::C => Some(Command::Copy),
             Key::V => Some(Command::Paste),
@@ -147,7 +149,9 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::ClearMarks => "M",
         Command::PrintMarks => "Ctrl-E",
         Command::FreezeColumns => "f",
+        Command::Open => "Ctrl-O",
         Command::Save => "Ctrl-S",
+        Command::SaveAs => "Ctrl-Shift-S",
         Command::Quit => "Ctrl-Q",
         Command::ForceQuit => "menu",
         Command::SaveAndQuit => "menu",

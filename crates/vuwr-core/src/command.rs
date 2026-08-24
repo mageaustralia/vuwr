@@ -67,7 +67,9 @@ pub enum Command {
     Redo,
 
     // --- File ---
+    Open,
     Save,
+    SaveAs,
     Quit,
     ForceQuit,
     SaveAndQuit,
@@ -126,7 +128,9 @@ impl Command {
         Command::Paste,
         Command::Undo,
         Command::Redo,
+        Command::Open,
         Command::Save,
+        Command::SaveAs,
         Command::Quit,
         Command::ForceQuit,
         Command::SaveAndQuit,
@@ -182,10 +186,12 @@ impl Command {
             Command::Paste => "paste",
             Command::Undo => "undo",
             Command::Redo => "redo",
-            Command::Save => "write",
+            Command::Open => "open",
+            Command::Save => "save",
+            Command::SaveAs => "save-as",
             Command::Quit => "quit",
             Command::ForceQuit => "quit!",
-            Command::SaveAndQuit => "write-quit",
+            Command::SaveAndQuit => "save-quit",
             Command::OpenPalette => "palette",
             Command::Help => "help",
             Command::ToggleHints => "toggle-hints",
@@ -239,10 +245,12 @@ impl Command {
             Command::Paste => "paste over the selected value",
             Command::Undo => "undo the last edit",
             Command::Redo => "redo the last undone edit",
-            Command::Save => "write the file",
+            Command::Open => "open a file",
+            Command::Save => "save the file",
+            Command::SaveAs => "save to a new file",
             Command::Quit => "quit, refusing to discard unsaved changes",
             Command::ForceQuit => "quit, discarding unsaved changes",
-            Command::SaveAndQuit => "write the file and quit",
+            Command::SaveAndQuit => "save the file and quit",
             Command::OpenPalette => "open the command line",
             Command::Help => "show this help",
             Command::ToggleHints => "show or hide the hint bar",
@@ -297,10 +305,12 @@ impl Command {
             Command::Paste => "paste",
             Command::Undo => "undo",
             Command::Redo => "redo",
-            Command::Save => "write",
+            Command::Open => "open",
+            Command::Save => "save",
+            Command::SaveAs => "save-as",
             Command::Quit => "quit",
             Command::ForceQuit => "discard",
-            Command::SaveAndQuit => "write+quit",
+            Command::SaveAndQuit => "save+quit",
             Command::OpenPalette => "command",
             Command::Help => "help",
             Command::ToggleHints => "hints",
@@ -312,14 +322,15 @@ impl Command {
     pub fn from_name(input: &str) -> Option<Command> {
         let name = input.trim();
         match name {
-            "w" | "w!" => return Some(Command::Save),
+            "w" | "w!" | "write" => return Some(Command::Save),
+            "write-as" => return Some(Command::SaveAs),
             "q" => return Some(Command::Quit),
             "q!" => return Some(Command::ForceQuit),
             // `!` is accepted because it is muscle memory, but it does not
             // mean "quit even if the write failed" -- that would discard
             // the very edits the command was asked to save. A failed write
             // keeps you in the editor, as vim does.
-            "wq" | "wq!" | "x" | "x!" => return Some(Command::SaveAndQuit),
+            "wq" | "wq!" | "x" | "x!" | "write-quit" => return Some(Command::SaveAndQuit),
             "h" | "?" => return Some(Command::Help),
             _ => {}
         }
@@ -355,12 +366,12 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 51, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 53, "update ALL when adding a command");
     }
 
     #[test]
     fn vi_aliases_resolve() {
-        for alias in ["wq", "wq!", "x", "x!"] {
+        for alias in ["wq", "wq!", "x", "x!", "write-quit"] {
             assert_eq!(
                 Command::from_name(alias),
                 Some(Command::SaveAndQuit),
@@ -368,6 +379,11 @@ mod tests {
             );
         }
         assert_eq!(Command::from_name("w!"), Some(Command::Save));
+        // The vim spellings stay: `:w` is muscle memory in a terminal,
+        // even though the GUI says Save.
+        assert_eq!(Command::from_name("w"), Some(Command::Save));
+        assert_eq!(Command::from_name("write"), Some(Command::Save));
+        assert_eq!(Command::from_name("save"), Some(Command::Save));
         assert_eq!(Command::from_name("w"), Some(Command::Save));
         assert_eq!(Command::from_name("wq"), Some(Command::SaveAndQuit));
         assert_eq!(Command::from_name(" q! "), Some(Command::ForceQuit));

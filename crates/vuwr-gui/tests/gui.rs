@@ -406,3 +406,22 @@ fn system_fonts_are_adopted_when_present() {
         });
     });
 }
+
+/// Open and Save As go through a file dialog, which core cannot reach, so
+/// they must be reachable and must not fall through to a no-op.
+#[test]
+fn open_and_save_as_are_bound() {
+    use eframe::egui::{Key, Modifiers};
+    assert_eq!(
+        vuwr_gui::command_for(Key::O, Modifiers::COMMAND, false),
+        Some(Command::Open)
+    );
+    assert_eq!(
+        vuwr_gui::command_for(Key::S, Modifiers::COMMAND.plus(Modifiers::SHIFT), false),
+        Some(Command::SaveAs)
+    );
+    assert_eq!(
+        vuwr_gui::command_for(Key::S, Modifiers::COMMAND, false),
+        Some(Command::Save)
+    );
+}

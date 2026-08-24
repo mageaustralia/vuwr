@@ -151,7 +151,10 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::Paste => "p",
         Command::Undo => "u",
         Command::Redo => "Ctrl-R",
+        // A terminal has no file dialog; these are the `:` commands.
+        Command::Open => ":open",
         Command::Save => ":w",
+        Command::SaveAs => ":write-as",
         Command::Quit => "q  :q",
         Command::ForceQuit => ":q!",
         Command::SaveAndQuit => ":wq  :wq!  :x",
