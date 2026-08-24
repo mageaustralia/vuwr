@@ -52,8 +52,12 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         (KeyCode::Char('G'), false) => Command::GoBottom,
         (KeyCode::Char('g'), false) => return Resolved::PendingG,
 
-        // Views
+        // Views. Direct bindings as well as Tab: cycling alone gives no
+        // hint that the other views exist.
         (KeyCode::Tab, false) => Command::CycleView,
+        (KeyCode::Char('1'), false) => Command::ViewTable,
+        (KeyCode::Char('2'), false) => Command::ViewTree,
+        (KeyCode::Char('3'), false) => Command::ViewText,
         (KeyCode::Enter, false) => Command::DrillDown,
         (KeyCode::Esc, false) => Command::DrillUp,
 
@@ -91,6 +95,9 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::GoRowStart => "Home",
         Command::GoRowEnd => "End",
         Command::CycleView => "Tab",
+        Command::ViewTable => "1",
+        Command::ViewTree => "2",
+        Command::ViewText => "3",
         Command::DrillDown => "Enter",
         Command::DrillUp => "Esc",
         Command::EditCell => "i  Enter",

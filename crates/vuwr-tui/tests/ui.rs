@@ -459,3 +459,85 @@ fn help_overlay_toggles_and_lists_every_command() {
     app.handle_key(key(KeyCode::Char('?')));
     assert!(!app.show_help);
 }
+
+// --- View discoverability ---
+
+/// Cycling with Tab alone gave no clue the other views existed. The status
+/// bar now lists every view this document supports.
+#[test]
+fn status_bar_lists_available_views() {
+    let mut app = app("a,b\n1,2\n");
+    let out = render(&mut app, 60, 6);
+    assert!(
+        out.contains("[table] text"),
+        "CSV has table and text:\n{out}"
+    );
+
+    let doc = Document::parse(br#"[{"a":1}]"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    let out = render(&mut app, 60, 6);
+    assert!(
+        out.contains("[tree] table text"),
+        "table-shaped JSON offers all three:\n{out}"
+    );
+
+    let doc = Document::parse(br#"{"a":{"b":1}}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    let out = render(&mut app, 60, 6);
+    assert!(
+        out.contains("[tree] text") && !out.contains("table"),
+        "nested JSON offers no table view:\n{out}"
+    );
+}
+
+/// Number keys jump straight to a view, so reaching text does not require
+/// knowing how many times to press Tab.
+#[test]
+fn number_keys_select_views_directly() {
+    let doc = Document::parse(br#"[{"a":1}]"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+
+    app.handle_key(key(KeyCode::Char('3')));
+    assert_eq!(app.view_mode(), ViewMode::Text);
+    app.handle_key(key(KeyCode::Char('1')));
+    assert_eq!(app.view_mode(), ViewMode::Table);
+    app.handle_key(key(KeyCode::Char('2')));
+    assert_eq!(app.view_mode(), ViewMode::Tree);
+}
+
+#[test]
+fn unavailable_views_report_instead_of_switching() {
+    let mut app = app("a\n1\n");
+    app.handle_key(key(KeyCode::Char('2'))); // no tree for CSV
+    assert_eq!(app.view_mode(), ViewMode::Table);
+    assert!(app.status.contains("no tree view"), "{}", app.status);
+
+    let doc = Document::parse(br#"{"a":{"b":1}}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.handle_key(key(KeyCode::Char('1'))); // not row-shaped
+    assert_eq!(app.view_mode(), ViewMode::Tree);
+    assert!(app.status.contains("not row-shaped"), "{}", app.status);
+}
+
+/// Text view must be reachable for every format — it is the one view that
+/// always applies, since it is just the source.
+#[test]
+fn text_view_is_available_for_every_format() {
+    let cases: [(&str, &[u8]); 4] = [
+        ("csv", b"a,b\n1,2\n"),
+        ("json array", br#"[{"a":1}]"#),
+        ("json nested", br#"{"a":{"b":1}}"#),
+        (
+            "xml",
+            b"<?xml version=\"1.0\"?><items><item name=\"a\"/></items>",
+        ),
+    ];
+    for (label, src) in cases {
+        let doc = Document::parse(src, FormatHint::Auto).unwrap();
+        let mut app = App::new(PathBuf::from("t"), doc);
+        app.handle_key(key(KeyCode::Char('3')));
+        assert_eq!(app.view_mode(), ViewMode::Text, "{label}");
+        let (_, lines, _) = app.table_dims();
+        assert!(lines > 0, "{label}: text view has no lines");
+    }
+}

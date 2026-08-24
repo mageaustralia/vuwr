@@ -29,6 +29,9 @@ pub enum Command {
 
     // --- Views ---
     CycleView,
+    ViewTable,
+    ViewTree,
+    ViewText,
     DrillDown,
     DrillUp,
 
@@ -65,6 +68,9 @@ impl Command {
         Command::GoRowStart,
         Command::GoRowEnd,
         Command::CycleView,
+        Command::ViewTable,
+        Command::ViewTree,
+        Command::ViewText,
         Command::DrillDown,
         Command::DrillUp,
         Command::EditCell,
@@ -95,6 +101,9 @@ impl Command {
             Command::GoRowStart => "go-row-start",
             Command::GoRowEnd => "go-row-end",
             Command::CycleView => "cycle-view",
+            Command::ViewTable => "view-table",
+            Command::ViewTree => "view-tree",
+            Command::ViewText => "view-text",
             Command::DrillDown => "drill-down",
             Command::DrillUp => "drill-up",
             Command::EditCell => "edit-cell",
@@ -126,6 +135,9 @@ impl Command {
             Command::GoRowStart => "jump to the first column",
             Command::GoRowEnd => "jump to the last column",
             Command::CycleView => "cycle table / tree / text",
+            Command::ViewTable => "switch to table view",
+            Command::ViewTree => "switch to tree view",
+            Command::ViewText => "switch to text view (pager)",
             Command::DrillDown => "descend into the selected value",
             Command::DrillUp => "return to the parent",
             Command::EditCell => "edit the selected cell",
@@ -185,7 +197,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 25, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 28, "update ALL when adding a command");
     }
 
     #[test]

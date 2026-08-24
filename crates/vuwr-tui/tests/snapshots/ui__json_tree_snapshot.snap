@@ -1,6 +1,5 @@
 ---
 source: crates/vuwr-tui/tests/ui.rs
-assertion_line: 212
 expression: "render(&mut a, 40, 8)"
 ---
 "name                 "Alice"            "
@@ -10,4 +9,4 @@ expression: "render(&mut a, 40, 8)"
 "                                        "
 "                                        "
 "                                        "
-" test.json [tree]  1/3                  "
+" test.json  [tree] text  1/3            "

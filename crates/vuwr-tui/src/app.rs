@@ -130,6 +130,23 @@ impl App {
             .unwrap_or(false)
     }
 
+    /// The views this document supports, in cycle order. Drives the
+    /// indicator in the status bar so the other views are discoverable
+    /// rather than something you have to know to press Tab for.
+    pub fn available_views(&self) -> Vec<ViewMode> {
+        let mut views = Vec::new();
+        if self.doc.is_csv() {
+            views.push(ViewMode::Table);
+        } else {
+            views.push(ViewMode::Tree);
+            if self.table_eligible() {
+                views.push(ViewMode::Table);
+            }
+        }
+        views.push(ViewMode::Text);
+        views
+    }
+
     pub fn view_mode(&self) -> ViewMode {
         self.view
     }
@@ -196,6 +213,21 @@ impl App {
                 .move_to(self.grid.cursor.0, usize::MAX, rows, cols),
 
             Command::CycleView => self.cycle_view(),
+            Command::ViewTable => {
+                if self.table_eligible() {
+                    self.set_view(ViewMode::Table);
+                } else {
+                    self.status = "no table view: this document is not row-shaped".into();
+                }
+            }
+            Command::ViewTree => {
+                if self.doc.is_csv() {
+                    self.status = "no tree view for CSV".into();
+                } else {
+                    self.set_view(ViewMode::Tree);
+                }
+            }
+            Command::ViewText => self.set_view(ViewMode::Text),
             Command::DrillDown => match self.view {
                 ViewMode::Tree => self.tree_drill(),
                 // Enter doubles as "edit" in a table, where there is

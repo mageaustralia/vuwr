@@ -160,6 +160,29 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(table, area);
 }
 
+/// The view indicator: every view this document supports, with the current
+/// one in brackets — `tree [table] text`. Cycling with Tab alone gave no
+/// clue that the other views existed.
+fn view_indicator(app: &App) -> String {
+    let current = app.view_mode();
+    app.available_views()
+        .iter()
+        .map(|v| {
+            let name = match v {
+                ViewMode::Table => "table",
+                ViewMode::Tree => "tree",
+                ViewMode::Text => "text",
+            };
+            if *v == current {
+                format!("[{name}]")
+            } else {
+                name.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Text view: the raw source, paged like `less`, with a line-number
 /// gutter and the cursor line highlighted.
 fn render_text(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -203,7 +226,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 String::new()
             };
-            let view_str = format!("{:?}", app.view_mode()).to_lowercase();
+            let view_str = view_indicator(app);
             match app.view_mode() {
                 ViewMode::Text => {
                     let (_, lines, _) = app.table_dims();
@@ -211,9 +234,10 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
                         .checked_div(lines)
                         .unwrap_or(100);
                     format!(
-                        " {}{} [text]  line {}/{}  {}%  {}",
+                        " {}{}  {}  line {}/{}  {}%  {}",
                         app.path().display(),
                         dirty,
+                        view_str,
                         app.grid.cursor.0 + 1,
                         lines,
                         pct,
@@ -224,7 +248,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
                     let (r, c) = app.grid.cursor;
                     let (_, row_count, col_count) = app.table_dims();
                     format!(
-                        " {}{} [{}]  row {}/{} col {}/{}  {}",
+                        " {}{}  {}  row {}/{} col {}/{}  {}",
                         app.path().display(),
                         dirty,
                         view_str,
@@ -238,7 +262,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
                 ViewMode::Tree => {
                     let (r, _) = app.grid.cursor;
                     format!(
-                        " {}{} [{}{}]  {}/{}  {}",
+                        " {}{}  {}{}  {}/{}  {}",
                         app.path().display(),
                         dirty,
                         view_str,
