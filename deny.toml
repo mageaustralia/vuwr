@@ -2,6 +2,11 @@
 # copyleft (GPL/AGPL/…) fails CI the day it is added. See the Licensing
 # section of docs/superpowers/specs/2026-08-24-vuwr-design.md.
 
+# Note: r-efi is reachable through getrandom and is offered as
+# "MIT OR Apache-2.0 OR LGPL-2.1-or-later". We take it under MIT; the LGPL
+# option is never exercised, and it is a UEFI target crate that our builds
+# do not link in any case.
+
 [licenses]
 allow = [
     "MIT",
@@ -14,6 +19,21 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "Unicode-DFS-2016",
+
+    # Added with the egui frontend in phase 6, each reviewed rather than
+    # waved through:
+    #
+    # BSL-1.0 (clipboard-win, error-code, ryu) — the Boost licence:
+    # permissive, and it does not even require attribution.
+    "BSL-1.0",
+    # OFL-1.1 and Ubuntu-font-1.0 (epaint_default_fonts) — the fonts egui
+    # bundles. Both permit embedding in software, including software that
+    # is sold. OFL forbids selling the fonts *on their own* and reserves
+    # their names against modified copies; neither constrains us. Both
+    # require their notices to be distributed, so keep them in the
+    # Acknowledgements screen the spec already calls for.
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
 ]
 confidence-threshold = 0.8
 
