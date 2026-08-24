@@ -1007,3 +1007,68 @@ fn frozen_columns_stay_visible_when_scrolled() {
         "and so is the far-right column:\n{out}"
     );
 }
+
+/// Every command must be reachable somehow, and help must describe the way
+/// it actually is: a key that resolves, or a `:` name the palette accepts.
+/// The GUI shipped with five commands whose advertised bindings did not
+/// exist; this is the TUI's guard against the same thing.
+#[test]
+fn every_command_is_reachable_by_the_route_help_advertises() {
+    use vuwr_core::Command;
+    use vuwr_tui::keymap::{Resolved, keys_for, resolve};
+
+    let mut codes: Vec<KeyCode> = ('a'..='z')
+        .chain('A'..='Z')
+        .chain('0'..='9')
+        .chain("/&:?".chars())
+        .map(KeyCode::Char)
+        .collect();
+    codes.extend([
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Enter,
+        KeyCode::Esc,
+        KeyCode::Tab,
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+    ]);
+    let mods = [
+        KeyModifiers::NONE,
+        KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL,
+    ];
+
+    let mut by_key = std::collections::HashSet::new();
+    for code in &codes {
+        for m in mods {
+            for pending in [false, true] {
+                if let Resolved::Run(c) = resolve(KeyEvent::new(*code, m), pending) {
+                    by_key.insert(c);
+                }
+            }
+        }
+    }
+
+    for cmd in Command::ALL {
+        if by_key.contains(cmd) {
+            continue;
+        }
+        // Not on a key, so help must point at a `:` command that resolves.
+        let advertised = keys_for(*cmd);
+        let name = advertised
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_start_matches(':');
+        assert_eq!(
+            Command::from_name(name),
+            Some(*cmd),
+            "{} is not on a key, and help's {advertised:?} does not resolve to it",
+            cmd.name()
+        );
+    }
+}

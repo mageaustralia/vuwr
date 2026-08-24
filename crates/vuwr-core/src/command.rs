@@ -11,7 +11,7 @@
 //! future config file will bind keys to them.
 
 /// A user action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Command {
     // --- Navigation ---
     MoveLeft,

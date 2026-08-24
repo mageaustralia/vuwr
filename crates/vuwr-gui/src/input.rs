@@ -39,6 +39,9 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
     }
 
     Some(match key {
+        // Shift-guarded arms come first: a plain `Key::H` arm would match
+        // Shift+H too and swallow it.
+        Key::H if mods.shift => Command::ToggleHints,
         Key::ArrowLeft | Key::H => Command::MoveLeft,
         Key::ArrowRight | Key::L => Command::MoveRight,
         Key::ArrowUp | Key::K => Command::MoveUp,
@@ -59,6 +62,7 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
         Key::C => Command::ReplaceCell,
         Key::U => Command::Undo,
         Key::Slash => Command::Find,
+        Key::Colon => Command::OpenPalette,
         Key::N if mods.shift => Command::FindPrev,
         Key::N => Command::FindNext,
         Key::R => Command::ClearFilter,
@@ -69,6 +73,18 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
         Key::Questionmark => Command::Help,
         _ => return None,
     })
+}
+
+/// The command a typed character means.
+///
+/// Punctuation that egui has no `Key` variant for arrives only as text.
+/// Only characters with no key binding belong here: a character that is
+/// both would fire its command twice, which silently cancels a toggle.
+pub fn command_for_char(c: char) -> Option<Command> {
+    match c {
+        '&' => Some(Command::Filter),
+        _ => None,
+    }
 }
 
 /// The keys shown in the help window. Native shortcuts where they exist,
@@ -196,6 +212,15 @@ pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
     let mut pending_g = app.take_pending_g();
     let events = ctx.input(|i| i.events.clone());
     for event in events {
+        // Punctuation egui has no Key variant for arrives as text.
+        if let egui::Event::Text(text) = &event {
+            for c in text.chars() {
+                if let Some(cmd) = command_for_char(c) {
+                    app.run(cmd, ctx);
+                }
+            }
+            continue;
+        }
         let egui::Event::Key {
             key,
             pressed: true,

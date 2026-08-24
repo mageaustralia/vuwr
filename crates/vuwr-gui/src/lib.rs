@@ -13,7 +13,12 @@ use std::path::PathBuf;
 use eframe::egui;
 use vuwr_core::{Command, Document, Effect, Session, ViewMode};
 
-pub use input::command_for;
+pub use input::{command_for, command_for_char};
+
+/// Commands the GUI offers only through the menu bar. Help says "menu" for
+/// these, and the File menu builds from the same list, so the two cannot
+/// disagree.
+pub const MENU_ONLY: &[Command] = &[Command::SaveAndQuit, Command::ForceQuit];
 
 /// The keys help shows for a command. Exposed for tests, which assert the
 /// window can never render a blank row.
@@ -239,7 +244,10 @@ impl eframe::App for VuwrApp {
         input::handle(self, ctx);
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu_bar(ui, ctx));
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| self.status_bar(ui));
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            self.status_bar(ui);
+            self.hint_bar(ui);
+        });
         egui::CentralPanel::default().show(ctx, |ui| match self.session.as_mut() {
             Some(session) => render_view(session, ui),
             None => drop_zone(ui, self.load_error.as_deref()),
@@ -265,6 +273,17 @@ impl VuwrApp {
                     ui.close();
                 }
                 ui.separator();
+                for cmd in MENU_ONLY {
+                    let label = match cmd {
+                        Command::SaveAndQuit => "Write and quit",
+                        Command::ForceQuit => "Quit without saving",
+                        other => other.description(),
+                    };
+                    if ui.button(label).clicked() {
+                        self.run(*cmd, ctx);
+                        ui.close();
+                    }
+                }
                 if ui.button("Quit").clicked() {
                     self.run(Command::Quit, ctx);
                     ui.close();
@@ -332,6 +351,34 @@ impl VuwrApp {
             if !session.status.is_empty() {
                 ui.separator();
                 ui.label(&session.status);
+            }
+        });
+    }
+
+    /// The same hint bar the TUI carries, for the same reason: the
+    /// bindings are not guessable. Built from the session's context-aware
+    /// hint list and the GUI's own keymap, so it cannot advertise a
+    /// binding this frontend does not have.
+    fn hint_bar(&mut self, ui: &mut egui::Ui) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if !session.show_hints {
+            return;
+        }
+        let hints = session.hints();
+        if hints.is_empty() {
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            for cmd in hints {
+                ui.label(
+                    egui::RichText::new(input::keys_for(cmd))
+                        .monospace()
+                        .strong(),
+                );
+                ui.label(egui::RichText::new(cmd.short_label()).weak());
+                ui.add_space(10.0);
             }
         });
     }

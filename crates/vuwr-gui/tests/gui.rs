@@ -219,3 +219,117 @@ fn help_lists_a_key_for_every_command() {
         );
     }
 }
+
+/// The help window must not claim a binding this frontend does not have.
+///
+/// The GUI advertised `&` for filter and `:` for the palette while binding
+/// neither, and said "menu" for two commands the File menu did not offer.
+/// This is the GUI's version of the TUI's test, and it is what caught it.
+#[test]
+fn help_never_claims_a_binding_the_gui_does_not_have() {
+    use eframe::egui::{Key, Modifiers};
+
+    const KEYS: &[Key] = &[
+        Key::A,
+        Key::B,
+        Key::C,
+        Key::D,
+        Key::E,
+        Key::F,
+        Key::G,
+        Key::H,
+        Key::I,
+        Key::J,
+        Key::K,
+        Key::L,
+        Key::M,
+        Key::N,
+        Key::O,
+        Key::P,
+        Key::Q,
+        Key::R,
+        Key::S,
+        Key::T,
+        Key::U,
+        Key::V,
+        Key::W,
+        Key::X,
+        Key::Y,
+        Key::Z,
+        Key::Num1,
+        Key::Num2,
+        Key::Num3,
+        Key::ArrowUp,
+        Key::ArrowDown,
+        Key::ArrowLeft,
+        Key::ArrowRight,
+        Key::Enter,
+        Key::Escape,
+        Key::Tab,
+        Key::Space,
+        Key::Home,
+        Key::End,
+        Key::PageUp,
+        Key::PageDown,
+        Key::Slash,
+        Key::Colon,
+        Key::Questionmark,
+    ];
+    let mods = [
+        Modifiers::NONE,
+        Modifiers::SHIFT,
+        Modifiers::COMMAND,
+        Modifiers::COMMAND.plus(Modifiers::SHIFT),
+    ];
+
+    let mut reachable = std::collections::HashSet::new();
+    for k in KEYS {
+        for m in mods {
+            for pending in [false, true] {
+                if let Some(c) = vuwr_gui::command_for(*k, m, pending) {
+                    reachable.insert(c);
+                }
+            }
+        }
+    }
+    // Punctuation with no Key variant arrives as text.
+    for c in ['&', '/', ':', '?'] {
+        if let Some(cmd) = vuwr_gui::command_for_char(c) {
+            reachable.insert(cmd);
+        }
+    }
+
+    let unreachable: Vec<&str> = Command::ALL
+        .iter()
+        .filter(|c| !reachable.contains(c) && !vuwr_gui::MENU_ONLY.contains(c))
+        .map(|c| c.name())
+        .collect();
+    assert!(
+        unreachable.is_empty(),
+        "help lists these but no key runs them: {unreachable:?}"
+    );
+}
+
+/// Commands help calls menu-only must actually be in the menu — the menu
+/// is built from this same list, so this asserts they are labelled.
+#[test]
+fn menu_only_commands_are_labelled_as_such() {
+    for cmd in vuwr_gui::MENU_ONLY {
+        assert_eq!(
+            vuwr_gui::keys_for_test(*cmd),
+            "menu",
+            "{} is menu-only, so help should say so",
+            cmd.name()
+        );
+    }
+}
+
+#[test]
+fn the_hint_bar_draws() {
+    let ctx = ctx();
+    let mut app = VuwrApp::new(None, doc(SAMPLE));
+    app.run(Command::ToggleHints, &ctx);
+    assert!(!app.session().show_hints, "H toggles the bar off");
+    app.run(Command::ToggleHints, &ctx);
+    assert!(app.session().show_hints);
+}
