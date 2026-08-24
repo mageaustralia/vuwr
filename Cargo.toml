@@ -5,6 +5,7 @@ members = [
     "crates/vuwr-tui",
     "crates/vuwr-gui",
     "crates/vuwr-cli",
+    "crates/vuwr-web",
 ]
 
 [workspace.package]

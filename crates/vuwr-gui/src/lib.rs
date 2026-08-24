@@ -23,7 +23,9 @@ pub fn keys_for_test(cmd: Command) -> &'static str {
 
 /// The GUI application.
 pub struct VuwrApp {
-    session: Session,
+    /// `None` before anything is loaded. The browser starts here, with
+    /// nothing to show until a file is dropped in.
+    session: Option<Session>,
     /// Where the document came from. `None` when it was piped in or
     /// dropped into the browser, where there is nowhere to write back to.
     path: Option<PathBuf>,
@@ -32,21 +34,79 @@ pub struct VuwrApp {
     last_output: Option<String>,
     /// True when a bare `g` is waiting for a second one.
     pending_g: bool,
+    /// Why the last load failed, shown in the drop zone.
+    load_error: Option<String>,
 }
 
 impl VuwrApp {
     pub fn new(path: Option<PathBuf>, doc: Document) -> VuwrApp {
         VuwrApp {
-            session: Session::new(doc),
+            session: Some(Session::new(doc)),
             path,
             last_output: None,
             pending_g: false,
+            load_error: None,
         }
+    }
+
+    /// An app with nothing loaded yet, waiting for a file.
+    pub fn empty() -> VuwrApp {
+        VuwrApp {
+            session: None,
+            path: None,
+            last_output: None,
+            pending_g: false,
+            load_error: None,
+        }
+    }
+
+    /// Load bytes as a document, replacing whatever is open.
+    ///
+    /// Returns the parse error rather than showing it, so the caller can
+    /// decide: the browser reports it in the drop zone, a file dialog in
+    /// the status bar.
+    pub fn load(&mut self, name: Option<PathBuf>, bytes: &[u8]) -> Result<(), vuwr_core::Error> {
+        let hint = name
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .map(|ext| match ext {
+                "csv" => vuwr_core::FormatHint::Csv,
+                "tsv" => vuwr_core::FormatHint::Tsv,
+                "json" => vuwr_core::FormatHint::Json,
+                "xml" => vuwr_core::FormatHint::Xml,
+                _ => vuwr_core::FormatHint::Auto,
+            })
+            .unwrap_or(vuwr_core::FormatHint::Auto);
+        let doc = Document::parse(bytes, hint)?;
+        self.session = Some(Session::new(doc));
+        self.path = name;
+        self.load_error = None;
+        Ok(())
+    }
+
+    /// Show why a file could not be loaded. Kept separate from the
+    /// session's status line because it must be visible with nothing
+    /// loaded, which is exactly when there is no status line.
+    pub fn report_load_error(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        match self.session.as_mut() {
+            Some(s) => s.report(message),
+            None => self.load_error = Some(message),
+        }
+    }
+
+    /// True when a document is open.
+    pub fn has_document(&self) -> bool {
+        self.session.is_some()
     }
 
     /// Run a command and carry out whatever it asks for.
     pub fn run(&mut self, cmd: Command, ctx: &egui::Context) {
-        let effect = self.session.execute(cmd);
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let effect = session.execute(cmd);
         self.apply(effect, ctx);
     }
 
@@ -85,59 +145,80 @@ impl VuwrApp {
                 // context: hand them to whatever comes next.
                 ctx.copy_text(text.clone());
                 self.last_output = Some(text);
-                self.session.report("marked rows copied to the clipboard");
+                self.report_status("marked rows copied to the clipboard");
             }
         }
     }
 
     /// Returns true if the document was written.
+    fn report_status(&mut self, message: impl Into<String>) {
+        if let Some(s) = self.session.as_mut() {
+            s.report(message);
+        }
+    }
+
     fn save(&mut self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(path) = &self.path {
-            return match std::fs::write(path, self.session.doc.serialize()) {
+            return match std::fs::write(path, self.session().doc.serialize()) {
                 Ok(()) => {
                     let what = path.display().to_string();
-                    self.session.mark_saved(&what);
+                    self.session_mut().mark_saved(&what);
                     true
                 }
                 Err(e) => {
-                    self.session.report(format!("save failed: {e}"));
+                    self.report_status(format!("save failed: {e}"));
                     false
                 }
             };
         }
         // In the browser, and for piped input, there is no path to write
         // back to. Offer the document rather than failing silently.
-        self.session
-            .report("no file to write to — use Copy to take the document");
+        self.report_status("no file to write to — use Copy to take the document");
         false
     }
 
     /// The document as text, for the copy-out path where saving cannot
     /// work.
     pub fn document_text(&self) -> String {
-        String::from_utf8_lossy(&self.session.doc.serialize()).into_owned()
+        match &self.session {
+            Some(s) => String::from_utf8_lossy(&s.doc.serialize()).into_owned(),
+            None => String::new(),
+        }
     }
 
+    /// The open session. Panics if nothing is loaded — callers that can
+    /// be in the empty state use [`VuwrApp::try_session`].
     pub fn session(&self) -> &Session {
-        &self.session
+        self.session.as_ref().expect("no document loaded")
     }
 
     pub fn session_mut(&mut self) -> &mut Session {
-        &mut self.session
+        self.session.as_mut().expect("no document loaded")
+    }
+
+    pub fn try_session(&self) -> Option<&Session> {
+        self.session.as_ref()
+    }
+
+    pub fn try_session_mut(&mut self) -> Option<&mut Session> {
+        self.session.as_mut()
     }
 
     /// The file's name, not its path: a long temp path crowded the menu
     /// bar out. The full path is still available as a tooltip.
     fn title(&self) -> String {
-        let name = match &self.path {
-            Some(p) => p
+        let name = match (&self.path, self.session.is_some()) {
+            (Some(p), _) => p
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| p.display().to_string()),
-            None => "(piped)".to_string(),
+            // Loaded but nameless: piped in, or dropped without a path.
+            (None, true) => "(piped)".to_string(),
+            // Nothing loaded at all, which is where the browser starts.
+            (None, false) => String::new(),
         };
-        if self.session.dirty {
+        if self.session.as_ref().is_some_and(|s| s.dirty) {
             format!("{name} *")
         } else {
             name
@@ -145,9 +226,10 @@ impl VuwrApp {
     }
 
     fn full_path(&self) -> String {
-        match &self.path {
-            Some(p) => p.display().to_string(),
-            None => "read from standard input".to_string(),
+        match (&self.path, self.session.is_some()) {
+            (Some(p), _) => p.display().to_string(),
+            (None, true) => "read from standard input".to_string(),
+            (None, false) => "no document loaded".to_string(),
         }
     }
 }
@@ -158,9 +240,12 @@ impl eframe::App for VuwrApp {
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu_bar(ui, ctx));
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| self.status_bar(ui));
-        egui::CentralPanel::default().show(ctx, |ui| render_view(&mut self.session, ui));
+        egui::CentralPanel::default().show(ctx, |ui| match self.session.as_mut() {
+            Some(session) => render_view(session, ui),
+            None => drop_zone(ui, self.load_error.as_deref()),
+        });
 
-        if self.session.show_help {
+        if self.session.as_ref().is_some_and(|s| s.show_help) {
             self.help_window(ctx);
         }
     }
@@ -176,7 +261,7 @@ impl VuwrApp {
                 }
                 if ui.button("Copy document").clicked() {
                     ctx.copy_text(self.document_text());
-                    self.session.report("document copied to the clipboard");
+                    self.report_status("document copied to the clipboard");
                     ui.close();
                 }
                 ui.separator();
@@ -198,16 +283,18 @@ impl VuwrApp {
             ui.menu_button("View", |ui| {
                 // Only the views this document actually has, exactly as
                 // the TUI's indicator does it.
-                for view in self.session.available_views() {
+                let Some(session) = self.session.as_ref() else {
+                    ui.label("no document");
+                    return;
+                };
+                let current = session.view_mode();
+                for view in session.available_views() {
                     let (label, cmd) = match view {
                         ViewMode::Table => ("Table", Command::ViewTable),
                         ViewMode::Tree => ("Tree", Command::ViewTree),
                         ViewMode::Text => ("Text", Command::ViewText),
                     };
-                    if ui
-                        .selectable_label(self.session.view_mode() == view, label)
-                        .clicked()
-                    {
+                    if ui.selectable_label(current == view, label).clicked() {
                         self.run(cmd, ctx);
                         ui.close();
                     }
@@ -226,21 +313,25 @@ impl VuwrApp {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
+        let Some(session) = self.session.as_ref() else {
+            ui.monospace("no document — drop a CSV, JSON or XML file here");
+            return;
+        };
         ui.horizontal(|ui| {
             // An open prompt takes the status line, as in the TUI.
-            if let Some((sigil, buf)) = self.session.entry() {
+            if let Some((sigil, buf)) = session.entry() {
                 ui.monospace(format!("{sigil}{buf}▏"));
                 return;
             }
-            let (_, rows, cols) = self.session.table_dims();
-            let (r, c) = self.session.grid.cursor;
-            ui.monospace(match self.session.view_mode() {
+            let (_, rows, cols) = session.table_dims();
+            let (r, c) = session.grid.cursor;
+            ui.monospace(match session.view_mode() {
                 ViewMode::Text => format!("line {}/{}", r + 1, rows),
                 _ => format!("row {}/{}  col {}/{}", r + 1, rows, c + 1, cols),
             });
-            if !self.session.status.is_empty() {
+            if !session.status.is_empty() {
                 ui.separator();
-                ui.label(&self.session.status);
+                ui.label(&session.status);
             }
         });
     }
@@ -259,10 +350,26 @@ impl VuwrApp {
                     }
                 });
             });
-        if !open {
-            self.session.show_help = false;
+        if !open && let Some(s) = self.session.as_mut() {
+            s.show_help = false;
         }
     }
+}
+
+/// What the browser shows before a file arrives.
+fn drop_zone(ui: &mut egui::Ui, error: Option<&str>) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(80.0);
+        ui.heading("vuwr");
+        ui.add_space(12.0);
+        ui.label("Drop a CSV, TSV, JSON or XML file here.");
+        ui.add_space(4.0);
+        ui.small("Nothing is uploaded — the file is read in this tab.");
+        if let Some(error) = error {
+            ui.add_space(16.0);
+            ui.colored_label(egui::Color32::from_rgb(240, 120, 120), error);
+        }
+    });
 }
 
 /// Draw whichever view the session is in.

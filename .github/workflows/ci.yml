@@ -45,6 +45,17 @@ jobs:
           targets: wasm32-unknown-unknown
       - run: cargo check -p vuwr-core --target wasm32-unknown-unknown --locked
 
+  # The browser build must keep building. Linux needs the GTK/X11 headers
+  # that eframe's native side links against, even for a wasm-only check.
+  wasm-web:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo build -p vuwr-web --target wasm32-unknown-unknown --locked
+
   # License allowlist (MIT/Apache-2.0/Unlicense/BSD/…): a copyleft dependency
   # fails here rather than surfacing in a legal review years later.
   deny:

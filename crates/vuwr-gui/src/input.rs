@@ -116,8 +116,55 @@ pub fn keys_for(cmd: Command) -> &'static str {
     }
 }
 
+/// Take any file dropped on the window.
+///
+/// On the web the bytes come with the drop event; natively only a path
+/// does, so the two are read differently but land in the same place.
+fn handle_dropped_files(app: &mut VuwrApp, ctx: &egui::Context) {
+    let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+    let Some(file) = dropped.into_iter().next() else {
+        return;
+    };
+
+    let name = file.path.clone().or_else(|| Some(file.name.clone().into()));
+    let bytes: Option<Vec<u8>> = match &file.bytes {
+        Some(bytes) => Some(bytes.to_vec()),
+        None => {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                file.path.as_ref().and_then(|p| std::fs::read(p).ok())
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        }
+    };
+
+    let Some(bytes) = bytes else {
+        app.report_load_error("could not read the dropped file");
+        return;
+    };
+    let label = name
+        .as_ref()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "file".to_string());
+    match app.load(name, &bytes) {
+        Ok(()) => {}
+        // A file that does not parse is reported where it was dropped,
+        // rather than leaving whatever was open looking like the new file.
+        Err(e) => app.report_load_error(format!("{label}: {}", e.located(&bytes))),
+    }
+}
+
 /// Feed this frame's input to the session.
 pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
+    handle_dropped_files(app, ctx);
+
+    if !app.has_document() {
+        return;
+    }
+
     // Text being entered wins: a `q` typed into a search box is a letter,
     // not a quit. The TUI makes the same distinction.
     if app.session().is_entering_text() {
