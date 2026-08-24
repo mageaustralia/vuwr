@@ -12,8 +12,58 @@
 use crate::csv::CsvDoc;
 use crate::node::Node;
 use crate::search::Search;
+use crate::sort::{SortDirection, SortKind, sort_rows};
+use crate::tree::{Expansion, TreeRow, rows as tree_rows_of};
 use crate::view::GridState;
 use crate::{Command, Document};
+
+/// What a fresh node should be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewNode {
+    Value,
+    Object,
+    Array,
+}
+
+impl NewNode {
+    pub fn node(self) -> crate::Node {
+        match self {
+            NewNode::Value => crate::Node::Str(String::new()),
+            NewNode::Object => crate::Node::Map(crate::Map {
+                open: '{',
+                close: '}',
+                entries: Vec::new(),
+                trailing_comma: false,
+                inline: true,
+                spaced: false,
+            }),
+            NewNode::Array => crate::Node::Array(crate::Array {
+                open: '[',
+                close: ']',
+                items: Vec::new(),
+                trailing_comma: false,
+                inline: true,
+                spaced: false,
+            }),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NewNode::Value => "value",
+            NewNode::Object => "object",
+            NewNode::Array => "array",
+        }
+    }
+}
+
+/// An active sort: which column, how to compare, which way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SortSpec {
+    pub column: usize,
+    pub kind: SortKind,
+    pub direction: SortDirection,
+}
 
 /// Something the session cannot do itself, because core does no I/O.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,11 +132,12 @@ pub struct Session {
     pub dirty: bool,
     widths: Vec<usize>,
     viewport_rows: usize,
-    /// For tree view: the keys visible in the current node (or column
-    /// headers for table view).
+    /// For table view: the column headers.
     pub tree_keys: Vec<String>,
-    /// For tree view: summary strings for each visible row.
-    pub tree_summaries: Vec<String>,
+    /// The flattened tree rows currently visible.
+    pub tree_rows: Vec<TreeRow>,
+    /// Which tree nodes are open.
+    pub expansion: Expansion,
     /// Help overlay visibility, toggled by `?`.
     pub show_help: bool,
     /// Hint bar visibility, toggled by `H`. On by default: the bindings
@@ -95,6 +146,10 @@ pub struct Session {
     pub show_hints: bool,
     /// The last search, reused by `n` and `N` and for highlighting.
     pub search: Option<Search>,
+    /// The active row filter, if any.
+    filter: Option<Search>,
+    /// The active sort, if any.
+    sort: Option<SortSpec>,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
     /// The exact bytes those lines came from, and each line's byte span
@@ -106,14 +161,12 @@ pub struct Session {
 
 impl Session {
     pub fn new(doc: Document) -> Session {
-        let (view, widths, tree_keys, tree_summaries) = if doc.is_json() || doc.is_xml() {
-            (ViewMode::Tree, vec![], vec![], vec![])
+        let (view, widths): (ViewMode, Vec<usize>) = if doc.is_json() || doc.is_xml() {
+            (ViewMode::Tree, Vec::new())
         } else {
             (
                 ViewMode::Table,
                 compute_widths(doc.as_csv().expect("CSV only")),
-                vec![],
-                vec![],
             )
         };
         let mut app = Session {
@@ -125,11 +178,14 @@ impl Session {
             dirty: false,
             widths,
             viewport_rows: 10,
-            tree_keys,
-            tree_summaries,
+            tree_keys: Vec::new(),
+            tree_rows: Vec::new(),
+            expansion: Expansion::new(),
             show_help: false,
             show_hints: true,
             search: None,
+            filter: None,
+            sort: None,
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -152,7 +208,11 @@ impl Session {
                 }
                 None => (Vec::new(), 0, 0),
             },
-            ViewMode::Tree => (self.tree_keys.clone(), self.tree_summaries.len(), 1),
+            ViewMode::Tree => (
+                self.tree_rows.iter().map(|r| r.label.clone()).collect(),
+                self.tree_rows.len(),
+                1,
+            ),
             ViewMode::Text => (Vec::new(), self.text_lines.len(), 1),
         }
     }
@@ -166,7 +226,7 @@ impl Session {
                 .sheet()?
                 .cell(self.grid.source_row(row), col)
                 .map(|v| escape(&v)),
-            ViewMode::Tree => self.tree_summaries.get(row).cloned(),
+            ViewMode::Tree => self.tree_rows.get(row).map(|r| r.summary.clone()),
             ViewMode::Text => self.text_lines.get(row).cloned(),
         }
     }
@@ -309,17 +369,45 @@ impl Session {
             }
             Command::ViewText => self.set_view(ViewMode::Text),
             Command::DrillDown => match self.view {
-                ViewMode::Tree => self.tree_drill(),
+                ViewMode::Tree => self.toggle_row(),
                 // Enter doubles as "edit" in a table, where there is
                 // nothing to descend into.
                 ViewMode::Table => return self.execute(Command::EditCell),
                 ViewMode::Text => {}
             },
+            // Esc closes the row under the cursor, or its parent when it
+            // is already closed — the way collapsing works elsewhere.
             Command::DrillUp => {
-                if self.view == ViewMode::Tree {
-                    self.grid.drill_up();
-                    self.rebuild_tree();
+                if self.view == ViewMode::Tree
+                    && let Some(row) = self.tree_rows.get(self.grid.cursor.0).cloned()
+                {
+                    {
+                        if row.is_expanded() {
+                            self.expansion.close(&row.path);
+                        } else if row.path.len() > 1 {
+                            let parent = &row.path[..row.path.len() - 1];
+                            self.expansion.close(parent);
+                            if let Some(i) = self.tree_rows.iter().position(|r| r.path == parent) {
+                                self.grid.cursor.0 = i;
+                            }
+                        }
+                        self.rebuild_tree();
+                        self.clamp_cursor();
+                    }
                 }
+            }
+            Command::ExpandAll => {
+                if let Some(root) = self.tree_root() {
+                    self.expansion.expand_all(&root);
+                    self.rebuild_tree();
+                    self.status = format!("{} rows", self.tree_rows.len());
+                }
+            }
+            Command::CollapseAll => {
+                self.expansion.collapse_all();
+                self.rebuild_tree();
+                self.grid.cursor = (0, 0);
+                self.grid.offset = (0, 0);
             }
 
             Command::EditCell | Command::ReplaceCell => {
@@ -365,13 +453,21 @@ impl Session {
             Command::FindNext => self.find_step(true),
             Command::FindPrev => self.find_step(false),
             Command::ClearFilter => {
-                if self.grid.visible.is_some() {
-                    self.grid.clear_filter();
-                    self.status = "filter cleared".into();
+                if self.filter.is_some() || self.sort.is_some() {
+                    self.filter = None;
+                    self.sort = None;
+                    self.recompute_view();
+                    self.status = "filter and sort cleared".into();
                 } else {
-                    self.status = "no filter".into();
+                    self.status = "nothing to clear".into();
                 }
             }
+            Command::Sort => self.sort_by_cursor_column(SortKind::Lexical),
+            Command::SortNumeric => self.sort_by_cursor_column(SortKind::Numeric),
+            Command::SortNatural => self.sort_by_cursor_column(SortKind::Natural),
+            Command::FormatPretty => self.relayout(crate::Layout::Pretty),
+            Command::FormatSmart => self.relayout(crate::Layout::Smart),
+            Command::FormatCompact => self.relayout(crate::Layout::Compact),
             Command::ToggleMark => {
                 if self.view == ViewMode::Table {
                     let source = self.grid.source_row(self.grid.cursor.0);
@@ -434,6 +530,21 @@ impl Session {
             Command::ToggleHints => self.show_hints = !self.show_hints,
         }
         Effect::None
+    }
+
+    /// Re-lay-out the document and refresh what depends on its text.
+    fn relayout(&mut self, style: crate::Layout) {
+        match self.doc.reformat(style) {
+            Ok(()) => {
+                self.dirty = true;
+                self.after_edit();
+                if self.view == ViewMode::Text {
+                    self.rebuild_text();
+                }
+                self.status = format!("reformatted ({style:?})").to_lowercase();
+            }
+            Err(e) => self.status = e.to_string(),
+        }
     }
 
     /// Note a successful write.
@@ -508,11 +619,16 @@ impl Session {
         }
     }
 
-    /// Commit an edit to the cell or source line under the cursor.
+    /// Commit an edit to the cell, source line or tree node under the
+    /// cursor.
     fn commit_edit(&mut self, value: String) {
         let (row, column) = self.grid.cursor;
         if self.view == ViewMode::Text {
             self.commit_text_line(row, &value);
+            return;
+        }
+        if self.view == ViewMode::Tree {
+            self.commit_tree_edit(row, &value);
             return;
         }
         let row = self.grid.source_row(row);
@@ -526,6 +642,162 @@ impl Session {
             }
             Err(e) => self.status = e.to_string(),
         }
+    }
+
+    /// Write a value into the tree node under the cursor.
+    fn commit_tree_edit(&mut self, row: usize, value: &str) {
+        let Some(path) = self.tree_rows.get(row).map(|r| r.path.clone()) else {
+            return;
+        };
+        let old = self
+            .tree_root()
+            .and_then(|root| root.get_at(&path).cloned());
+        // XML text and attributes are strings; JSON keeps its own type
+        // where the new text still fits it.
+        let replacement = if self.doc.is_xml() {
+            crate::Node::Str(value.to_string())
+        } else {
+            crate::sheet::typed_replacement(old.as_ref(), value)
+        };
+        match self.doc.set_node(&path, replacement) {
+            Ok(()) => {
+                self.dirty = true;
+                self.rebuild_tree();
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// Open or close a specific path, for a frontend that can point at
+    /// one directly rather than moving a cursor to it.
+    pub fn toggle_path(&mut self, path: &[crate::PathSeg]) {
+        self.expansion.toggle(path);
+        self.rebuild_tree();
+        self.clamp_cursor();
+    }
+
+    /// The value under the cursor, as text — for copying out.
+    pub fn value_text_at_cursor(&self) -> Option<String> {
+        match self.view {
+            ViewMode::Tree => {
+                let row = self.tree_rows.get(self.grid.cursor.0)?;
+                let root = self.tree_root()?;
+                let node = root.get_at(&row.path)?;
+                Some(match node {
+                    crate::Node::Array(_) | crate::Node::Map(_) => {
+                        // A container copies as JSON, which is what you
+                        // would want to paste somewhere else.
+                        let mut doc = crate::JsonDoc::parse(b"null").ok()?;
+                        *doc.root_mut() = node.clone();
+                        String::from_utf8_lossy(&doc.serialize()).into_owned()
+                    }
+                    other => other.scalar_text(),
+                })
+            }
+            _ => self.table_cell(self.grid.cursor.0, self.grid.cursor.1),
+        }
+    }
+
+    /// The cursor row's parent path and its position among its siblings.
+    fn cursor_slot(&self) -> Option<(Vec<crate::PathSeg>, usize)> {
+        let row = self.tree_rows.get(self.grid.cursor.0)?;
+        let (last, parent) = row.path.split_last()?;
+        let index = match last {
+            crate::PathSeg::Index(i) => *i,
+            crate::PathSeg::Key(k) => match self.tree_root()?.get_at(parent)? {
+                crate::Node::Map(m) => m.entries.iter().position(|(key, _)| key == k)?,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some((parent.to_vec(), index))
+    }
+
+    /// Remove the node under the cursor.
+    pub fn remove_at_cursor(&mut self) {
+        let Some((parent, index)) = self.cursor_slot() else {
+            self.status = "nothing to remove here".into();
+            return;
+        };
+        match self.doc.remove_node(&parent, index) {
+            Ok(()) => {
+                self.dirty = true;
+                self.rebuild_tree();
+                self.clamp_cursor();
+                self.status = "removed".into();
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// Copy the node under the cursor in beside itself.
+    pub fn duplicate_at_cursor(&mut self) {
+        let Some((parent, index)) = self.cursor_slot() else {
+            self.status = "nothing to duplicate here".into();
+            return;
+        };
+        let Some(row) = self.tree_rows.get(self.grid.cursor.0).cloned() else {
+            return;
+        };
+        let Some(value) = self
+            .tree_root()
+            .and_then(|root| root.get_at(&row.path).cloned())
+        else {
+            return;
+        };
+        // A map needs a name, and reusing the old one would create the
+        // duplicate key the tree flags as a bug.
+        let key = match row.path.last() {
+            Some(crate::PathSeg::Key(k)) => Some(self.unique_key(&parent, k)),
+            _ => None,
+        };
+        match self.doc.insert_node(&parent, index + 1, key, value) {
+            Ok(()) => {
+                self.dirty = true;
+                self.rebuild_tree();
+                self.status = "duplicated".into();
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// Insert a new node after the cursor's.
+    pub fn insert_after_cursor(&mut self, what: NewNode) {
+        let Some((parent, index)) = self.cursor_slot() else {
+            self.status = "nothing to insert beside here".into();
+            return;
+        };
+        let value = what.node();
+        let key = match self.tree_root().and_then(|r| r.get_at(&parent).cloned()) {
+            Some(crate::Node::Map(_)) => Some(self.unique_key(&parent, "new")),
+            _ => None,
+        };
+        match self.doc.insert_node(&parent, index + 1, key, value) {
+            Ok(()) => {
+                self.dirty = true;
+                self.rebuild_tree();
+                let (rows, cols) = self.grid_dims();
+                self.grid.move_by(1, 0, rows, cols);
+                self.status = format!("inserted {}", what.label());
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// A key not already used in this map, so an insert never creates the
+    /// duplicate the tree would flag.
+    fn unique_key(&self, parent: &[crate::PathSeg], base: &str) -> String {
+        let existing: Vec<String> = match self.tree_root().and_then(|r| r.get_at(parent).cloned()) {
+            Some(crate::Node::Map(m)) => m.entries.iter().map(|(k, _)| k.clone()).collect(),
+            _ => Vec::new(),
+        };
+        let mut candidate = format!("{base} copy");
+        let mut n = 2;
+        while existing.iter().any(|k| k == &candidate) {
+            candidate = format!("{base} copy {n}");
+            n += 1;
+        }
+        candidate
     }
 
     /// The marked rows as delimited text, with the header first so the
@@ -554,6 +826,86 @@ impl Session {
             out.push('\n');
         }
         Some(out)
+    }
+
+    /// Rebuild the visible row order from the filter and the sort.
+    ///
+    /// Both write the same row order, so they have to be applied together
+    /// rather than each overwriting the other: filter first to choose the
+    /// rows, then sort to order them. The cursor follows its own row
+    /// rather than its index, so nothing jumps under you.
+    fn recompute_view(&mut self) {
+        let Some(sheet) = self.doc.sheet() else {
+            self.grid.visible = None;
+            return;
+        };
+        let (total, _) = sheet.dims();
+        let anchor = self.grid.source_row(self.grid.cursor.0);
+
+        let mut rows: Vec<usize> = match &self.filter {
+            Some(search) => search.filter_rows(sheet, true),
+            None => (0..total).collect(),
+        };
+        if let Some(spec) = self.sort {
+            rows = sort_rows(sheet, &rows, spec.column, spec.kind, spec.direction);
+        }
+
+        let unchanged = rows.len() == total && rows.iter().enumerate().all(|(i, &r)| i == r);
+        self.grid.visible = if unchanged { None } else { Some(rows) };
+
+        let (rows_now, cols) = self.grid_dims();
+        let row = self.grid.display_row(anchor).unwrap_or(0);
+        self.grid.move_to(row, self.grid.cursor.1, rows_now, cols);
+    }
+
+    /// The active sort, if any.
+    pub fn sort_spec(&self) -> Option<SortSpec> {
+        self.sort
+    }
+
+    /// True when a filter is hiding rows.
+    pub fn is_filtered(&self) -> bool {
+        self.filter.is_some()
+    }
+
+    /// Sort by the cursor's column, flipping direction if it is already
+    /// the sort column — one action for both directions, as a column
+    /// header click behaves everywhere else.
+    pub fn sort_by_cursor_column(&mut self, kind: SortKind) {
+        if self.doc.sheet().is_none() {
+            self.status = "sorting needs a table view".into();
+            return;
+        }
+        let column = self.grid.cursor.1;
+        let direction = match self.sort {
+            Some(spec) if spec.column == column && spec.kind == kind => spec.direction.flipped(),
+            _ => SortDirection::Ascending,
+        };
+        self.sort = Some(SortSpec {
+            column,
+            kind,
+            direction,
+        });
+        self.recompute_view();
+
+        let name = self
+            .doc
+            .sheet()
+            .and_then(|s| s.headers().get(column).cloned())
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| format!("column {}", column + 1));
+        self.status = format!(
+            "sorted by {name} {}{}",
+            match direction {
+                SortDirection::Ascending => "ascending",
+                SortDirection::Descending => "descending",
+            },
+            match kind {
+                SortKind::Natural => " (natural)",
+                SortKind::Numeric => " (numeric)",
+                SortKind::Lexical => "",
+            }
+        );
     }
 
     /// Jump to the next or previous match of the current search.
@@ -613,8 +965,12 @@ impl Session {
                     self.status = format!("no rows match &{pattern}");
                     return;
                 }
-                self.search = Some(search);
-                self.grid.visible = Some(rows);
+                // Record the filter rather than writing the row order
+                // directly: sorting writes the same order, and the two
+                // have to be applied together or each undoes the other.
+                self.search = Some(search.clone());
+                self.filter = Some(search);
+                self.recompute_view();
                 self.grid.cursor = (0, self.grid.cursor.1);
                 self.grid.offset = (0, self.grid.offset.1);
                 self.status = format!("&{pattern}  ({data_rows} rows)");
@@ -642,7 +998,7 @@ impl Session {
                 }
                 None => (0, 0),
             },
-            ViewMode::Tree => (self.tree_summaries.len(), self.tree_keys.len().max(1)),
+            ViewMode::Tree => (self.tree_rows.len(), 1),
             ViewMode::Text => (self.text_lines.len(), 1),
         }
     }
@@ -765,70 +1121,33 @@ impl Session {
     }
 
     fn rebuild_tree(&mut self) {
-        self.tree_keys.clear();
-        self.tree_summaries.clear();
-        if self.doc.is_json() {
-            let node = self.current_json_node().clone();
-            build_tree_view(&node, &mut self.tree_keys, &mut self.tree_summaries);
-        } else if self.doc.is_xml() {
-            let node = self.current_xml_node().clone();
-            build_xml_tree_view(&node, &mut self.tree_keys, &mut self.tree_summaries);
-        }
-    }
-
-    /// The JSON node we're currently viewing (respects drill-down stack).
-    fn current_json_node(&self) -> &Node {
-        let json = self.doc.as_json().expect("JSON doc");
-        let mut node = json.root();
-        for entry in &self.grid.drill_stack {
-            node = match node {
-                Node::Map(m) => m
-                    .entries
-                    .get(entry.parent_row)
-                    .map(|(_, v)| v)
-                    .unwrap_or(node),
-                Node::Array(a) => a.items.get(entry.parent_row).unwrap_or(node),
-                _ => node,
-            };
-        }
-        node
-    }
-
-    /// The XML node we're currently viewing (respects drill-down stack).
-    fn current_xml_node(&self) -> &Node {
-        let xml = self.doc.as_xml().expect("XML doc");
-        let mut node = xml.root();
-        for entry in &self.grid.drill_stack {
-            node = match node {
-                Node::Element(e) => e.children.get(entry.parent_row).unwrap_or(node),
-                _ => node,
-            };
-        }
-        node
-    }
-
-    fn tree_drill(&mut self) {
-        let node = if self.doc.is_json() {
-            self.current_json_node()
-        } else {
-            self.current_xml_node()
+        self.tree_rows = match self.tree_root() {
+            Some(root) => tree_rows_of(&root, &self.expansion),
+            None => Vec::new(),
         };
-        let (row, _col) = self.grid.cursor;
-        let child = match node {
-            Node::Map(m) => m.entries.get(row).map(|(_, v)| v),
-            Node::Array(a) => a.items.get(row),
-            Node::Element(e) => e.children.get(row),
-            _ => None,
+    }
+
+    /// The document's root node, if it has a tree at all.
+    fn tree_root(&self) -> Option<crate::Node> {
+        self.doc
+            .as_json()
+            .map(|j| j.root().clone())
+            .or_else(|| self.doc.as_xml().map(|x| x.root().clone()))
+    }
+
+    /// Open or close the row under the cursor. Scalars have nothing to
+    /// open, so Enter edits them instead.
+    fn toggle_row(&mut self) {
+        let Some(row) = self.tree_rows.get(self.grid.cursor.0).cloned() else {
+            return;
         };
-        match child {
-            Some(Node::Map(_)) | Some(Node::Array(_)) | Some(Node::Element(_)) => {
-                self.grid.drill_down();
-                self.rebuild_tree();
-            }
-            _ => {
-                self.start_edit();
-            }
+        if !row.is_container() {
+            self.start_edit();
+            return;
         }
+        self.expansion.toggle(&row.path);
+        self.rebuild_tree();
+        self.clamp_cursor();
     }
 
     fn start_edit(&mut self) {
@@ -840,27 +1159,16 @@ impl Session {
                 .and_then(|s| s.cell(self.grid.source_row(r), c))
                 .unwrap_or_default(),
             ViewMode::Text => self.text_lines.get(r).cloned().unwrap_or_default(),
-            ViewMode::Tree => {
-                let node = if self.doc.is_json() {
-                    self.current_json_node()
-                } else {
-                    self.current_xml_node()
-                };
-                match node {
-                    Node::Map(m) => m
-                        .entries
-                        .get(r)
-                        .map(|(_, v)| node_to_edit_string(v))
-                        .unwrap_or_default(),
-                    Node::Array(a) => a.items.get(r).map(node_to_edit_string).unwrap_or_default(),
-                    Node::Element(e) => e
-                        .children
-                        .get(r)
-                        .map(node_to_edit_string)
-                        .unwrap_or_default(),
-                    _ => String::new(),
-                }
-            }
+            // The row carries a path, so the value comes from the
+            // document rather than from whatever the row happens to show.
+            ViewMode::Tree => self
+                .tree_rows
+                .get(r)
+                .and_then(|row| {
+                    self.tree_root()
+                        .and_then(|root| root.get_at(&row.path).map(node_to_edit_string))
+                })
+                .unwrap_or_default(),
         };
         self.mode = Mode::Edit { buf };
     }
@@ -893,64 +1201,6 @@ pub fn escape(value: &str) -> String {
         .replace('\t', "\\t")
 }
 
-/// Build tree view keys and summaries for a JSON node.
-fn build_tree_view(node: &Node, keys: &mut Vec<String>, summaries: &mut Vec<String>) {
-    keys.clear();
-    summaries.clear();
-    match node {
-        Node::Map(m) => {
-            for (key, val) in &m.entries {
-                keys.push(key.clone());
-                summaries.push(summarize_node(val));
-            }
-        }
-        Node::Array(arr) => {
-            for (i, item) in arr.items.iter().enumerate() {
-                keys.push(i.to_string());
-                summaries.push(summarize_node(item));
-            }
-        }
-        _ => {
-            keys.push("value".to_string());
-            summaries.push(summarize_node(node));
-        }
-    }
-}
-
-/// Summarize a node for display: `{key1, key2}` for objects, `[n]` for
-/// arrays, the value for scalars.
-fn summarize_node(node: &Node) -> String {
-    match node {
-        Node::Null => "null".to_string(),
-        Node::Bool(b) => b.to_string(),
-        Node::Number(s) => s.clone(),
-        Node::Str(s) => format!("\"{}\"", s),
-        Node::Map(m) => {
-            if m.entries.is_empty() {
-                "{}".to_string()
-            } else {
-                let keys: Vec<&str> = m.entries.iter().take(3).map(|(k, _)| k.as_str()).collect();
-                // The separator belongs between the keys and the ellipsis,
-                // not after the last key: `{a, b, c}`, not `{a, b, c,}`.
-                let more = if m.entries.len() > 3 { ", …" } else { "" };
-                format!("{{{}{}}}", keys.join(", "), more)
-            }
-        }
-        Node::Array(arr) => {
-            if arr.items.is_empty() {
-                "[]".to_string()
-            } else {
-                format!("[{}]", arr.items.len())
-            }
-        }
-        Node::Element(e) => format!("<{}>", e.tag),
-        Node::Comment(text) => format!("<!--{}-->", text.chars().take(20).collect::<String>()),
-        Node::Text(s) => s.chars().take(30).collect(),
-        Node::XmlDecl(_) => "<?xml?>".to_string(),
-        Node::ProcessingInstruction { target, .. } => format!("<?{target}?>"),
-    }
-}
-
 /// Convert a JSON node to an editable string (for inline editing).
 fn node_to_edit_string(node: &Node) -> String {
     match node {
@@ -963,107 +1213,26 @@ fn node_to_edit_string(node: &Node) -> String {
     }
 }
 
-/// Build tree view for an XML node.
-fn build_xml_tree_view(node: &Node, keys: &mut Vec<String>, summaries: &mut Vec<String>) {
-    keys.clear();
-    summaries.clear();
-    match node {
-        Node::Element(e) => {
-            for (i, child) in e.children.iter().enumerate() {
-                match child {
-                    Node::Element(c) => {
-                        keys.push(format!("<{}>", c.tag));
-                        summaries.push(summarize_xml_element(c));
-                    }
-                    Node::Comment(text) => {
-                        keys.push(format!("<!--{i}-->"));
-                        summaries.push(text.trim().to_string());
-                    }
-                    Node::Text(text) => {
-                        keys.push(format!("text{i}"));
-                        summaries.push(text.trim().to_string());
-                    }
-                    Node::XmlDecl(_) => {
-                        keys.push("<?xml?>".to_string());
-                        summaries.push("declaration".to_string());
-                    }
-                    Node::ProcessingInstruction { target, .. } => {
-                        keys.push(format!("<?{target}?>"));
-                        summaries.push(target.clone());
-                    }
-                    _ => {
-                        keys.push(i.to_string());
-                        summaries.push(summarize_node(child));
-                    }
-                }
-            }
-        }
-        _ => {
-            keys.push("value".to_string());
-            summaries.push(summarize_node(node));
-        }
-    }
-}
-
-/// Summarize an XML element for display.
-fn summarize_xml_element(elem: &crate::Element) -> String {
-    if elem.children.is_empty() {
-        if elem.attributes.is_empty() {
-            "/>".to_string()
-        } else {
-            let attrs: Vec<&str> = elem
-                .attributes
-                .iter()
-                .take(3)
-                .map(|(k, _, _)| k.as_str())
-                .collect();
-            format!("{}…", attrs.join(", "))
-        }
-    } else if elem.children.len() == 1 {
-        match &elem.children[0] {
-            Node::Text(t) => t.chars().take(30).collect(),
-            _ => format!("[{}]", elem.children.len()),
-        }
-    } else {
-        format!("[{}]", elem.children.len())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FormatHint;
+    use crate::{FormatHint, PathSeg};
 
     fn session(src: &str) -> Session {
         Session::new(Document::parse(src.as_bytes(), FormatHint::Auto).unwrap())
     }
 
-    /// The summary used to end with a stray separator: `{a, b, c,}`.
+    /// Summaries are now counts rather than key lists, which sidesteps
+    /// the stray-separator bug the old `{a, b, c,}` form had entirely.
     #[test]
-    fn map_summaries_have_no_trailing_separator() {
+    fn container_summaries_are_counts() {
+        let s = session(r#"{"a":1,"b":[1,2,3]}"#);
+        let root = s.doc.as_json().unwrap().root();
+        assert_eq!(crate::tree::summarize(root), "{2}");
         assert_eq!(
-            summarize_node(&Node::Map(crate::Map {
-                open: '{',
-                close: '}',
-                entries: vec![
-                    ("a".into(), Node::Null),
-                    ("b".into(), Node::Null),
-                    ("c".into(), Node::Null),
-                ],
-                trailing_comma: false,
-                inline: true,
-                spaced: false,
-            })),
-            "{a, b, c}"
+            crate::tree::summarize(root.get_at(&[PathSeg::Key("b".into())]).unwrap()),
+            "[3]"
         );
-    }
-
-    #[test]
-    fn map_summaries_mark_omitted_keys() {
-        let s = session(r#"{"a":1,"b":2,"c":3,"d":4}"#);
-        // The root's own summary is what a parent would show for it.
-        let summary = summarize_node(s.doc.as_json().unwrap().root());
-        assert_eq!(summary, "{a, b, c, …}");
     }
 
     /// Effects are how a frontend learns it must touch the outside world.

@@ -14,17 +14,21 @@ mod ops;
 mod search;
 mod session;
 mod sheet;
+mod sort;
+mod tree;
 mod view;
 mod xml;
 
 pub use command::Command;
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
-pub use json::JsonDoc;
+pub use json::{JsonDoc, Layout};
 pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};
 pub use ops::EditOp;
 pub use search::Search;
-pub use session::{Effect, Mode, PromptKind, Session, ViewMode, escape};
+pub use session::{Effect, Mode, NewNode, PromptKind, Session, SortSpec, ViewMode, escape};
 pub use sheet::Sheet;
+pub use sort::{SortDirection, SortKind, natural_cmp, sort_rows};
+pub use tree::{Expansion, RowKind, TreeRow, ValueKind};
 pub use view::GridState;
 pub use xml::XmlDoc;
 
@@ -319,6 +323,36 @@ impl Document {
         match &mut self.kind {
             Kind::Csv(doc) => doc.apply(op),
             Kind::Json(doc) => match op {
+                EditOp::RemoveNode { parent, index } => {
+                    let (key, value) = doc.root_mut().remove_child(&parent, index)?;
+                    Ok(EditOp::InsertNode {
+                        parent,
+                        index,
+                        key,
+                        value,
+                    })
+                }
+                EditOp::InsertNode {
+                    parent,
+                    index,
+                    key,
+                    value,
+                } => {
+                    doc.root_mut().insert_child(&parent, index, key, value)?;
+                    Ok(EditOp::RemoveNode { parent, index })
+                }
+                EditOp::RenameNode {
+                    parent,
+                    index,
+                    name,
+                } => {
+                    let old = doc.root_mut().rename_child(&parent, index, name)?;
+                    Ok(EditOp::RenameNode {
+                        parent,
+                        index,
+                        name: old,
+                    })
+                }
                 EditOp::SetNode { path, value } => {
                     let previous = doc.root_mut().set_at(&path, value)?;
                     Ok(EditOp::SetNode {
@@ -329,6 +363,24 @@ impl Document {
                 _ => Err(Error::EditNotSupported { format: "JSON" }),
             },
             Kind::Xml(doc) => match op {
+                EditOp::RemoveNode { parent, index } => {
+                    let (key, value) = doc.root_mut().remove_child(&parent, index)?;
+                    Ok(EditOp::InsertNode {
+                        parent,
+                        index,
+                        key,
+                        value,
+                    })
+                }
+                EditOp::InsertNode {
+                    parent,
+                    index,
+                    key,
+                    value,
+                } => {
+                    doc.root_mut().insert_child(&parent, index, key, value)?;
+                    Ok(EditOp::RemoveNode { parent, index })
+                }
                 EditOp::SetNode { path, value } => {
                     let previous = doc.root_mut().set_at(&path, value)?;
                     Ok(EditOp::SetNode {
@@ -363,6 +415,105 @@ impl Document {
     pub fn replace_source(&mut self, bytes: &[u8]) -> Result<(), Error> {
         let inverse = self.apply_inner(EditOp::ReplaceSource {
             bytes: bytes.to_vec(),
+        })?;
+        self.undo.push(inverse);
+        self.redo.clear();
+        Ok(())
+    }
+
+    /// Re-lay-out the document, undoably.
+    ///
+    /// Only JSON has a layout to change; CSV's shape is its content, and
+    /// XML reflowing would move text nodes, which changes meaning.
+    pub fn reformat(&mut self, style: Layout) -> Result<(), Error> {
+        let Kind::Json(doc) = &self.kind else {
+            return Err(Error::EditNotSupported {
+                format: if self.is_csv() { "CSV" } else { "XML" },
+            });
+        };
+        let mut copy = doc.clone();
+        copy.reformat(style);
+        let bytes = copy.serialize();
+        self.replace_source(&bytes)
+    }
+
+    /// Replace the node at `path`, recording undo.
+    pub fn set_node(&mut self, path: &[PathSeg], value: Node) -> Result<(), Error> {
+        let inverse = self.apply_inner(EditOp::SetNode {
+            path: path.to_vec(),
+            value,
+        })?;
+        self.undo.push(inverse);
+        self.redo.clear();
+        Ok(())
+    }
+
+    /// Remove a node, recording undo.
+    ///
+    /// `index` is an ordinal among the addressable children, which for XML
+    /// means elements only; it is translated to a raw position so the
+    /// whitespace around the node is left untouched.
+    pub fn remove_node(&mut self, parent: &[PathSeg], index: usize) -> Result<(), Error> {
+        let index = self.raw_index(parent, index, false)?;
+        let inverse = self.apply_inner(EditOp::RemoveNode {
+            parent: parent.to_vec(),
+            index,
+        })?;
+        self.undo.push(inverse);
+        self.redo.clear();
+        Ok(())
+    }
+
+    /// Insert a node, recording undo.
+    pub fn insert_node(
+        &mut self,
+        parent: &[PathSeg],
+        index: usize,
+        key: Option<String>,
+        value: Node,
+    ) -> Result<(), Error> {
+        let index = self.raw_index(parent, index, true)?;
+        let inverse = self.apply_inner(EditOp::InsertNode {
+            parent: parent.to_vec(),
+            index,
+            key,
+            value,
+        })?;
+        self.undo.push(inverse);
+        self.redo.clear();
+        Ok(())
+    }
+
+    /// Translate a child ordinal into the position the edit ops use.
+    fn raw_index(
+        &self,
+        parent: &[PathSeg],
+        ordinal: usize,
+        for_insert: bool,
+    ) -> Result<usize, Error> {
+        let root = match &self.kind {
+            Kind::Xml(doc) => doc.root(),
+            _ => return Ok(ordinal),
+        };
+        let found = if for_insert {
+            root.raw_insert_index(parent, ordinal)
+        } else {
+            root.raw_child_index(parent, ordinal)
+        };
+        found.ok_or(Error::NoSuchPath)
+    }
+
+    /// Rename a map key, recording undo.
+    pub fn rename_node(
+        &mut self,
+        parent: &[PathSeg],
+        index: usize,
+        name: String,
+    ) -> Result<(), Error> {
+        let inverse = self.apply_inner(EditOp::RenameNode {
+            parent: parent.to_vec(),
+            index,
+            name,
         })?;
         self.undo.push(inverse);
         self.redo.clear();

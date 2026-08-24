@@ -168,24 +168,52 @@ fn json_tree_cursor_moves() {
 }
 
 #[test]
-fn json_tree_drill_down_and_up() {
+fn json_tree_expands_in_place() {
     let mut a = json_app("{\"nested\":{\"x\":1},\"other\":2}");
-    // Cursor is at row 0 (nested object)
-    a.handle_key(key(KeyCode::Enter)); // drill into nested
-    assert_eq!(a.grid.depth(), 1);
+    assert_eq!(a.tree_rows.len(), 2, "top level only");
+
+    a.handle_key(key(KeyCode::Enter)); // open `nested`
+    assert_eq!(a.tree_rows.len(), 3, "its child appears");
     let out = render(&mut a, 40, 10);
-    assert!(out.contains("x"), "should show inner key: {out}");
-    a.handle_key(key(KeyCode::Esc)); // drill back up
-    assert_eq!(a.grid.depth(), 0);
+    assert!(out.contains("x"), "the inner key shows: {out}");
+    assert!(
+        out.contains("other"),
+        "and the neighbour is still there — the point of expanding in \
+         place rather than replacing the view: {out}"
+    );
+
+    a.handle_key(key(KeyCode::Esc)); // close it again
+    assert_eq!(a.tree_rows.len(), 2);
 }
 
 #[test]
-fn json_tree_drill_array() {
+fn json_tree_expands_an_array() {
     let mut a = json_app("{\"items\":[1,2,3],\"name\":\"test\"}");
-    a.handle_key(key(KeyCode::Enter)); // drill into items array
-    assert_eq!(a.grid.depth(), 1);
+    a.handle_key(key(KeyCode::Enter));
+    assert_eq!(a.tree_rows.len(), 5, "two keys plus three items");
     let out = render(&mut a, 40, 10);
-    assert!(out.contains("1"), "should show array element: {out}");
+    assert!(out.contains("1"), "array elements show: {out}");
+}
+
+/// Expand-all opens every level; collapse-all closes back to the top.
+#[test]
+fn expand_all_and_collapse_all() {
+    let mut a = json_app("{\"a\":{\"b\":{\"c\":1}}}");
+    a.handle_key(key(KeyCode::Char('*')));
+    assert_eq!(a.tree_rows.len(), 3, "every level open");
+    a.handle_key(key(KeyCode::Char('_')));
+    assert_eq!(a.tree_rows.len(), 1, "back to the top level");
+}
+
+/// A key used twice is legal JSON and nearly always a bug, so it is
+/// marked rather than left to be spotted.
+#[test]
+fn duplicate_keys_are_marked_in_the_tree() {
+    let mut a = json_app("{\"color\":true,\"color\":\"gold\"}");
+    assert!(a.tree_rows[0].duplicate);
+    assert!(a.tree_rows[1].duplicate);
+    let out = render(&mut a, 40, 10);
+    assert!(out.contains('!'), "flagged in the render: {out}");
 }
 
 #[test]
@@ -231,7 +259,8 @@ fn xml_opens_in_tree_mode() {
 fn xml_tree_shows_elements() {
     let mut a = xml_app("<root><item name=\"a\"/><item name=\"b\"/></root>");
     let out = render(&mut a, 40, 10);
-    assert!(out.contains("<item>"), "should show element tag: {out}");
+    assert!(out.contains("item"), "should show element tag: {out}");
+    assert_eq!(a.tree_rows.len(), 2, "both items are rows");
 }
 
 #[test]
@@ -245,12 +274,14 @@ fn xml_tree_drill_into_element() {
 }
 
 #[test]
-fn xml_drill_up_from_root_is_noop() {
+/// Collapsing at the top level has nothing to close, and must not empty
+/// the view.
+fn xml_collapse_at_top_level_is_harmless() {
     let mut a = xml_app("<root><child/></root>");
-    a.handle_key(ctrl('u'));
+    a.handle_key(key(KeyCode::Esc));
     assert_eq!(a.view_mode(), ViewMode::Tree);
     let out = render(&mut a, 40, 10);
-    assert!(out.contains("<child"), "should still show child: {out}");
+    assert!(out.contains("child"), "should still show child: {out}");
 }
 
 /// XML table mode used to render an empty grid: `table_dims` had no XML
@@ -1020,7 +1051,7 @@ fn every_command_is_reachable_by_the_route_help_advertises() {
     let mut codes: Vec<KeyCode> = ('a'..='z')
         .chain('A'..='Z')
         .chain('0'..='9')
-        .chain("/&:?".chars())
+        .chain("/&:?*_".chars())
         .map(KeyCode::Char)
         .collect();
     codes.extend([

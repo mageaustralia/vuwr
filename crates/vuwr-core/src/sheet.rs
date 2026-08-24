@@ -141,7 +141,7 @@ impl Sheet for XmlDoc {
 /// `"30"`. The old value's type is kept when the new text is valid for it;
 /// otherwise the value becomes a string, which is visible in the display
 /// rather than silent. Changing type deliberately is a separate command.
-fn typed_replacement(old: Option<&Node>, value: &str) -> Node {
+pub(crate) fn typed_replacement(old: Option<&Node>, value: &str) -> Node {
     match old {
         Some(Node::Number(_)) if value.parse::<f64>().is_ok() => Node::Number(value.to_string()),
         Some(Node::Bool(_)) if value == "true" || value == "false" => Node::Bool(value == "true"),

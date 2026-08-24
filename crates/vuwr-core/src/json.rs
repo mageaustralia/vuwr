@@ -19,6 +19,53 @@ pub enum IndentStyle {
     Tabs,
 }
 
+/// How [`JsonDoc::reformat`] should lay a document out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// Every collection on one line, no spaces.
+    Compact,
+    /// Every collection broken across lines.
+    Pretty,
+    /// Collections containing only scalars stay on one line; anything with
+    /// a collection inside it breaks.
+    Smart,
+}
+
+fn relayout(node: &mut Node, style: Layout) {
+    match node {
+        Node::Array(a) => {
+            for item in a.items.iter_mut() {
+                relayout(item, style);
+            }
+            a.inline = inline_for(style, a.items.iter().all(is_scalar));
+            a.spaced = a.inline && style != Layout::Compact;
+            a.trailing_comma = false;
+        }
+        Node::Map(m) => {
+            for (_, v) in m.entries.iter_mut() {
+                relayout(v, style);
+            }
+            let flat = m.entries.iter().all(|(_, v)| is_scalar(v));
+            m.inline = inline_for(style, flat);
+            m.spaced = m.inline && style != Layout::Compact;
+            m.trailing_comma = false;
+        }
+        _ => {}
+    }
+}
+
+fn inline_for(style: Layout, all_scalars: bool) -> bool {
+    match style {
+        Layout::Compact => true,
+        Layout::Pretty => false,
+        Layout::Smart => all_scalars,
+    }
+}
+
+fn is_scalar(node: &Node) -> bool {
+    !matches!(node, Node::Array(_) | Node::Map(_))
+}
+
 /// A parsed JSON document.
 #[derive(Debug, Clone)]
 pub struct JsonDoc {
@@ -44,6 +91,21 @@ impl JsonDoc {
 
     pub fn indent(&self) -> IndentStyle {
         self.indent
+    }
+
+    /// Re-lay-out the whole document.
+    ///
+    /// The parser preserves whatever layout the file had, which is the
+    /// point of this tool; this is the deliberate opposite, invoked by a
+    /// person who has asked for it. `Smart` keeps leaf collections on one
+    /// line and breaks the rest, which is what people usually mean by
+    /// "readable but not sprawling".
+    pub fn reformat(&mut self, style: Layout) {
+        self.indent = match style {
+            Layout::Compact => IndentStyle::Compact,
+            Layout::Pretty | Layout::Smart => IndentStyle::Spaces(2),
+        };
+        relayout(&mut self.root, style);
     }
 
     pub fn serialize(&self) -> Vec<u8> {

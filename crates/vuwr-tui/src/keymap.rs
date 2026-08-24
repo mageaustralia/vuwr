@@ -55,6 +55,8 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         // Views. Direct bindings as well as Tab: cycling alone gives no
         // hint that the other views exist.
         (KeyCode::Tab, false) => Command::CycleView,
+        (KeyCode::Char('*'), false) => Command::ExpandAll,
+        (KeyCode::Char('_'), false) => Command::CollapseAll,
         (KeyCode::Char('1'), false) => Command::ViewTable,
         (KeyCode::Char('2'), false) => Command::ViewTree,
         (KeyCode::Char('3'), false) => Command::ViewText,
@@ -78,6 +80,11 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         (KeyCode::Char('M'), false) => Command::ClearMarks,
         (KeyCode::Char('e'), true) => Command::PrintMarks,
         (KeyCode::Char('f'), false) => Command::FreezeColumns,
+        // Sorting: `s` cycles direction, capital variants pick a
+        // comparison. csvlens uses Shift-Down; `s` is easier to reach.
+        (KeyCode::Char('s'), false) => Command::Sort,
+        (KeyCode::Char('S'), false) => Command::SortNatural,
+        (KeyCode::Char('s'), true) => Command::SortNumeric,
 
         // File and interface
         (KeyCode::Char('q'), false) => Command::Quit,
@@ -108,6 +115,8 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::GoRowStart => "Home",
         Command::GoRowEnd => "End",
         Command::CycleView => "Tab",
+        Command::ExpandAll => "*",
+        Command::CollapseAll => "_",
         Command::ViewTable => "1",
         Command::ViewTree => "2",
         Command::ViewText => "3",
@@ -118,6 +127,12 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::FindPrev => "N",
         Command::Filter => "&",
         Command::ClearFilter => "r",
+        Command::Sort => "s",
+        Command::SortNumeric => "Ctrl-S",
+        Command::SortNatural => "S",
+        Command::FormatPretty => ":format",
+        Command::FormatSmart => ":format-smart",
+        Command::FormatCompact => ":compact",
         Command::ToggleMark => "m",
         Command::ClearMarks => "M",
         Command::PrintMarks => "Ctrl-E",

@@ -38,6 +38,26 @@ pub enum EditOp {
         path: crate::node::NodePath,
         value: crate::node::Node,
     },
+    /// Remove the `index`-th child under `parent`. Its inverse is an
+    /// `InsertNode` carrying what was removed.
+    RemoveNode {
+        parent: crate::node::NodePath,
+        index: usize,
+    },
+    /// Insert a child under `parent` at `index`. `key` is used for maps
+    /// and ignored elsewhere.
+    InsertNode {
+        parent: crate::node::NodePath,
+        index: usize,
+        key: Option<String>,
+        value: crate::node::Node,
+    },
+    /// Rename the `index`-th key of the map at `parent`.
+    RenameNode {
+        parent: crate::node::NodePath,
+        index: usize,
+        name: String,
+    },
     /// Replace the entire document by re-parsing these bytes. Its own
     /// inverse: applying it returns an op holding the previous source.
     /// Used by text view, where the source itself is what is edited.
@@ -77,7 +97,10 @@ impl CsvDoc {
             // Tree ops address JSON/XML nodes; a CSV sheet has no paths.
             EditOp::SetNode { .. } => Err(Error::EditNotSupported { format: "CSV" }),
             // Handled by Document::apply_inner before reaching a format.
-            EditOp::ReplaceSource { .. } => Err(Error::EditNotSupported { format: "CSV" }),
+            EditOp::ReplaceSource { .. }
+            | EditOp::RemoveNode { .. }
+            | EditOp::InsertNode { .. }
+            | EditOp::RenameNode { .. } => Err(Error::EditNotSupported { format: "CSV" }),
             EditOp::SetCell { row, column, value } => {
                 let len = self.height();
                 let r = self

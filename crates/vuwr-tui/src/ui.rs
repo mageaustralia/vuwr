@@ -161,35 +161,65 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let (cursor_row, _) = app.grid.cursor;
     let offset_row = app.grid.offset.0;
+    let rows_total = app.tree_rows.len();
 
-    // Two columns: key (wide) + summary (fills remaining).
-    let key_width = 20u16;
-    let constraints = vec![
-        Constraint::Length(key_width),
-        Constraint::Min(area.width.saturating_sub(key_width + 1)),
-    ];
+    let mut lines: Vec<Line> = Vec::new();
+    for r in offset_row..rows_total.min(offset_row + area.height as usize) {
+        let row = &app.tree_rows[r];
+        let mut spans: Vec<Span> = Vec::new();
 
-    let keys = &app.tree_keys;
-    let summaries = &app.tree_summaries;
+        // Indent, then the disclosure marker: a closed container has more
+        // to show, which is worth seeing at a glance.
+        spans.push(Span::raw("  ".repeat(row.depth)));
+        spans.push(Span::styled(
+            match row.kind {
+                vuwr_core::RowKind::Container { expanded: true } => "▾ ",
+                vuwr_core::RowKind::Container { expanded: false } => "▸ ",
+                vuwr_core::RowKind::Scalar => "  ",
+            },
+            Style::default().dim(),
+        ));
 
-    let mut rows = Vec::new();
-    for r in offset_row..summaries.len().min(offset_row + area.height as usize) {
-        let key_text = keys.get(r).map(|s| s.as_str()).unwrap_or("");
-        let val_text = summaries.get(r).map(|s| escape(s)).unwrap_or_default();
-
-        let mut key_cell = TCell::from(key_text);
-        let mut val_cell = TCell::from(val_text);
-
-        if r == cursor_row {
-            key_cell = key_cell.style(Style::default().reversed());
-            val_cell = val_cell.style(Style::default().reversed());
+        // A repeated key is legal and almost always a bug, so it is marked
+        // rather than left to be noticed.
+        if row.duplicate {
+            spans.push(Span::styled("! ", Style::default().fg(Color::Red).bold()));
         }
 
-        rows.push(TRow::new(vec![key_cell, val_cell]));
+        spans.push(Span::styled(
+            escape(&row.label),
+            Style::default().fg(Color::Cyan),
+        ));
+        spans.push(Span::raw(": "));
+        spans.push(Span::styled(
+            escape(&row.summary),
+            Style::default().fg(value_color(row.value)),
+        ));
+
+        let mut line = Line::from(spans);
+        if r == cursor_row {
+            line = line.style(Style::default().reversed());
+        }
+        lines.push(line);
     }
 
-    let table = Table::new(rows, constraints).column_spacing(1);
-    frame.render_widget(table, area);
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// Colour by value type, the way a JSON editor does: the shape of the data
+/// is visible without reading it.
+fn value_color(kind: vuwr_core::ValueKind) -> Color {
+    use vuwr_core::ValueKind as V;
+    match kind {
+        V::Null => Color::DarkGray,
+        V::Bool => Color::Magenta,
+        V::Number => Color::Green,
+        V::String => Color::Yellow,
+        V::Array | V::Object => Color::Blue,
+        V::Element => Color::Blue,
+        V::Comment => Color::DarkGray,
+        V::Text | V::Other => Color::Gray,
+    }
 }
 
 /// The hint bar, nano-style: the keys worth knowing, spelled out along the
@@ -325,7 +355,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
                         view_str,
                         depth_str,
                         r + 1,
-                        app.tree_keys.len(),
+                        app.tree_rows.len(),
                         app.status
                     )
                 }

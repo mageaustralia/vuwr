@@ -7,11 +7,12 @@
 
 mod input;
 mod table;
+mod toolbar;
 
 use std::path::PathBuf;
 
 use eframe::egui;
-use vuwr_core::{Command, Document, Effect, Session, ViewMode};
+use vuwr_core::{Command, Document, Effect, NewNode, Session, ViewMode};
 
 pub use input::{command_for, command_for_char};
 
@@ -19,6 +20,14 @@ pub use input::{command_for, command_for_char};
 /// these, and the File menu builds from the same list, so the two cannot
 /// disagree.
 pub const MENU_ONLY: &[Command] = &[Command::SaveAndQuit, Command::ForceQuit];
+
+/// Commands the GUI offers only on the toolbar. Help says "toolbar" for
+/// these, and the toolbar builds from the same list.
+pub const TOOLBAR_ONLY: &[Command] = &[
+    Command::SortNumeric,
+    Command::ExpandAll,
+    Command::CollapseAll,
+];
 
 /// The keys help shows for a command. Exposed for tests, which assert the
 /// window can never render a blank row.
@@ -113,6 +122,38 @@ impl VuwrApp {
     /// True when a document is open.
     pub fn has_document(&self) -> bool {
         self.session.is_some()
+    }
+
+    /// Carry out something the tree asked for.
+    fn apply_tree_action(&mut self, action: table::TreeAction, ctx: &egui::Context) {
+        use table::{NodeAction, TreeAction};
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        match action {
+            TreeAction::Select(row) => session.grid.cursor.0 = row,
+            TreeAction::Toggle(path) => session.toggle_path(&path),
+            TreeAction::Edit(row) => {
+                session.grid.cursor.0 = row;
+                self.run(Command::EditCell, ctx);
+            }
+            TreeAction::Context { row, action } => {
+                session.grid.cursor.0 = row;
+                match action {
+                    NodeAction::EditValue => self.run(Command::EditCell, ctx),
+                    NodeAction::CopyValue => {
+                        let text = session.value_text_at_cursor().unwrap_or_default();
+                        ctx.copy_text(text);
+                        session.report("copied to the clipboard");
+                    }
+                    NodeAction::Duplicate => session.duplicate_at_cursor(),
+                    NodeAction::Remove => session.remove_at_cursor(),
+                    NodeAction::InsertValueAfter => session.insert_after_cursor(NewNode::Value),
+                    NodeAction::InsertObjectAfter => session.insert_after_cursor(NewNode::Object),
+                    NodeAction::InsertArrayAfter => session.insert_after_cursor(NewNode::Array),
+                }
+            }
+        }
     }
 
     /// Run a command and carry out whatever it asks for.
@@ -253,14 +294,27 @@ impl eframe::App for VuwrApp {
         input::handle(self, ctx);
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu_bar(ui, ctx));
+        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            if let Some(cmd) = toolbar::toolbar(self, ui) {
+                self.run(cmd, ctx);
+            }
+        });
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             self.status_bar(ui);
             self.hint_bar(ui);
         });
-        egui::CentralPanel::default().show(ctx, |ui| match self.session.as_mut() {
-            Some(session) => render_view(session, ui),
-            None => drop_zone(ui, self.load_error.as_deref()),
-        });
+        let tree_action = egui::CentralPanel::default()
+            .show(ctx, |ui| match self.session.as_mut() {
+                Some(session) => render_view(session, ui),
+                None => {
+                    drop_zone(ui, self.load_error.as_deref());
+                    None
+                }
+            })
+            .inner;
+        if let Some(action) = tree_action {
+            self.apply_tree_action(action, ctx);
+        }
 
         if self.session.as_ref().is_some_and(|s| s.show_help) {
             self.help_window(ctx);
@@ -503,11 +557,17 @@ fn drop_zone(ui: &mut egui::Ui, error: Option<&str>) {
 ///
 /// Public so it can be exercised headlessly: egui runs without a window,
 /// so the drawing code is testable like anything else.
-pub fn render_view(session: &mut Session, ui: &mut egui::Ui) {
+pub fn render_view(session: &mut Session, ui: &mut egui::Ui) -> Option<table::TreeAction> {
     match session.view_mode() {
-        ViewMode::Table => table::table(session, ui),
+        ViewMode::Table => {
+            table::table(session, ui);
+            None
+        }
         ViewMode::Tree => table::tree(session, ui),
-        ViewMode::Text => table::text(session, ui),
+        ViewMode::Text => {
+            table::text(session, ui);
+            None
+        }
     }
 }
 

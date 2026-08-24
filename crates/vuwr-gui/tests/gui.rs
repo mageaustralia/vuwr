@@ -301,7 +301,11 @@ fn help_never_claims_a_binding_the_gui_does_not_have() {
 
     let unreachable: Vec<&str> = Command::ALL
         .iter()
-        .filter(|c| !reachable.contains(c) && !vuwr_gui::MENU_ONLY.contains(c))
+        .filter(|c| {
+            !reachable.contains(c)
+                && !vuwr_gui::MENU_ONLY.contains(c)
+                && !vuwr_gui::TOOLBAR_ONLY.contains(c)
+        })
         .map(|c| c.name())
         .collect();
     assert!(
@@ -312,6 +316,13 @@ fn help_never_claims_a_binding_the_gui_does_not_have() {
 
 /// Commands help calls menu-only must actually be in the menu — the menu
 /// is built from this same list, so this asserts they are labelled.
+#[test]
+fn toolbar_only_commands_are_labelled_as_such() {
+    for cmd in vuwr_gui::TOOLBAR_ONLY {
+        assert_eq!(vuwr_gui::keys_for_test(*cmd), "toolbar", "{}", cmd.name());
+    }
+}
+
 #[test]
 fn menu_only_commands_are_labelled_as_such() {
     for cmd in vuwr_gui::MENU_ONLY {

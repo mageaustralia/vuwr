@@ -72,7 +72,7 @@ pub struct XmlDecl {
 /// addresses one in a sheet. `Index` covers both array items and an
 /// element's *element* children — whitespace and comments are not
 /// addressable, so indices match what the table view shows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PathSeg {
     Key(String),
     Index(usize),
@@ -203,6 +203,110 @@ impl Node {
         }
     }
 
+    /// Remove the `index`-th child of the node at `parent`.
+    ///
+    /// Returns the key it had (for maps) and the node itself — exactly
+    /// what [`Node::insert_child`] needs to put it back, which is what
+    /// makes removal undoable.
+    pub fn remove_child(
+        &mut self,
+        parent: &[PathSeg],
+        index: usize,
+    ) -> Result<(Option<String>, Node), crate::Error> {
+        let node = self.node_at_mut(parent)?;
+        match node {
+            Node::Map(m) if index < m.entries.len() => {
+                let (k, v) = m.entries.remove(index);
+                Ok((Some(k), v))
+            }
+            Node::Array(a) if index < a.items.len() => Ok((None, a.items.remove(index))),
+            // For elements `index` is a *raw* child position, not an
+            // element ordinal: whitespace between elements is a child too,
+            // and removing by ordinal left it behind, so re-inserting
+            // landed in the wrong slot and undo was not exact.
+            // [`Node::raw_child_index`] does the translation at the edge.
+            Node::Element(e) if index < e.children.len() => Ok((None, e.children.remove(index))),
+            _ => Err(crate::Error::NoSuchPath),
+        }
+    }
+
+    /// Insert a child at `index` under `parent`.
+    pub fn insert_child(
+        &mut self,
+        parent: &[PathSeg],
+        index: usize,
+        key: Option<String>,
+        value: Node,
+    ) -> Result<(), crate::Error> {
+        let node = self.node_at_mut(parent)?;
+        match node {
+            Node::Map(m) => {
+                let at = index.min(m.entries.len());
+                m.entries.insert(at, (key.unwrap_or_default(), value));
+                Ok(())
+            }
+            Node::Array(a) => {
+                let at = index.min(a.items.len());
+                a.items.insert(at, value);
+                Ok(())
+            }
+            Node::Element(e) => {
+                let at = index.min(e.children.len());
+                e.children.insert(at, value);
+                Ok(())
+            }
+            _ => Err(crate::Error::NoSuchPath),
+        }
+    }
+
+    /// Rename the `index`-th key of the map at `parent`, returning the old
+    /// name.
+    pub fn rename_child(
+        &mut self,
+        parent: &[PathSeg],
+        index: usize,
+        name: String,
+    ) -> Result<String, crate::Error> {
+        let node = self.node_at_mut(parent)?;
+        match node {
+            Node::Map(m) if index < m.entries.len() => {
+                Ok(std::mem::replace(&mut m.entries[index].0, name))
+            }
+            _ => Err(crate::Error::NoSuchPath),
+        }
+    }
+
+    /// Turn an element ordinal into a raw child position.
+    ///
+    /// The tree addresses an element's children by element ordinal, since
+    /// whitespace is not a row. Structural edits need the real position so
+    /// the whitespace around a node is left exactly where it was.
+    pub fn raw_child_index(&self, parent: &[PathSeg], ordinal: usize) -> Option<usize> {
+        match self.get_at(parent)? {
+            Node::Element(e) => element_positions(e).get(ordinal).copied(),
+            _ => Some(ordinal),
+        }
+    }
+
+    /// Where a new child should go to land after `ordinal`.
+    pub fn raw_insert_index(&self, parent: &[PathSeg], ordinal: usize) -> Option<usize> {
+        match self.get_at(parent)? {
+            Node::Element(e) => {
+                let positions = element_positions(e);
+                Some(positions.get(ordinal).copied().unwrap_or(e.children.len()))
+            }
+            _ => Some(ordinal),
+        }
+    }
+
+    fn node_at_mut(&mut self, path: &[PathSeg]) -> Result<&mut Node, crate::Error> {
+        let mut node = self;
+        for seg in path {
+            node = node.child_mut(seg)?;
+        }
+        Ok(node)
+    }
+
     /// The text of a scalar node, as it would appear in a cell.
     pub fn scalar_text(&self) -> String {
         match self {
@@ -214,6 +318,17 @@ impl Node {
             _ => String::new(),
         }
     }
+}
+
+/// Where each element child sits among all children, so an element index
+/// can be turned back into a real position.
+fn element_positions(e: &Element) -> Vec<usize> {
+    e.children
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| matches!(c, Node::Element(_)))
+        .map(|(i, _)| i)
+        .collect()
 }
 
 // --- Convenience constructors ---

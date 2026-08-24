@@ -2,9 +2,9 @@
 source: crates/vuwr-tui/tests/ui.rs
 expression: "render(&mut a, 40, 8)"
 ---
-"name                 "Alice"            "
-"age                  30                 "
-"tags                 [1]                "
+"  name: "Alice"                         "
+"  age: 30                               "
+"▸ tags: [1]                             "
 "                                        "
 "                                        "
 "                                        "
