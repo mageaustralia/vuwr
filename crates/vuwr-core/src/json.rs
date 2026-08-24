@@ -188,12 +188,10 @@ fn sniff_indent(text: &str) -> IndentStyle {
     }
     for line in &lines {
         let trimmed = line.trim_start();
-        if trimmed.is_empty()
-            || trimmed == "{"
-            || trimmed == "}"
-            || trimmed == "["
-            || trimmed == "]"
-        {
+        // Do not skip bracket-only lines: the first indented line is at
+        // depth 1 whatever it contains, and skipping to a deeper one
+        // reports the unit as a multiple of itself.
+        if trimmed.is_empty() {
             continue;
         }
         let indent_len = line.len() - trimmed.len();
@@ -398,8 +396,10 @@ fn parse_map<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
         ));
     }
 
-    // Remember the raw slice from after { to find closing }
-    let content_start = rest;
+    // The raw span from just after the opening bracket, keeping the
+    // whitespace on both sides: `{\n  "a": 1\n}` is not inline, but
+    // trimming first hides both newlines and collapses it to one line.
+    let content_start = &input[1..];
     #[allow(unused_assignments)]
     let mut trailing_comma = false;
     loop {
@@ -436,7 +436,7 @@ fn parse_map<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
         }
     }
     // Check if content between { and } had any newlines or spaces after commas
-    let content_len = content_start.len() - rest.len() - 1;
+    let content_len = content_start.len() - rest.len();
     let content_bytes = content_start.as_bytes();
     let inline = !content_bytes[..content_len].contains(&b'\n');
     let spaced = inline && content_bytes[..content_len].windows(2).any(|w| w == b", ");
@@ -477,7 +477,10 @@ fn parse_array<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error>
         ));
     }
 
-    let content_start = rest;
+    // The raw span from just after the opening bracket, keeping the
+    // whitespace on both sides: `{\n  "a": 1\n}` is not inline, but
+    // trimming first hides both newlines and collapses it to one line.
+    let content_start = &input[1..];
     #[allow(unused_assignments)]
     let mut trailing_comma = false;
     loop {
@@ -503,7 +506,7 @@ fn parse_array<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error>
             });
         }
     }
-    let content_len = content_start.len() - rest.len() - 1;
+    let content_len = content_start.len() - rest.len();
     let content_bytes = content_start.as_bytes();
     let inline = !content_bytes[..content_len].contains(&b'\n');
     let spaced = inline && content_bytes[..content_len].windows(2).any(|w| w == b", ");

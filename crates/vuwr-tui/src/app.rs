@@ -10,7 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use vuwr_core::{CsvDoc, Document, EditOp, GridState, Node};
+use vuwr_core::{CsvDoc, Document, GridState, Node};
 
 pub enum Mode {
     Normal,
@@ -90,63 +90,32 @@ impl App {
     /// For table view: returns (headers, row_count, column_count).
     pub fn table_dims(&self) -> (Vec<String>, usize, usize) {
         match self.view {
-            ViewMode::Table => {
-                if let Some(csv) = self.doc.as_csv() {
-                    let headers: Vec<String> = (0..csv.width())
-                        .map(|c| {
-                            csv.cell(0, c)
-                                .map(|cell| cell.value.clone())
-                                .unwrap_or_default()
-                        })
-                        .collect();
-                    (headers, csv.height(), csv.width())
-                } else if let Some(json) = self.doc.as_json() {
-                    let headers = json_table_headers(json.root()).unwrap_or_default();
-                    let rows = match json.root() {
-                        Node::Array(a) => a.items.len(),
-                        _ => 0,
-                    };
-                    (headers.clone(), rows, headers.len())
-                } else if let Some(xml) = self.doc.as_xml() {
-                    let headers = xml.table_headers();
-                    (headers.clone(), xml.row_elements().len(), headers.len())
-                } else {
-                    (vec![], 0, 0)
+            ViewMode::Table => match self.doc.sheet() {
+                Some(sheet) => {
+                    let (rows, cols) = sheet.dims();
+                    (sheet.headers(), rows, cols)
                 }
-            }
+                None => (Vec::new(), 0, 0),
+            },
             ViewMode::Tree => (self.tree_keys.clone(), self.tree_summaries.len(), 1),
         }
     }
 
-    /// Get a cell value for table rendering.
+    /// The display text of one cell.
     pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
         match self.view {
-            ViewMode::Table => {
-                if let Some(csv) = self.doc.as_csv() {
-                    csv.cell(row, col).map(|cell| escape(&cell.value))
-                } else if let Some(json) = self.doc.as_json() {
-                    match json.root() {
-                        Node::Array(arr) => {
-                            let item = arr.items.get(row)?;
-                            if let Node::Map(m) = item {
-                                let (_, val) = m.entries.get(col)?;
-                                Some(summarize_node(val))
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    }
-                } else if let Some(xml) = self.doc.as_xml() {
-                    // Shape and addressing live in core, so the GUI and any
-                    // future native frontend get the same table for free.
-                    xml.table_cell(row, col)
-                } else {
-                    None
-                }
-            }
+            ViewMode::Table => self.doc.sheet()?.cell(row, col).map(|v| escape(&v)),
             ViewMode::Tree => self.tree_summaries.get(row).cloned(),
         }
+    }
+
+    /// True when column names are carried separately from the rows, so the
+    /// renderer must draw a header row. CSV's header is its own first row.
+    pub fn has_separate_header(&self) -> bool {
+        self.doc
+            .sheet()
+            .map(|s| !s.header_is_first_row())
+            .unwrap_or(false)
     }
 
     pub fn view_mode(&self) -> ViewMode {
@@ -188,13 +157,24 @@ impl App {
             KeyCode::Char('q') => self.try_quit(),
             KeyCode::Char(':') => self.mode = Mode::Command { buf: String::new() },
             KeyCode::Tab if self.can_cycle_view() => self.cycle_view(),
+            // `c` replaces the cell, `i`/Enter edit what is already there.
+            // Without a replace key the only way to clear a long value was
+            // to hold Backspace.
+            KeyCode::Char('c') if self.view == ViewMode::Table => {
+                if self.doc.sheet().is_some() {
+                    self.mode = Mode::Edit { buf: String::new() };
+                } else {
+                    self.status = "this view is not editable".into();
+                }
+            }
             KeyCode::Char('i') | KeyCode::Enter if self.view == ViewMode::Table => {
-                // Only CSV is editable so far. Refuse up front rather than
-                // letting the user type a value the core will reject.
-                if self.doc.is_csv() {
+                // Anything with a table view is editable: CSV cells, JSON
+                // values, XML attributes and element text all go through
+                // the same Sheet::set_cell.
+                if self.doc.sheet().is_some() {
                     self.start_edit()
                 } else {
-                    self.status = "editing this format is not supported yet".into();
+                    self.status = "this view is not editable".into();
                 }
             }
             KeyCode::Enter if self.view == ViewMode::Tree => self.tree_drill(),
@@ -330,13 +310,6 @@ impl App {
         self.tree_keys = headers;
     }
 
-    /// True when column names are carried separately from the rows. CSV
-    /// uses its own first row as the header; JSON and XML do not, so the
-    /// renderer has to draw a header row for them.
-    pub fn has_separate_header(&self) -> bool {
-        !self.doc.is_csv()
-    }
-
     fn rebuild_tree(&mut self) {
         self.tree_keys.clear();
         self.tree_summaries.clear();
@@ -407,15 +380,11 @@ impl App {
     fn start_edit(&mut self) {
         let (r, c) = self.grid.cursor;
         let buf = match self.view {
-            ViewMode::Table => {
-                if let Some(csv) = self.doc.as_csv() {
-                    csv.cell(r, c)
-                        .map(|cell| cell.value.clone())
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                }
-            }
+            ViewMode::Table => self
+                .doc
+                .sheet()
+                .and_then(|s| s.cell(r, c))
+                .unwrap_or_default(),
             ViewMode::Tree => {
                 let node = if self.doc.is_json() {
                     self.current_json_node()
@@ -451,8 +420,14 @@ impl App {
                 let (row, column) = self.grid.cursor;
                 let value = std::mem::take(buf);
                 self.mode = Mode::Normal;
-                match self.doc.apply(EditOp::SetCell { row, column, value }) {
-                    Ok(()) => self.dirty = true,
+                match self.doc.set_cell(row, column, &value) {
+                    Ok(()) => {
+                        self.dirty = true;
+                        // JSON/XML edits can change a cell's rendered width.
+                        if self.doc.sheet().is_some() && !self.doc.is_csv() {
+                            self.rebuild_table_widths();
+                        }
+                    }
                     Err(e) => self.status = e.to_string(),
                 }
             }
@@ -550,20 +525,6 @@ pub(crate) fn escape(value: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
-}
-
-/// Get table headers from a JSON array-of-objects.
-fn json_table_headers(node: &Node) -> Option<Vec<String>> {
-    match node {
-        Node::Array(arr) if !arr.items.is_empty() => {
-            if let Node::Map(m) = &arr.items[0] {
-                Some(m.entries.iter().map(|(k, _)| k.clone()).collect())
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
 }
 
 /// Build tree view keys and summaries for a JSON node.

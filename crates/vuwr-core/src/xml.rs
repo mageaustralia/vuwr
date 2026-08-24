@@ -84,6 +84,28 @@ impl XmlDoc {
         headers
     }
 
+    /// The path addressing the cell at `(row, col)`: an attribute of the
+    /// row element, or the text of one of its child elements.
+    pub fn cell_path(&self, row: usize, col: usize) -> Option<crate::node::NodePath> {
+        use crate::node::PathSeg;
+        let rows = self.row_elements();
+        let elem = rows.get(row)?;
+        if let Some((name, _, _)) = elem.attributes.get(col) {
+            return Some(vec![PathSeg::Index(row), PathSeg::Attr(name.clone())]);
+        }
+        let child_idx = col - elem.attributes.len();
+        // The child must exist for the path to be writable.
+        elem.children
+            .iter()
+            .filter(|c| matches!(c, Node::Element(_)))
+            .nth(child_idx)?;
+        Some(vec![
+            PathSeg::Index(row),
+            PathSeg::Index(child_idx),
+            PathSeg::Text,
+        ])
+    }
+
     /// The value at `(row, col)` under [`XmlDoc::table_headers`].
     /// Attribute columns come first, then child-element text.
     pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {

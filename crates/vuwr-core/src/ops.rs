@@ -5,7 +5,7 @@
 use crate::Error;
 use crate::csv::{Cell, CsvDoc};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EditOp {
     /// Set one cell's text. Short rows are padded with empty cells so a grid
     /// UI can write into a ragged sheet.
@@ -31,6 +31,12 @@ pub enum EditOp {
     },
     DeleteColumn {
         at: usize,
+    },
+    /// Replace the node at `path` in a tree document (JSON or XML). Its
+    /// own inverse: applying it returns the value that was there.
+    SetNode {
+        path: crate::node::NodePath,
+        value: crate::node::Node,
     },
     /// Swap a column to a new position. Requires a rectangular sheet so the
     /// inverse (`MoveColumn` with the arguments swapped) is exact.
@@ -62,6 +68,8 @@ impl CsvDoc {
     /// untouched.
     pub(crate) fn apply(&mut self, op: EditOp) -> Result<EditOp, Error> {
         match op {
+            // Tree ops address JSON/XML nodes; a CSV sheet has no paths.
+            EditOp::SetNode { .. } => Err(Error::EditNotSupported { format: "CSV" }),
             EditOp::SetCell { row, column, value } => {
                 let len = self.height();
                 let r = self

@@ -66,6 +66,156 @@ pub struct XmlDecl {
     pub standalone: Option<String>,
 }
 
+/// One step in a path to a node.
+///
+/// Paths are how edits address a value in a tree, the way `(row, column)`
+/// addresses one in a sheet. `Index` covers both array items and an
+/// element's *element* children — whitespace and comments are not
+/// addressable, so indices match what the table view shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathSeg {
+    Key(String),
+    Index(usize),
+    /// An XML attribute. Only valid as the final step.
+    Attr(String),
+    /// An XML element's text content. Only valid as the final step.
+    ///
+    /// Text is not reachable by `Index`, which walks element children only
+    /// so that indices line up with the rows the table view shows.
+    Text,
+}
+
+pub type NodePath = Vec<PathSeg>;
+
+impl Node {
+    /// Replace the node at `path`, returning what was there.
+    ///
+    /// The returned value is exactly what `set_at` needs to put it back,
+    /// which is what makes undo byte-exact.
+    pub fn set_at(&mut self, path: &[PathSeg], value: Node) -> Result<Node, crate::Error> {
+        let Some((last, parents)) = path.split_last() else {
+            return Ok(std::mem::replace(self, value));
+        };
+        let mut node = self;
+        for seg in parents {
+            node = node.child_mut(seg)?;
+        }
+        match last {
+            PathSeg::Attr(name) => {
+                let Node::Element(e) = node else {
+                    return Err(crate::Error::NoSuchPath);
+                };
+                let attr = e
+                    .attributes
+                    .iter_mut()
+                    .find(|(k, _, _)| k == name)
+                    .ok_or(crate::Error::NoSuchPath)?;
+                let old = std::mem::replace(
+                    &mut attr.1,
+                    match value {
+                        Node::Str(s) => s,
+                        other => other.scalar_text(),
+                    },
+                );
+                Ok(Node::Str(old))
+            }
+            PathSeg::Text => {
+                let Node::Element(e) = node else {
+                    return Err(crate::Error::NoSuchPath);
+                };
+                let old: String = e
+                    .children
+                    .iter()
+                    .filter_map(|c| match c {
+                        Node::Text(t) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let text = match value {
+                    Node::Text(t) | Node::Str(t) => t,
+                    other => other.scalar_text(),
+                };
+                // Replace the first text child and drop any others, so
+                // repeated edits do not accumulate fragments.
+                let mut replaced = false;
+                e.children.retain_mut(|c| match c {
+                    Node::Text(t) if !replaced => {
+                        *t = text.clone();
+                        replaced = true;
+                        true
+                    }
+                    Node::Text(_) => false,
+                    _ => true,
+                });
+                if !replaced {
+                    e.children.push(Node::Text(text));
+                    e.self_closing = false;
+                }
+                Ok(Node::Text(old))
+            }
+            seg => {
+                let slot = node.child_mut(seg)?;
+                Ok(std::mem::replace(slot, value))
+            }
+        }
+    }
+
+    /// The node at `path`, if it exists.
+    pub fn get_at(&self, path: &[PathSeg]) -> Option<&Node> {
+        let mut node = self;
+        for seg in path {
+            node = match (node, seg) {
+                (Node::Map(m), PathSeg::Key(k)) => {
+                    m.entries.iter().find(|(key, _)| key == k).map(|(_, v)| v)?
+                }
+                (Node::Array(a), PathSeg::Index(i)) => a.items.get(*i)?,
+                (Node::Element(e), PathSeg::Index(i)) => e
+                    .children
+                    .iter()
+                    .filter(|c| matches!(c, Node::Element(_)))
+                    .nth(*i)?,
+                _ => return None,
+            };
+        }
+        Some(node)
+    }
+
+    fn child_mut(&mut self, seg: &PathSeg) -> Result<&mut Node, crate::Error> {
+        match (self, seg) {
+            (Node::Map(m), PathSeg::Key(k)) => m
+                .entries
+                .iter_mut()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v)
+                .ok_or(crate::Error::NoSuchPath),
+            (Node::Array(a), PathSeg::Index(i)) => {
+                a.items.get_mut(*i).ok_or(crate::Error::NoSuchPath)
+            }
+            // Only element children are addressable, so an index means the
+            // n-th element, skipping whitespace text and comments.
+            (Node::Element(e), PathSeg::Index(i)) => e
+                .children
+                .iter_mut()
+                .filter(|c| matches!(c, Node::Element(_)))
+                .nth(*i)
+                .ok_or(crate::Error::NoSuchPath),
+            _ => Err(crate::Error::NoSuchPath),
+        }
+    }
+
+    /// The text of a scalar node, as it would appear in a cell.
+    pub fn scalar_text(&self) -> String {
+        match self {
+            Node::Null => "null".to_string(),
+            Node::Bool(b) => b.to_string(),
+            Node::Number(n) => n.clone(),
+            Node::Str(s) => s.clone(),
+            Node::Text(t) => t.clone(),
+            _ => String::new(),
+        }
+    }
+}
+
 // --- Convenience constructors ---
 
 impl Node {

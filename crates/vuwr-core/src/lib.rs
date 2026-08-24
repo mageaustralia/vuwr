@@ -10,13 +10,15 @@ mod csv;
 pub mod json;
 pub mod node;
 mod ops;
+mod sheet;
 mod view;
 mod xml;
 
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
 pub use json::JsonDoc;
-pub use node::{Array, Element, Map, Node, XmlDecl};
+pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};
 pub use ops::EditOp;
+pub use sheet::Sheet;
 pub use view::GridState;
 pub use xml::XmlDoc;
 
@@ -83,6 +85,11 @@ pub enum Error {
     EditNotSupported {
         format: &'static str,
     },
+    /// An edit addressed a node that does not exist.
+    NoSuchPath,
+    /// The document has no table-shaped view (not an array of objects, not
+    /// repeated sibling elements).
+    NotTableShaped,
 }
 
 impl fmt::Display for Error {
@@ -115,6 +122,8 @@ impl fmt::Display for Error {
             Error::EditNotSupported { format } => {
                 write!(f, "editing {format} documents is not supported yet")
             }
+            Error::NoSuchPath => write!(f, "no such path in the document"),
+            Error::NotTableShaped => write!(f, "document has no table-shaped view"),
         }
     }
 }
@@ -232,13 +241,56 @@ impl Document {
     fn apply_inner(&mut self, op: EditOp) -> Result<EditOp, Error> {
         match &mut self.kind {
             Kind::Csv(doc) => doc.apply(op),
-            // Returning `Ok(op)` here would report success, push a bogus
-            // inverse onto the undo stack, and let the frontend mark the
-            // document dirty — so a save would write back the unchanged
-            // file and the user's edit would vanish. Fail loudly instead.
-            Kind::Json(_) => Err(Error::EditNotSupported { format: "JSON" }),
-            Kind::Xml(_) => Err(Error::EditNotSupported { format: "XML" }),
+            Kind::Json(doc) => match op {
+                EditOp::SetNode { path, value } => {
+                    let previous = doc.root_mut().set_at(&path, value)?;
+                    Ok(EditOp::SetNode {
+                        path,
+                        value: previous,
+                    })
+                }
+                _ => Err(Error::EditNotSupported { format: "JSON" }),
+            },
+            Kind::Xml(doc) => match op {
+                EditOp::SetNode { path, value } => {
+                    let previous = doc.root_mut().set_at(&path, value)?;
+                    Ok(EditOp::SetNode {
+                        path,
+                        value: previous,
+                    })
+                }
+                _ => Err(Error::EditNotSupported { format: "XML" }),
+            },
         }
+    }
+
+    /// The table view of this document, if it has one.
+    ///
+    /// One interface for every format, so frontends do not branch per
+    /// format — and so a format added later (by a script or a plugin) is
+    /// indistinguishable from a built-in one.
+    pub fn sheet(&self) -> Option<&dyn Sheet> {
+        match &self.kind {
+            Kind::Csv(doc) => Some(doc),
+            Kind::Json(doc) if self.json_table_eligible() => Some(doc),
+            Kind::Xml(doc) if self.xml_table_eligible() => Some(doc),
+            _ => None,
+        }
+    }
+
+    /// Write one cell through the table view, recording undo.
+    pub fn set_cell(&mut self, row: usize, col: usize, value: &str) -> Result<(), Error> {
+        let eligible_json = self.json_table_eligible();
+        let eligible_xml = self.xml_table_eligible();
+        let inverse = match &mut self.kind {
+            Kind::Csv(doc) => doc.set_cell(row, col, value),
+            Kind::Json(doc) if eligible_json => doc.set_cell(row, col, value),
+            Kind::Xml(doc) if eligible_xml => doc.set_cell(row, col, value),
+            _ => Err(Error::NotTableShaped),
+        }?;
+        self.undo.push(inverse);
+        self.redo.clear();
+        Ok(())
     }
 
     pub fn as_csv(&self) -> Option<&CsvDoc> {
@@ -338,5 +390,5 @@ fn is_array_of_objects(node: &Node) -> bool {
 /// file has text between every element, which used to make it ineligible.
 fn is_repeated_siblings(doc: &XmlDoc) -> bool {
     let rows = doc.row_elements();
-    rows.len() > 1 && rows.iter().all(|e| e.tag == rows[0].tag)
+    !rows.is_empty() && rows.iter().all(|e| e.tag == rows[0].tag)
 }

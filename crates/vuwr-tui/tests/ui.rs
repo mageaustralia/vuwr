@@ -272,3 +272,63 @@ fn xml_table_mode_renders_rows() {
         "rows must render:\n{out}"
     );
 }
+
+/// Editing used to be CSV-only; a JSON edit was accepted by the UI and
+/// then silently discarded by the core. It now writes through.
+#[test]
+fn json_cell_edits_write_through_from_the_ui() {
+    let doc = Document::parse(br#"[{"name":"Alice","age":30}]"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+
+    app.handle_key(key(KeyCode::Tab)); // tree -> table
+    assert_eq!(app.view_mode(), ViewMode::Table);
+
+    app.handle_key(key(KeyCode::Char('c'))); // replace, not append
+    for c in "Alicia".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+
+    assert!(
+        app.dirty,
+        "the edit must mark the document dirty: {}",
+        app.status
+    );
+    assert_eq!(app.table_cell(0, 0).as_deref(), Some("Alicia"));
+
+    app.handle_key(key(KeyCode::Char('u')));
+    assert_eq!(app.table_cell(0, 0).as_deref(), Some("Alice"), "undo works");
+}
+
+/// A JSON number edited to another number stays a number in the file.
+#[test]
+fn json_edit_from_the_ui_preserves_type() {
+    let doc = Document::parse(br#"[{"n":30}]"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.handle_key(key(KeyCode::Tab));
+    app.handle_key(key(KeyCode::Char('c')));
+    for c in "31".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        r#"[{"n":31}]"#
+    );
+}
+
+#[test]
+fn i_appends_to_the_existing_value_and_c_replaces_it() {
+    let mut app = app("name\nAlice\n");
+    app.grid.move_to(1, 0, 2, 1);
+
+    app.handle_key(key(KeyCode::Char('i')));
+    app.handle_key(key(KeyCode::Char('!')));
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.table_cell(1, 0).as_deref(), Some("Alice!"));
+
+    app.handle_key(key(KeyCode::Char('c')));
+    app.handle_key(key(KeyCode::Char('Z')));
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.table_cell(1, 0).as_deref(), Some("Z"));
+}
