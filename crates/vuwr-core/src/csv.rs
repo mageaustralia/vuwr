@@ -293,6 +293,8 @@ mod tests {
         roundtrip("a,b\r\n1,2\r\n");
         roundtrip("\n"); // one empty row
         roundtrip("a,b\n1\n"); // ragged
+        roundtrip("a\n\n"); // trailing blank row is a row, not absorbed
+        roundtrip("a,b\n\n1,2\n"); // blank line in the middle
         roundtrip("\"007\",x\n"); // quoting preserved even when unneeded
         roundtrip("héllo,wörld\n");
         roundtrip(",,\n,,\n"); // empty cells

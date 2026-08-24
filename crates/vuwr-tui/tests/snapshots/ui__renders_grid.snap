@@ -1,0 +1,12 @@
+---
+source: crates/vuwr-tui/tests/ui.rs
+expression: "render(&mut app, 30, 8)"
+---
+"name  age                     "
+"Alice 30                      "
+"Bob   25                      "
+"                              "
+"                              "
+"                              "
+"                              "
+" test.csv  row 1/3 col 1/2    "

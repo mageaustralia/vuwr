@@ -8,9 +8,11 @@
 
 mod csv;
 mod ops;
+mod view;
 
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
 pub use ops::EditOp;
+pub use view::GridState;
 
 use std::fmt;
 
