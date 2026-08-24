@@ -191,3 +191,84 @@ fn renaming_an_array_item_reports_why_it_cannot() {
     assert!(!s.is_renaming());
     assert!(s.status.contains("only object keys"), "{}", s.status);
 }
+
+// --- Clipboard ---
+
+use vuwr_core::Effect;
+
+/// Core does no I/O, so copying asks the frontend to do it.
+#[test]
+fn copying_asks_the_frontend_for_the_clipboard() {
+    let mut s = session(r#"{"a":"hello"}"#);
+    match s.execute(Command::Copy) {
+        Effect::Copy(text) => assert_eq!(text, "hello"),
+        other => panic!("expected a copy effect, got {other:?}"),
+    }
+}
+
+/// A container copies as JSON, which is what you would paste elsewhere.
+#[test]
+fn copying_a_container_yields_json() {
+    let mut s = session(r#"{"o":{"x":1}}"#);
+    match s.execute(Command::Copy) {
+        Effect::Copy(text) => assert_eq!(text, r#"{"x":1}"#),
+        other => panic!("got {other:?}"),
+    }
+}
+
+#[test]
+fn pasting_replaces_the_value_under_the_cursor() {
+    let mut s = session(r#"{"a":"old"}"#);
+    s.paste("new");
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        r#"{"a":"new"}"#
+    );
+    assert!(s.dirty);
+}
+
+/// Mid-edit, a paste goes in at the caret rather than replacing anything.
+#[test]
+fn pasting_while_typing_inserts_at_the_caret() {
+    let mut s = session(r#"{"a":"ac"}"#);
+    s.execute(Command::EditCell);
+    s.input_left(); // between a and c
+    s.paste("b");
+    s.input_submit();
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        r#"{"a":"abc"}"#
+    );
+}
+
+/// A cell holds one value, so pasting a block would silently flatten it.
+#[test]
+fn pasting_several_lines_into_a_cell_is_refused() {
+    let src = r#"{"a":"old"}"#;
+    let mut s = session(src);
+    s.paste("one\ntwo");
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+    assert!(s.status.contains("several lines"), "{}", s.status);
+}
+
+/// Newlines are dropped rather than refused mid-edit, where a line break
+/// would end the edit anyway.
+#[test]
+fn pasting_several_lines_while_typing_strips_the_breaks() {
+    let mut s = session(r#"{"a":""}"#);
+    s.execute(Command::EditCell);
+    s.paste("one\ntwo");
+    s.input_submit();
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        r#"{"a":"onetwo"}"#
+    );
+}
+
+#[test]
+fn pasting_nothing_does_nothing() {
+    let src = r#"{"a":"old"}"#;
+    let mut s = session(src);
+    s.paste("");
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+}

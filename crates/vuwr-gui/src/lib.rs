@@ -34,6 +34,7 @@ pub const TOOLBAR_ONLY: &[Command] = &[
     Command::SortNumeric,
     Command::ExpandAll,
     Command::CollapseAll,
+    Command::CopyRow,
 ];
 
 /// The keys help shows for a command. Exposed for tests, which assert the
@@ -61,6 +62,10 @@ pub struct VuwrApp {
     show_licenses: bool,
     /// Which diagnostic the bar is showing.
     diagnostic_index: usize,
+    /// A paste was asked for and the clipboard has not arrived yet.
+    pub(crate) want_paste: bool,
+    /// The large-value editor: what is being edited, if anything.
+    large_edit: Option<String>,
 }
 
 impl VuwrApp {
@@ -89,6 +94,8 @@ impl VuwrApp {
             load_error: None,
             show_licenses: false,
             diagnostic_index: 0,
+            want_paste: false,
+            large_edit: None,
         }
     }
 
@@ -102,6 +109,8 @@ impl VuwrApp {
             load_error: None,
             show_licenses: false,
             diagnostic_index: 0,
+            want_paste: false,
+            large_edit: None,
         }
     }
 
@@ -175,6 +184,7 @@ impl VuwrApp {
                 session.grid.cursor.0 = row;
                 match action {
                     NodeAction::EditValue => self.run(Command::EditCell, ctx),
+                    NodeAction::EditLarge => self.run(Command::EditLarge, ctx),
                     NodeAction::CopyValue => {
                         let text = session.value_text_at_cursor().unwrap_or_default();
                         ctx.copy_text(text);
@@ -192,6 +202,13 @@ impl VuwrApp {
 
     /// Run a command and carry out whatever it asks for.
     pub fn run(&mut self, cmd: Command, ctx: &egui::Context) {
+        if cmd == Command::EditLarge {
+            self.large_edit = self.session.as_ref().and_then(|s| s.large_edit_text());
+            if self.large_edit.is_none() {
+                self.report_status("nothing here to edit");
+            }
+            return;
+        }
         let Some(session) = self.session.as_mut() else {
             return;
         };
@@ -228,6 +245,14 @@ impl VuwrApp {
                 }
             }
             Effect::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Effect::Copy(text) => {
+                let n = text.chars().count();
+                ctx.copy_text(text);
+                self.report_status(format!("copied {n} characters"));
+            }
+            // egui delivers the clipboard as an event rather than on
+            // demand, so ask for it and take it next frame.
+            Effect::Paste => self.want_paste = true,
             Effect::Output(text) => {
                 // A GUI has no stdout worth writing to, so the marked rows
                 // go to the clipboard, which is the same idea in this
@@ -357,6 +382,7 @@ impl eframe::App for VuwrApp {
         if self.show_licenses {
             self.licenses_window(ctx);
         }
+        self.large_edit_window(ctx);
     }
 }
 
@@ -546,6 +572,66 @@ impl VuwrApp {
         let mut open = self.show_licenses;
         render_license_window(&mut open, ctx);
         self.show_licenses = open;
+    }
+
+    /// A window with room to edit a value that does not fit on a line —
+    /// a description holding a paragraph of escaped HTML, say.
+    fn large_edit_window(&mut self, ctx: &egui::Context) {
+        let Some(mut text) = self.large_edit.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut commit = false;
+        let mut cancel = false;
+
+        egui::Window::new("Edit value")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([680.0, 420.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        self.session
+                            .as_ref()
+                            .map(|s| s.position_label())
+                            .unwrap_or_default(),
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut text)
+                            .code_editor()
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(18),
+                    );
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        commit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    ui.label(
+                        egui::RichText::new(format!("{} characters", text.chars().count()))
+                            .weak()
+                            .small(),
+                    );
+                });
+            });
+
+        if commit {
+            if let Some(s) = self.session.as_mut() {
+                s.commit_large_edit(&text);
+            }
+        } else if !cancel && open {
+            // Still open: keep what has been typed for the next frame.
+            self.large_edit = Some(text);
+        }
     }
 
     fn help_window(&mut self, ctx: &egui::Context) {

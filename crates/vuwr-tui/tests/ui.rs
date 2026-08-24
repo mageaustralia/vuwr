@@ -1055,6 +1055,7 @@ fn every_command_is_reachable_by_the_route_help_advertises() {
         .map(KeyCode::Char)
         .collect();
     codes.extend([
+        KeyCode::F(2),
         KeyCode::Up,
         KeyCode::Down,
         KeyCode::Left,

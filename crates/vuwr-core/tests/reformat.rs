@@ -66,14 +66,89 @@ fn reformatting_never_changes_the_data() {
     }
 }
 
+/// CSV's shape is its content — rows and columns, nothing to re-indent.
 #[test]
-fn csv_and_xml_have_no_layout_to_change() {
+fn csv_has_no_layout_to_change() {
     let mut csv = Document::parse(b"a,b\n1,2\n", FormatHint::Csv).unwrap();
     assert!(csv.reformat(Layout::Pretty).is_err());
+}
 
-    let mut xml = Document::parse(b"<r><a/></r>", FormatHint::Xml).unwrap();
+// --- XML ---
+
+fn xml(src: &str) -> Document {
+    Document::parse(src.as_bytes(), FormatHint::Xml).unwrap()
+}
+
+#[test]
+fn xml_pretty_indents_nested_elements() {
+    let mut d = xml("<r><a><b/></a></r>");
+    d.reformat(Layout::Pretty).unwrap();
+    assert_eq!(text(&d), "<r>\n  <a>\n    <b/>\n  </a>\n</r>");
+}
+
+#[test]
+fn xml_compact_removes_layout_whitespace() {
+    let mut d = xml("<r>\n  <a>\n    <b/>\n  </a>\n</r>");
+    d.reformat(Layout::Compact).unwrap();
+    assert_eq!(text(&d), "<r><a><b/></a></r>");
+}
+
+/// The important restraint: an element holding text must not be broken
+/// across lines, because the newlines would become part of the text.
+#[test]
+fn xml_reformatting_never_touches_text_content() {
+    let src = "<r><name>Alice Smith</name></r>";
+    let mut d = xml(src);
+    d.reformat(Layout::Pretty).unwrap();
     assert!(
-        xml.reformat(Layout::Pretty).is_err(),
-        "reflowing XML would move text nodes, which changes meaning"
+        text(&d).contains("<name>Alice Smith</name>"),
+        "text elements stay on one line: {}",
+        text(&d)
     );
+}
+
+#[test]
+fn xml_reformatting_leaves_cdata_alone() {
+    let src = "<r><d><![CDATA[ spaced  content ]]></d></r>";
+    let mut d = xml(src);
+    d.reformat(Layout::Pretty).unwrap();
+    assert!(
+        text(&d).contains("<![CDATA[ spaced  content ]]>"),
+        "{}",
+        text(&d)
+    );
+}
+
+#[test]
+fn xml_reformatting_is_undoable() {
+    let src = "<r><a/></r>";
+    let mut d = xml(src);
+    d.reformat(Layout::Pretty).unwrap();
+    assert_ne!(text(&d), src);
+    assert!(d.undo());
+    assert_eq!(text(&d), src);
+}
+
+#[test]
+fn xml_reformatting_preserves_the_declaration_and_attributes() {
+    let mut d = xml("<?xml version=\"1.0\"?><r a=\"1\"><b c='2'/></r>");
+    d.reformat(Layout::Pretty).unwrap();
+    let out = text(&d);
+    assert!(out.starts_with("<?xml version=\"1.0\"?>\n"), "{out}");
+    assert!(out.contains("a=\"1\""), "{out}");
+    assert!(out.contains("c='2'"), "single quotes survive: {out}");
+}
+
+/// Reformatting changes layout, never content: re-compacting must give
+/// back what compacting the original gives.
+#[test]
+fn xml_reformatting_never_changes_the_data() {
+    let src = "<r><a x=\"1\"><b>text</b><c/></a></r>";
+    for style in [Layout::Pretty, Layout::Smart, Layout::Compact] {
+        let mut d = xml(src);
+        d.reformat(style).unwrap();
+        let mut round = Document::parse(&d.serialize(), FormatHint::Xml).unwrap();
+        round.reformat(Layout::Compact).unwrap();
+        assert_eq!(text(&round), src, "{style:?} changed the document");
+    }
 }

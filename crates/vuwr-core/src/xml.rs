@@ -141,6 +141,39 @@ impl XmlDoc {
         )
     }
 
+    /// Re-indent the document.
+    ///
+    /// The parser preserves whatever layout a file had, which is the point
+    /// of this tool; this is the deliberate opposite. Elements holding
+    /// text are left on one line: breaking them would insert whitespace
+    /// *into* the text, changing what the document says. That is why XML
+    /// reformatting is conservative where JSON's is not.
+    pub fn reformat(&mut self, style: crate::Layout) {
+        let indent = match style {
+            crate::Layout::Compact => None,
+            crate::Layout::Pretty | crate::Layout::Smart => Some("  "),
+        };
+        for child in &mut self.children {
+            relayout(child, indent, 0);
+        }
+        // Between top-level nodes: a declaration and the root element on
+        // one line is legal but unreadable.
+        if indent.is_some() {
+            let mut spaced = Vec::new();
+            for (i, child) in self.children.drain(..).enumerate() {
+                if i > 0 && !matches!(child, Node::Text(_)) {
+                    spaced.push(Node::Text("\n".to_string()));
+                }
+                if !matches!(child, Node::Text(_)) {
+                    spaced.push(child);
+                }
+            }
+            self.children = spaced;
+        } else {
+            self.children.retain(|c| !is_whitespace_text(c));
+        }
+    }
+
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for child in &self.children {
@@ -148,6 +181,48 @@ impl XmlDoc {
         }
         out
     }
+}
+
+/// True for a text node that is only whitespace — layout, not content.
+fn is_whitespace_text(node: &Node) -> bool {
+    matches!(node, Node::Text(t) if t.trim().is_empty())
+}
+
+/// Re-indent one element and its descendants.
+fn relayout(node: &mut Node, indent: Option<&str>, depth: usize) {
+    let Node::Element(e) = node else {
+        return;
+    };
+    // An element with text in it keeps its children exactly: adding
+    // newlines around them would add that whitespace to the text.
+    let has_text = e
+        .children
+        .iter()
+        .any(|c| matches!(c, Node::Text(t) if !t.trim().is_empty()) || matches!(c, Node::CData(_)));
+    if has_text {
+        return;
+    }
+
+    e.children.retain(|c| !is_whitespace_text(c));
+    for child in &mut e.children {
+        relayout(child, indent, depth + 1);
+    }
+
+    let Some(unit) = indent else {
+        return;
+    };
+    if e.children.is_empty() {
+        return;
+    }
+    let inner = format!("\n{}", unit.repeat(depth + 1));
+    let closing = format!("\n{}", unit.repeat(depth));
+    let mut spaced = Vec::with_capacity(e.children.len() * 2 + 1);
+    for child in e.children.drain(..) {
+        spaced.push(Node::Text(inner.clone()));
+        spaced.push(child);
+    }
+    spaced.push(Node::Text(closing));
+    e.children = spaced;
 }
 
 fn serialize_node(node: &Node, out: &mut Vec<u8>) {

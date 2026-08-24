@@ -4236,6 +4236,7 @@ dependencies = [
 name = "vuwr-tui"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "crossterm",
  "insta",
  "ratatui",

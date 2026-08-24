@@ -202,6 +202,7 @@ pub enum TreeAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeAction {
     EditValue,
+    EditLarge,
     CopyValue,
     Duplicate,
     Remove,
@@ -214,6 +215,7 @@ impl NodeAction {
     pub fn label(self) -> &'static str {
         match self {
             NodeAction::EditValue => "Edit value",
+            NodeAction::EditLarge => "Edit value in a window…",
             NodeAction::CopyValue => "Copy value",
             NodeAction::Duplicate => "Duplicate",
             NodeAction::Remove => "Remove",
@@ -314,6 +316,9 @@ fn node_menu(ui: &mut egui::Ui, is_container: bool) -> Option<NodeAction> {
         if ui.button(NodeAction::EditValue.label()).clicked() {
             chosen = Some(NodeAction::EditValue);
         }
+        if ui.button(NodeAction::EditLarge.label()).clicked() {
+            chosen = Some(NodeAction::EditLarge);
+        }
     });
     if ui.button(NodeAction::CopyValue.label()).clicked() {
         chosen = Some(NodeAction::CopyValue);
@@ -343,32 +348,139 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
     session.set_viewport_rows(PAGE_ROWS);
     let (_, lines, _) = session.table_dims();
     let cursor_row = session.grid.cursor.0;
-    let gutter = lines.to_string().len().max(2);
     let editing = session.is_editing_inline();
+    let grammar = session.grammar();
+    let dark = ui.visuals().dark_mode;
     let mut edit = false;
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
 
-    egui::ScrollArea::both().show(ui, |ui| {
-        for n in 0..lines {
-            if editing && n == cursor_row {
-                ui.horizontal(|ui| {
-                    ui.monospace(format!("{:>gutter$} ", n + 1, gutter = gutter));
-                    ui.label(caret_text(session));
-                });
-                continue;
-            }
-            let line = session.table_cell(n, 0).unwrap_or_default();
-            let selected = n == cursor_row;
-            let text = format!("{:>gutter$}  {}", n + 1, line, gutter = gutter);
-            let response = ui.selectable_label(selected, RichText::new(text).monospace());
-            if response.clicked() {
-                session.grid.cursor = (n, 0);
-            }
-            // Double-click edits the line, as it does a cell or a value.
-            if response.double_clicked() {
-                session.grid.cursor = (n, 0);
-                edit = true;
-            }
-        }
+    // A fixed gutter beside a scrolling pane, rather than the number
+    // embedded in each line: with the number in the text it scrolls away
+    // sideways, and a wrapped line pushes every number out of step.
+    // Wide enough for the largest line number, so the gutter never
+    // resizes as you scroll.
+    let digits = lines.to_string().len().max(2) as f32;
+    let gutter_width = digits * 9.0 + 6.0;
+
+    ui.horizontal_top(|ui| {
+        let gutter = egui::ScrollArea::vertical()
+            .id_salt("text-gutter")
+            .vertical_scroll_offset(session.text_scroll)
+            .show_rows(ui, row_height, lines, |ui, range| {
+                ui.set_width(gutter_width);
+                for n in range {
+                    ui.label(
+                        RichText::new(format!("{:>1$}", n + 1, lines.to_string().len().max(2)))
+                            .monospace()
+                            .weak(),
+                    );
+                }
+            });
+        let _ = gutter;
+
+        ui.separator();
+
+        let content = egui::ScrollArea::both().id_salt("text-content").show_rows(
+            ui,
+            row_height,
+            lines,
+            |ui, range| {
+                // Lines extend rather than wrap, so the gutter stays in
+                // step and long lines scroll sideways instead of folding.
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                for n in range {
+                    if editing && n == cursor_row {
+                        ui.label(caret_text(session));
+                        continue;
+                    }
+                    let line = session.table_cell(n, 0).unwrap_or_default();
+                    let response =
+                        ui.selectable_label(n == cursor_row, coloured_line(&line, grammar, dark));
+                    if response.clicked() {
+                        session.grid.cursor = (n, 0);
+                    }
+                    if response.double_clicked() {
+                        session.grid.cursor = (n, 0);
+                        edit = true;
+                    }
+                }
+            },
+        );
+        // Feed the content's position back to the gutter. A frame behind,
+        // which is imperceptible, and far simpler than linking them.
+        session.text_scroll = content.state.offset.y;
     });
+
     edit
+}
+
+/// One line, coloured by grammar.
+fn coloured_line(line: &str, grammar: vuwr_core::Grammar, dark: bool) -> egui::text::LayoutJob {
+    use egui::text::{LayoutJob, TextFormat};
+    let font = egui::FontId::monospace(12.0);
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = f32::INFINITY;
+
+    let spans = vuwr_core::highlight(line, grammar);
+    if spans.is_empty() {
+        job.append(
+            line,
+            0.0,
+            TextFormat::simple(font, token_color(vuwr_core::Token::Plain, dark)),
+        );
+        return job;
+    }
+    let mut at = 0usize;
+    for span in spans {
+        if span.start > at {
+            job.append(
+                &line[at..span.start],
+                0.0,
+                TextFormat::simple(font.clone(), token_color(vuwr_core::Token::Plain, dark)),
+            );
+        }
+        job.append(
+            &line[span.start..span.end],
+            0.0,
+            TextFormat::simple(font.clone(), token_color(span.token, dark)),
+        );
+        at = span.end;
+    }
+    if at < line.len() {
+        job.append(
+            &line[at..],
+            0.0,
+            TextFormat::simple(font, token_color(vuwr_core::Token::Plain, dark)),
+        );
+    }
+    job
+}
+
+fn token_color(token: vuwr_core::Token, dark: bool) -> Color32 {
+    use vuwr_core::Token as T;
+    if dark {
+        match token {
+            T::Key => Color32::from_rgb(130, 190, 240),
+            T::Str => Color32::from_rgb(230, 160, 120),
+            T::Number => Color32::from_rgb(150, 210, 130),
+            T::Keyword => Color32::from_rgb(190, 150, 240),
+            T::Tag => Color32::from_rgb(130, 190, 240),
+            T::Comment => Color32::from_rgb(120, 120, 130),
+            T::Escape => Color32::from_rgb(220, 200, 120),
+            T::Punctuation => Color32::from_rgb(150, 150, 160),
+            T::Plain => Color32::from_rgb(210, 210, 215),
+        }
+    } else {
+        match token {
+            T::Key => Color32::from_rgb(20, 90, 160),
+            T::Str => Color32::from_rgb(170, 70, 20),
+            T::Number => Color32::from_rgb(30, 120, 40),
+            T::Keyword => Color32::from_rgb(110, 50, 170),
+            T::Tag => Color32::from_rgb(20, 90, 160),
+            T::Comment => Color32::from_rgb(130, 130, 140),
+            T::Escape => Color32::from_rgb(150, 110, 10),
+            T::Punctuation => Color32::from_rgb(110, 110, 120),
+            T::Plain => Color32::from_rgb(40, 40, 50),
+        }
+    }
 }

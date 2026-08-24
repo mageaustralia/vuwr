@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# System clipboard for copy/paste. Native only; the TUI does not build
+# for wasm.
+arboard = "3"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
 vuwr-core = { path = "../vuwr-core" }

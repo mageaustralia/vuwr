@@ -230,6 +230,7 @@ fn help_never_claims_a_binding_the_gui_does_not_have() {
     use eframe::egui::{Key, Modifiers};
 
     const KEYS: &[Key] = &[
+        Key::F2,
         Key::A,
         Key::B,
         Key::C,

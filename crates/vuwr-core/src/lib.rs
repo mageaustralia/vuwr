@@ -16,6 +16,7 @@ mod search;
 mod session;
 mod sheet;
 mod sort;
+mod syntax;
 mod tree;
 mod view;
 mod xml;
@@ -32,6 +33,7 @@ pub use session::{
 };
 pub use sheet::Sheet;
 pub use sort::{SortDirection, SortKind, natural_cmp, sort_rows};
+pub use syntax::{Grammar, Span, Token, highlight};
 pub use tree::{Expansion, RowKind, TreeRow, ValueKind};
 pub use view::GridState;
 pub use xml::XmlDoc;
@@ -439,14 +441,20 @@ impl Document {
     /// Only JSON has a layout to change; CSV's shape is its content, and
     /// XML reflowing would move text nodes, which changes meaning.
     pub fn reformat(&mut self, style: Layout) -> Result<(), Error> {
-        let Kind::Json(doc) = &self.kind else {
-            return Err(Error::EditNotSupported {
-                format: if self.is_csv() { "CSV" } else { "XML" },
-            });
+        let bytes = match &self.kind {
+            Kind::Json(doc) => {
+                let mut copy = doc.clone();
+                copy.reformat(style);
+                copy.serialize()
+            }
+            Kind::Xml(doc) => {
+                let mut copy = doc.clone();
+                copy.reformat(style);
+                copy.serialize()
+            }
+            // CSV's shape is its content: there is no layout to change.
+            Kind::Csv(_) => return Err(Error::EditNotSupported { format: "CSV" }),
         };
-        let mut copy = doc.clone();
-        copy.reformat(style);
-        let bytes = copy.serialize();
         self.replace_source(&bytes)
     }
 

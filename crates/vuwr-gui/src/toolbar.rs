@@ -53,9 +53,9 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
             ui.separator();
         }
 
-        // Layout. JSON only: CSV's shape is its content, and reflowing XML
-        // would move text nodes.
-        let can_format = session.doc.is_json();
+        // Layout. Not CSV: its shape is its content, with nothing to
+        // re-indent.
+        let can_format = session.doc.is_json() || session.doc.is_xml();
         ui.add_enabled_ui(can_format, |ui| {
             if button(ui, "format", "Re-indent: one value per line (Ctrl+I)").clicked() {
                 clicked = Some(Command::FormatPretty);
@@ -112,6 +112,13 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
             });
         });
 
+        ui.separator();
+
+        ui.add_enabled_ui(table, |ui| {
+            if button(ui, "copy row", "Copy the selected row").clicked() {
+                clicked = Some(Command::CopyRow);
+            }
+        });
         ui.separator();
 
         if button(ui, "undo", "Undo (Ctrl+Z)").clicked() {

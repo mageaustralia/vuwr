@@ -23,6 +23,8 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
     if mods.command {
         return match key {
             Key::S => Some(Command::Save),
+            Key::C => Some(Command::Copy),
+            Key::V => Some(Command::Paste),
             Key::Z if mods.shift => Some(Command::Redo),
             Key::Z => Some(Command::Undo),
             Key::F => Some(Command::Find),
@@ -65,6 +67,7 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
         Key::Enter => Command::DrillDown,
         Key::Escape => Command::DrillUp,
         Key::I => Command::EditCell,
+        Key::F2 => Command::EditLarge,
         Key::C => Command::ReplaceCell,
         Key::R if mods.shift => Command::RenameKey,
         Key::U => Command::Undo,
@@ -123,6 +126,10 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::EditCell => "i / Enter",
         Command::ReplaceCell => "c",
         Command::RenameKey => "double-click / R",
+        Command::EditLarge => "F2",
+        Command::Copy => "Ctrl-C",
+        Command::CopyRow => "toolbar",
+        Command::Paste => "Ctrl-V",
         Command::Undo => "Ctrl-Z / u",
         Command::Redo => "Ctrl-Shift-Z",
         Command::Find => "Ctrl-F / /",
@@ -148,6 +155,28 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::Help => "?",
         Command::ToggleHints => "H",
     }
+}
+
+/// Take clipboard text the platform sends us.
+///
+/// egui delivers a paste as an event rather than on demand, so a paste
+/// asked for by a command is served on the frame the event arrives.
+fn handle_clipboard(app: &mut VuwrApp, ctx: &egui::Context) {
+    let pasted: Vec<String> = ctx.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::Paste(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    });
+    for text in pasted {
+        if let Some(session) = app.try_session_mut() {
+            session.paste(&text);
+        }
+    }
+    app.want_paste = false;
 }
 
 /// Take any file dropped on the window.
@@ -194,6 +223,7 @@ fn handle_dropped_files(app: &mut VuwrApp, ctx: &egui::Context) {
 /// Feed this frame's input to the session.
 pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
     handle_dropped_files(app, ctx);
+    handle_clipboard(app, ctx);
 
     if !app.has_document() {
         return;

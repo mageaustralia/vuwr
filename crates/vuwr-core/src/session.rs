@@ -97,6 +97,10 @@ pub enum Effect {
     Quit,
     /// Hand this text back to the shell (or the clipboard, in a GUI).
     Output(String),
+    /// Put this on the clipboard.
+    Copy(String),
+    /// Read the clipboard and hand it back via [`Session::paste`].
+    Paste,
 }
 
 pub enum Mode {
@@ -173,6 +177,9 @@ pub struct Session {
     /// True while the open edit is renaming a key rather than changing a
     /// value. Both use the same prompt; only the commit differs.
     renaming: bool,
+    /// Vertical scroll offset of text view, so a frontend can keep a fixed
+    /// gutter in step with the content beside it.
+    pub text_scroll: f32,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
     /// The exact bytes those lines came from, and each line's byte span
@@ -210,6 +217,7 @@ impl Session {
             filter: None,
             sort: None,
             renaming: false,
+            text_scroll: 0.0,
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -439,7 +447,12 @@ impl Session {
                     ViewMode::Table => self.doc.sheet().is_some(),
                     // Text view edits the source line itself.
                     ViewMode::Text => true,
-                    ViewMode::Tree => false,
+                    // A tree scalar is editable; a container is not — it
+                    // has no single value to type over.
+                    ViewMode::Tree => self
+                        .tree_rows
+                        .get(self.grid.cursor.0)
+                        .is_some_and(|r| !r.is_container()),
                 };
                 if !editable {
                     self.status = "this view is not editable".into();
@@ -453,6 +466,18 @@ impl Session {
                 }
             }
             Command::RenameKey => self.start_rename(),
+            // The large editor needs somewhere to put a window, so the
+            // frontend handles it; a terminal falls back to inline.
+            Command::EditLarge => return self.execute(Command::EditCell),
+            Command::Copy => match self.value_text_at_cursor() {
+                Some(text) if !text.is_empty() => return Effect::Copy(text),
+                _ => self.status = "nothing to copy here".into(),
+            },
+            Command::CopyRow => match self.row_text_at_cursor() {
+                Some(text) => return Effect::Copy(text),
+                None => self.status = "nothing to copy here".into(),
+            },
+            Command::Paste => return Effect::Paste,
             Command::Undo => {
                 if self.doc.undo() {
                     self.dirty = true;
@@ -575,6 +600,112 @@ impl Session {
         }
     }
 
+    /// The whole row under the cursor as delimited text.
+    pub fn row_text_at_cursor(&self) -> Option<String> {
+        let sheet = self.doc.sheet()?;
+        let (_, cols) = sheet.dims();
+        let row = self.grid.source_row(self.grid.cursor.0);
+        Some(
+            (0..cols)
+                .map(|c| sheet.cell(row, c).unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(","),
+        )
+    }
+
+    /// Take clipboard text.
+    ///
+    /// While something is being typed it goes in at the caret; otherwise
+    /// it replaces the value under the cursor. Multi-line text is refused
+    /// for a cell, which holds one value — pasting a block would silently
+    /// flatten it.
+    pub fn paste(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.is_entering_text() {
+            for c in text.chars().filter(|c| *c != '\n' && *c != '\r') {
+                self.input_char(c);
+            }
+            return;
+        }
+        if text.contains('\n') {
+            self.status = "clipboard holds several lines; open an edit first".into();
+            return;
+        }
+        match self.view {
+            ViewMode::Table => {
+                let (row, column) = self.grid.cursor;
+                let row = self.grid.source_row(row);
+                match self.doc.set_cell(row, column, text) {
+                    Ok(()) => {
+                        self.dirty = true;
+                        self.after_edit();
+                        self.status = "pasted".into();
+                    }
+                    Err(e) => self.status = e.to_string(),
+                }
+            }
+            ViewMode::Tree => {
+                let row = self.grid.cursor.0;
+                self.commit_tree_edit(row, text);
+                self.status = "pasted".into();
+            }
+            ViewMode::Text => {
+                let row = self.grid.cursor.0;
+                self.commit_text_line(row, text);
+            }
+        }
+    }
+
+    /// The value under the cursor, for editing somewhere with room.
+    ///
+    /// A cell holding a paragraph of escaped HTML cannot be edited on one
+    /// line, and the inline caret is the wrong tool for it. The frontend
+    /// takes this, edits it however it likes, and hands it back to
+    /// [`Session::commit_large_edit`].
+    pub fn large_edit_text(&self) -> Option<String> {
+        match self.view {
+            ViewMode::Tree => {
+                let row = self.tree_rows.get(self.grid.cursor.0)?;
+                if row.is_container() {
+                    return None;
+                }
+                let root = self.tree_root()?;
+                Some(node_to_edit_string(root.get_at(&row.path)?))
+            }
+            ViewMode::Table => {
+                let sheet = self.doc.sheet()?;
+                sheet.cell(self.grid.source_row(self.grid.cursor.0), self.grid.cursor.1)
+            }
+            // Text view edits a line, which is one line by definition.
+            ViewMode::Text => None,
+        }
+    }
+
+    /// Write back a value edited elsewhere. Newlines are allowed: this is
+    /// the path for values the inline editor cannot hold.
+    pub fn commit_large_edit(&mut self, text: &str) {
+        match self.view {
+            ViewMode::Tree => {
+                let row = self.grid.cursor.0;
+                self.commit_tree_edit(row, text);
+            }
+            ViewMode::Table => {
+                let (row, column) = self.grid.cursor;
+                let row = self.grid.source_row(row);
+                match self.doc.set_cell(row, column, text) {
+                    Ok(()) => {
+                        self.dirty = true;
+                        self.after_edit();
+                    }
+                    Err(e) => self.status = e.to_string(),
+                }
+            }
+            ViewMode::Text => {}
+        }
+    }
+
     /// Begin renaming the key of the tree row under the cursor.
     pub fn start_rename(&mut self) {
         if self.view != ViewMode::Tree {
@@ -597,6 +728,17 @@ impl Session {
     /// True while a key is being renamed.
     pub fn is_renaming(&self) -> bool {
         self.renaming
+    }
+
+    /// Which grammar text view should colour by.
+    pub fn grammar(&self) -> crate::Grammar {
+        if self.doc.is_json() {
+            crate::Grammar::Json
+        } else if self.doc.is_xml() {
+            crate::Grammar::Xml
+        } else {
+            crate::Grammar::None
+        }
     }
 
     /// Problems in the current document, recomputed on demand.

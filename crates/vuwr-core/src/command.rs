@@ -59,6 +59,10 @@ pub enum Command {
     EditCell,
     ReplaceCell,
     RenameKey,
+    EditLarge,
+    Copy,
+    CopyRow,
+    Paste,
     Undo,
     Redo,
 
@@ -116,6 +120,10 @@ impl Command {
         Command::EditCell,
         Command::ReplaceCell,
         Command::RenameKey,
+        Command::EditLarge,
+        Command::Copy,
+        Command::CopyRow,
+        Command::Paste,
         Command::Undo,
         Command::Redo,
         Command::Save,
@@ -168,6 +176,10 @@ impl Command {
             Command::EditCell => "edit-cell",
             Command::ReplaceCell => "replace-cell",
             Command::RenameKey => "rename-key",
+            Command::EditLarge => "edit-large",
+            Command::Copy => "copy",
+            Command::CopyRow => "copy-row",
+            Command::Paste => "paste",
             Command::Undo => "undo",
             Command::Redo => "redo",
             Command::Save => "write",
@@ -221,6 +233,10 @@ impl Command {
             Command::EditCell => "edit the selected cell",
             Command::ReplaceCell => "replace the selected cell",
             Command::RenameKey => "rename the selected key",
+            Command::EditLarge => "edit the selected value in a larger window",
+            Command::Copy => "copy the selected value",
+            Command::CopyRow => "copy the whole row",
+            Command::Paste => "paste over the selected value",
             Command::Undo => "undo the last edit",
             Command::Redo => "redo the last undone edit",
             Command::Save => "write the file",
@@ -275,6 +291,10 @@ impl Command {
             Command::EditCell => "edit",
             Command::ReplaceCell => "replace",
             Command::RenameKey => "rename",
+            Command::EditLarge => "edit big",
+            Command::Copy => "copy",
+            Command::CopyRow => "copy row",
+            Command::Paste => "paste",
             Command::Undo => "undo",
             Command::Redo => "redo",
             Command::Save => "write",
@@ -335,7 +355,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 47, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 51, "update ALL when adding a command");
     }
 
     #[test]

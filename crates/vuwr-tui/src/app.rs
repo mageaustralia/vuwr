@@ -125,6 +125,17 @@ impl App {
                 self.pending_output = Some(text);
                 self.quit = true;
             }
+            Effect::Copy(text) => match copy_to_clipboard(&text) {
+                Ok(()) => {
+                    let n = text.chars().count();
+                    self.session.report(format!("copied {n} characters"));
+                }
+                Err(e) => self.session.report(format!("copy failed: {e}")),
+            },
+            Effect::Paste => match paste_from_clipboard() {
+                Ok(text) => self.session.paste(&text),
+                Err(e) => self.session.report(format!("paste failed: {e}")),
+            },
         }
     }
 
@@ -142,4 +153,21 @@ impl App {
             }
         }
     }
+}
+
+/// The system clipboard.
+///
+/// A terminal cannot reach it on its own, so this goes through the OS
+/// rather than the terminal — which also means it works when vuwr is not
+/// the frontmost window.
+fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.set_text(text.to_owned()))
+        .map_err(|e| e.to_string())
+}
+
+fn paste_from_clipboard() -> Result<String, String> {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.get_text())
+        .map_err(|e| e.to_string())
 }
