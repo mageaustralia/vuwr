@@ -330,7 +330,7 @@ CI matrix: native build + test, `wasm32-unknown-unknown` check of `vuwr-core`,
 | 3 | JSON: loader, tree view, drill-down, table-when-shape-fits |
 | 4 | XML: loader with comment and attribute-order preservation |
 | 5 | Text mode, `vuwr --check` | done |
-| 6 | `vuwr-gui`: egui frontend, native |
+| 6 | `vuwr-gui`: egui frontend, native | done |
 | 7 | wasm build |
 
 Deferred beyond phase 7: tablet UI, compare/diff, plugin loaders, parquet /
