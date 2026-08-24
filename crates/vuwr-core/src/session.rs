@@ -930,8 +930,10 @@ fn summarize_node(node: &Node) -> String {
                 "{}".to_string()
             } else {
                 let keys: Vec<&str> = m.entries.iter().take(3).map(|(k, _)| k.as_str()).collect();
-                let more = if m.entries.len() > 3 { ",…" } else { "" };
-                format!("{{{},{}}}", keys.join(", "), more)
+                // The separator belongs between the keys and the ellipsis,
+                // not after the last key: `{a, b, c}`, not `{a, b, c,}`.
+                let more = if m.entries.len() > 3 { ", …" } else { "" };
+                format!("{{{}{}}}", keys.join(", "), more)
             }
         }
         Node::Array(arr) => {
@@ -1024,5 +1026,96 @@ fn summarize_xml_element(elem: &crate::Element) -> String {
         }
     } else {
         format!("[{}]", elem.children.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FormatHint;
+
+    fn session(src: &str) -> Session {
+        Session::new(Document::parse(src.as_bytes(), FormatHint::Auto).unwrap())
+    }
+
+    /// The summary used to end with a stray separator: `{a, b, c,}`.
+    #[test]
+    fn map_summaries_have_no_trailing_separator() {
+        assert_eq!(
+            summarize_node(&Node::Map(crate::Map {
+                open: '{',
+                close: '}',
+                entries: vec![
+                    ("a".into(), Node::Null),
+                    ("b".into(), Node::Null),
+                    ("c".into(), Node::Null),
+                ],
+                trailing_comma: false,
+                inline: true,
+                spaced: false,
+            })),
+            "{a, b, c}"
+        );
+    }
+
+    #[test]
+    fn map_summaries_mark_omitted_keys() {
+        let s = session(r#"{"a":1,"b":2,"c":3,"d":4}"#);
+        // The root's own summary is what a parent would show for it.
+        let summary = summarize_node(s.doc.as_json().unwrap().root());
+        assert_eq!(summary, "{a, b, c, …}");
+    }
+
+    /// Effects are how a frontend learns it must touch the outside world.
+    #[test]
+    fn save_and_quit_are_distinct_effects() {
+        let mut s = session("a\n1\n");
+        assert_eq!(s.execute(Command::Save), Effect::Save);
+        assert_eq!(s.execute(Command::SaveAndQuit), Effect::SaveAndQuit);
+        assert_eq!(s.execute(Command::ForceQuit), Effect::Quit);
+    }
+
+    /// Quitting with unsaved changes must not produce a Quit effect, or the
+    /// frontend closes over the top of them.
+    #[test]
+    fn quit_is_refused_while_dirty() {
+        let mut s = session("a\n1\n");
+        s.grid.cursor = (1, 0);
+        s.execute(Command::ReplaceCell);
+        s.input_char('9');
+        s.input_submit();
+        assert!(s.dirty);
+
+        assert_eq!(s.execute(Command::Quit), Effect::None);
+        assert!(s.status.contains("unsaved changes"), "{}", s.status);
+        assert_eq!(s.execute(Command::ForceQuit), Effect::Quit);
+    }
+
+    #[test]
+    fn text_entry_routes_through_the_session() {
+        let mut s = session("a\n1\n");
+        assert!(!s.is_entering_text());
+        s.execute(Command::Find);
+        assert!(s.is_entering_text());
+        assert_eq!(s.entry(), Some(('/', "")));
+        s.input_char('x');
+        s.input_char('y');
+        s.input_backspace();
+        assert_eq!(s.entry(), Some(('/', "x")));
+        s.input_cancel();
+        assert!(!s.is_entering_text());
+    }
+
+    #[test]
+    fn mark_saved_clears_dirty() {
+        let mut s = session("a\n1\n");
+        s.grid.cursor = (1, 0);
+        s.execute(Command::ReplaceCell);
+        s.input_char('2');
+        s.input_submit();
+        assert!(s.dirty);
+        s.mark_saved("t.csv");
+        assert!(!s.dirty);
+        assert!(s.status.contains("wrote t.csv"), "{}", s.status);
     }
 }

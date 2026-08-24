@@ -176,8 +176,16 @@ fn main() -> ExitCode {
     }
 
     if args.gui {
-        eprintln!("vuwr: the GUI is not implemented yet (phase 6) — use --tui");
-        return ExitCode::from(2);
+        // Piped input has nowhere to write back to, so the GUI is told
+        // there is no path rather than being handed `-`.
+        let gui_path = if from_stdin { None } else { Some(label) };
+        return match vuwr_gui::run(gui_path, doc) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("vuwr: {e}");
+                ExitCode::FAILURE
+            }
+        };
     }
 
     // Editing piped input has nowhere to write back to; the TUI shows the
