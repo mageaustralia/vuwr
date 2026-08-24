@@ -7,8 +7,9 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Cell as TCell, Clear, Paragraph, Row as TRow, Table};
 
-use crate::app::{App, Mode, ViewMode, escape};
+use crate::app::App;
 use vuwr_core::Command;
+use vuwr_core::{Mode, ViewMode, escape};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let hints = if app.show_hints {

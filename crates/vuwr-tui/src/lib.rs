@@ -5,7 +5,8 @@ mod app;
 pub mod keymap;
 pub mod ui;
 
-pub use app::{App, ViewMode};
+pub use app::App;
+pub use vuwr_core::ViewMode;
 
 use std::io;
 use std::path::PathBuf;
