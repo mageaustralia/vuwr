@@ -1,0 +1,9 @@
+[package]
+name = "vuwr-tui"
+description = "ratatui terminal frontend for vuwr (native only)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vuwr-core = { path = "../vuwr-core" }

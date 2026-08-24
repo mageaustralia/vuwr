@@ -1,0 +1,9 @@
+[package]
+name = "vuwr-gui"
+description = "eframe/egui frontend for vuwr (native + wasm)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vuwr-core = { path = "../vuwr-core" }

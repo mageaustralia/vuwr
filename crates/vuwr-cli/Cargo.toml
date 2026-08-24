@@ -1,0 +1,15 @@
+[package]
+name = "vuwr"
+description = "A fast, editable viewer for CSV / JSON / XML."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vuwr"
+path = "src/main.rs"
+
+[dependencies]
+vuwr-core = { path = "../vuwr-core" }
+vuwr-tui = { path = "../vuwr-tui" }
+vuwr-gui = { path = "../vuwr-gui" }

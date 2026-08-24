@@ -1,0 +1,24 @@
+# cargo-deny configuration. The license allowlist is the point: anything
+# copyleft (GPL/AGPL/…) fails CI the day it is added. See the Licensing
+# section of docs/superpowers/specs/2026-08-24-vuwr-design.md.
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "Unlicense",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+
+[advisories]
+ignore = []
