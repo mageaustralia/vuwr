@@ -58,6 +58,7 @@ pub enum Command {
     // --- Editing ---
     EditCell,
     ReplaceCell,
+    RenameKey,
     Undo,
     Redo,
 
@@ -114,6 +115,7 @@ impl Command {
         Command::FreezeColumns,
         Command::EditCell,
         Command::ReplaceCell,
+        Command::RenameKey,
         Command::Undo,
         Command::Redo,
         Command::Save,
@@ -165,6 +167,7 @@ impl Command {
             Command::FreezeColumns => "freeze-columns",
             Command::EditCell => "edit-cell",
             Command::ReplaceCell => "replace-cell",
+            Command::RenameKey => "rename-key",
             Command::Undo => "undo",
             Command::Redo => "redo",
             Command::Save => "write",
@@ -217,6 +220,7 @@ impl Command {
             Command::FreezeColumns => "pin columns left of the cursor",
             Command::EditCell => "edit the selected cell",
             Command::ReplaceCell => "replace the selected cell",
+            Command::RenameKey => "rename the selected key",
             Command::Undo => "undo the last edit",
             Command::Redo => "redo the last undone edit",
             Command::Save => "write the file",
@@ -270,6 +274,7 @@ impl Command {
             Command::FreezeColumns => "freeze",
             Command::EditCell => "edit",
             Command::ReplaceCell => "replace",
+            Command::RenameKey => "rename",
             Command::Undo => "undo",
             Command::Redo => "redo",
             Command::Save => "write",
@@ -330,7 +335,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 46, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 47, "update ALL when adding a command");
     }
 
     #[test]

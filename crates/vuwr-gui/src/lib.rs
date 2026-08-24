@@ -52,6 +52,8 @@ pub struct VuwrApp {
     load_error: Option<String>,
     /// The Acknowledgements window.
     show_licenses: bool,
+    /// Which diagnostic the bar is showing.
+    diagnostic_index: usize,
 }
 
 impl VuwrApp {
@@ -63,6 +65,7 @@ impl VuwrApp {
             pending_g: false,
             load_error: None,
             show_licenses: false,
+            diagnostic_index: 0,
         }
     }
 
@@ -75,6 +78,7 @@ impl VuwrApp {
             pending_g: false,
             load_error: None,
             show_licenses: false,
+            diagnostic_index: 0,
         }
     }
 
@@ -136,6 +140,13 @@ impl VuwrApp {
             TreeAction::Edit(row) => {
                 session.grid.cursor.0 = row;
                 self.run(Command::EditCell, ctx);
+            }
+            // A double-click in the table edits the cell already under the
+            // cursor, which the click itself just moved.
+            TreeAction::EditCurrent => self.run(Command::EditCell, ctx),
+            TreeAction::RenameKey(row) => {
+                session.grid.cursor.0 = row;
+                session.start_rename();
             }
             TreeAction::Context { row, action } => {
                 session.grid.cursor.0 = row;
@@ -300,6 +311,7 @@ impl eframe::App for VuwrApp {
             }
         });
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            self.diagnostics_bar(ui, ctx);
             self.status_bar(ui);
             self.hint_bar(ui);
         });
@@ -407,17 +419,12 @@ impl VuwrApp {
             return;
         };
         ui.horizontal(|ui| {
-            // An open prompt takes the status line, as in the TUI.
+            // An open prompt takes the line, as in the TUI.
             if let Some((sigil, buf)) = session.entry() {
                 ui.monospace(format!("{sigil}{buf}▏"));
                 return;
             }
-            let (_, rows, cols) = session.table_dims();
-            let (r, c) = session.grid.cursor;
-            ui.monospace(match session.view_mode() {
-                ViewMode::Text => format!("line {}/{}", r + 1, rows),
-                _ => format!("row {}/{}  col {}/{}", r + 1, rows, c + 1, cols),
-            });
+            ui.monospace(session.position_label());
             if !session.status.is_empty() {
                 ui.separator();
                 ui.label(&session.status);
@@ -425,10 +432,69 @@ impl VuwrApp {
         });
     }
 
-    /// The same hint bar the TUI carries, for the same reason: the
-    /// bindings are not guessable. Built from the session's context-aware
-    /// hint list and the GUI's own keymap, so it cannot advertise a
-    /// binding this frontend does not have.
+    /// Problems that are legal but probably wrong, with somewhere to go.
+    ///
+    /// A warning without a position leaves you hunting, so each one names
+    /// its line and offers to take you there.
+    fn diagnostics_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let diagnostics = match self.session.as_ref() {
+            Some(s) => s.diagnostics(),
+            None => return,
+        };
+        if diagnostics.is_empty() {
+            return;
+        }
+
+        let shown = self.diagnostic_index.min(diagnostics.len() - 1);
+        let d = &diagnostics[shown];
+        let (bg, fg) = (egui::Color32::from_rgb(200, 60, 55), egui::Color32::WHITE);
+
+        egui::Frame::new()
+            .fill(bg)
+            .inner_margin(6.0)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new("!").color(fg).strong().monospace());
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "line {}, column {}: {}",
+                            d.line, d.column, d.message
+                        ))
+                        .color(fg),
+                    );
+
+                    // Right-aligned controls, so the message can be long.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Show me").clicked() {
+                            let offset = d.offset;
+                            if let Some(s) = self.session.as_mut() {
+                                s.reveal(offset);
+                            }
+                        }
+                        if diagnostics.len() > 1 {
+                            if ui.small_button("›").clicked() {
+                                self.diagnostic_index = (shown + 1) % diagnostics.len();
+                            }
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} of {}",
+                                    shown + 1,
+                                    diagnostics.len()
+                                ))
+                                .color(fg)
+                                .small(),
+                            );
+                            if ui.small_button("‹").clicked() {
+                                self.diagnostic_index =
+                                    (shown + diagnostics.len() - 1) % diagnostics.len();
+                            }
+                        }
+                    });
+                });
+            });
+        let _ = ctx;
+    }
+
     fn hint_bar(&mut self, ui: &mut egui::Ui) {
         let Some(session) = self.session.as_ref() else {
             return;
@@ -559,10 +625,7 @@ fn drop_zone(ui: &mut egui::Ui, error: Option<&str>) {
 /// so the drawing code is testable like anything else.
 pub fn render_view(session: &mut Session, ui: &mut egui::Ui) -> Option<table::TreeAction> {
     match session.view_mode() {
-        ViewMode::Table => {
-            table::table(session, ui);
-            None
-        }
+        ViewMode::Table => table::table(session, ui).then_some(table::TreeAction::EditCurrent),
         ViewMode::Tree => table::tree(session, ui),
         ViewMode::Text => {
             table::text(session, ui);

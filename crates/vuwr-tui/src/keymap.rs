@@ -66,6 +66,7 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         // Editing. `u` is undo only without Ctrl; Ctrl-u is half-page up.
         (KeyCode::Char('i'), false) => Command::EditCell,
         (KeyCode::Char('c'), false) => Command::ReplaceCell,
+        (KeyCode::Char('R'), false) => Command::RenameKey,
         (KeyCode::Char('u'), false) => Command::Undo,
         (KeyCode::Char('r'), true) => Command::Redo,
 
@@ -139,6 +140,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::FreezeColumns => "f",
         Command::EditCell => "i  Enter",
         Command::ReplaceCell => "c",
+        Command::RenameKey => "R",
         Command::Undo => "u",
         Command::Redo => "Ctrl-R",
         Command::Save => ":w",

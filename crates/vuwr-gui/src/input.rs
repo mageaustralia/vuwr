@@ -66,6 +66,7 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
         Key::Escape => Command::DrillUp,
         Key::I => Command::EditCell,
         Key::C => Command::ReplaceCell,
+        Key::R if mods.shift => Command::RenameKey,
         Key::U => Command::Undo,
         Key::Slash => Command::Find,
         Key::Colon => Command::OpenPalette,
@@ -121,6 +122,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::DrillUp => "Esc",
         Command::EditCell => "i / Enter",
         Command::ReplaceCell => "c",
+        Command::RenameKey => "double-click / R",
         Command::Undo => "Ctrl-Z / u",
         Command::Redo => "Ctrl-Shift-Z",
         Command::Find => "Ctrl-F / /",
@@ -217,6 +219,13 @@ pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
                     }
                     Key::Escape => app.session_mut().input_cancel(),
                     Key::Backspace => app.session_mut().input_backspace(),
+                    Key::Delete => app.session_mut().input_delete(),
+                    // The caret moves, so an edit is an edit rather than
+                    // a field you can only append to.
+                    Key::ArrowLeft => app.session_mut().input_left(),
+                    Key::ArrowRight => app.session_mut().input_right(),
+                    Key::Home => app.session_mut().input_home(),
+                    Key::End => app.session_mut().input_end(),
                     _ => {}
                 },
                 _ => {}

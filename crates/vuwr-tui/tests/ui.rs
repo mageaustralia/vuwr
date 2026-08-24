@@ -1103,3 +1103,105 @@ fn every_command_is_reachable_by_the_route_help_advertises() {
         );
     }
 }
+
+// --- Inline editing with a caret ---
+
+/// Editing used to be a field at the bottom you could only append to.
+/// The text is now typed where it lives, and the caret moves.
+#[test]
+fn text_edits_render_on_the_line_being_edited() {
+    let mut app = app("name,age\nAlice,30\n");
+    app.handle_key(key(KeyCode::Char('3'))); // text view
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('i')));
+
+    let out = render(&mut app, 60, 8);
+    let line = out.lines().nth(1).unwrap();
+    assert!(
+        line.contains("Alice,30"),
+        "the buffer is shown on its own line: {line}"
+    );
+    assert!(
+        !out.lines().last().unwrap().contains("Alice,30"),
+        "and not duplicated in the status line"
+    );
+}
+
+#[test]
+fn the_caret_moves_and_inserts_where_it_is() {
+    let mut app = app("a\nabc\n");
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('i'))); // caret at the end
+
+    app.handle_key(key(KeyCode::Left));
+    app.handle_key(key(KeyCode::Left));
+    app.handle_key(key(KeyCode::Char('X'))); // between a and b
+    app.handle_key(key(KeyCode::Enter));
+
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "a\naXbc\n",
+        "inserted at the caret, not appended"
+    );
+}
+
+#[test]
+fn home_end_and_delete_work() {
+    let mut app = app("a\nabc\n");
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('i')));
+
+    app.handle_key(key(KeyCode::Home));
+    app.handle_key(key(KeyCode::Delete)); // removes 'a'
+    app.handle_key(key(KeyCode::End));
+    app.handle_key(key(KeyCode::Char('!')));
+    app.handle_key(key(KeyCode::Enter));
+
+    assert_eq!(String::from_utf8(app.doc.serialize()).unwrap(), "a\nbc!\n");
+}
+
+#[test]
+fn backspace_removes_before_the_caret_not_the_end() {
+    let mut app = app("a\nabc\n");
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('i')));
+
+    app.handle_key(key(KeyCode::Left)); // between b and c
+    app.handle_key(key(KeyCode::Backspace)); // removes b
+    app.handle_key(key(KeyCode::Enter));
+
+    assert_eq!(String::from_utf8(app.doc.serialize()).unwrap(), "a\nac\n");
+}
+
+/// A multi-byte character must not be split by caret movement.
+#[test]
+fn the_caret_steps_over_whole_characters() {
+    let mut app = app("a\ncafé\n");
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('i')));
+
+    app.handle_key(key(KeyCode::Left)); // over é in one step
+    app.handle_key(key(KeyCode::Char('!')));
+    app.handle_key(key(KeyCode::Enter));
+
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "a\ncaf!é\n"
+    );
+}
+
+#[test]
+fn table_edits_also_render_in_the_cell() {
+    let mut app = app("name,age\nAlice,30\n");
+    app.grid.move_to(1, 0, 2, 2);
+    app.handle_key(key(KeyCode::Char('c')));
+    for c in "Zed".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    let out = render(&mut app, 60, 8);
+    assert!(out.contains("Zed"), "typed text shows in the cell:\n{out}");
+}

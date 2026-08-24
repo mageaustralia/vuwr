@@ -17,6 +17,23 @@ use crate::tree::{Expansion, TreeRow, rows as tree_rows_of};
 use crate::view::GridState;
 use crate::{Command, Document};
 
+/// A path as a person would write it: `$.users[0].name`.
+pub fn path_label(path: &[crate::PathSeg]) -> String {
+    let mut out = String::from("$");
+    for seg in path {
+        match seg {
+            crate::PathSeg::Key(k) => {
+                out.push('.');
+                out.push_str(k);
+            }
+            crate::PathSeg::Index(i) => out.push_str(&format!("[{i}]")),
+            crate::PathSeg::Attr(a) => out.push_str(&format!("@{a}")),
+            crate::PathSeg::Text => out.push_str(".#text"),
+        }
+    }
+    out
+}
+
 /// What a fresh node should be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewNode {
@@ -84,9 +101,12 @@ pub enum Effect {
 
 pub enum Mode {
     Normal,
-    /// Inline edit of the cursor cell; `buf` is committed as a `SetCell`.
+    /// Inline edit of whatever the cursor is on. `caret` is a byte index
+    /// into `buf`: an edit without a movable caret is a text field you can
+    /// only append to, which is not editing.
     Edit {
         buf: String,
+        caret: usize,
     },
     /// The `:` command line.
     Command {
@@ -150,6 +170,9 @@ pub struct Session {
     filter: Option<Search>,
     /// The active sort, if any.
     sort: Option<SortSpec>,
+    /// True while the open edit is renaming a key rather than changing a
+    /// value. Both use the same prompt; only the commit differs.
+    renaming: bool,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
     /// The exact bytes those lines came from, and each line's byte span
@@ -186,6 +209,7 @@ impl Session {
             search: None,
             filter: None,
             sort: None,
+            renaming: false,
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -420,11 +444,15 @@ impl Session {
                 if !editable {
                     self.status = "this view is not editable".into();
                 } else if cmd == Command::ReplaceCell {
-                    self.mode = Mode::Edit { buf: String::new() };
+                    self.mode = Mode::Edit {
+                        buf: String::new(),
+                        caret: 0,
+                    };
                 } else {
                     self.start_edit();
                 }
             }
+            Command::RenameKey => self.start_rename(),
             Command::Undo => {
                 if self.doc.undo() {
                     self.dirty = true;
@@ -547,6 +575,84 @@ impl Session {
         }
     }
 
+    /// Begin renaming the key of the tree row under the cursor.
+    pub fn start_rename(&mut self) {
+        if self.view != ViewMode::Tree {
+            self.status = "renaming needs the tree view".into();
+            return;
+        }
+        let Some(row) = self.tree_rows.get(self.grid.cursor.0) else {
+            return;
+        };
+        if !matches!(row.path.last(), Some(crate::PathSeg::Key(_))) {
+            self.status = "only object keys have names".into();
+            return;
+        }
+        self.renaming = true;
+        let buf = row.label.clone();
+        let caret = buf.len();
+        self.mode = Mode::Edit { buf, caret };
+    }
+
+    /// True while a key is being renamed.
+    pub fn is_renaming(&self) -> bool {
+        self.renaming
+    }
+
+    /// Problems in the current document, recomputed on demand.
+    ///
+    /// Cheap enough to call per frame for ordinary files; a frontend that
+    /// opens something enormous should cache it.
+    pub fn diagnostics(&self) -> Vec<crate::Diagnostic> {
+        self.doc.diagnostics()
+    }
+
+    /// Jump to a byte offset in the document's text.
+    ///
+    /// Switches to text view, because that is the only view where an
+    /// offset means anything — "show me" has to actually show you.
+    pub fn reveal(&mut self, offset: usize) {
+        if self.view != ViewMode::Text {
+            self.set_view(ViewMode::Text);
+        }
+        let bytes = self.doc.serialize();
+        let (line, column) = crate::line_col(&bytes, offset);
+        let (rows, cols) = self.grid_dims();
+        self.grid.move_to(line.saturating_sub(1), 0, rows, cols);
+        self.status = format!("line {line}, column {column}");
+    }
+
+    /// Where the cursor is, in the terms each view uses.
+    pub fn position_label(&self) -> String {
+        match self.view {
+            ViewMode::Text => {
+                let line = self.grid.cursor.0 + 1;
+                let column = 1;
+                let total = self.text_lines.len();
+                format!("Line: {line}  Column: {column}  of {total}")
+            }
+            ViewMode::Tree => {
+                let row = self.grid.cursor.0 + 1;
+                let total = self.tree_rows.len();
+                let path = self
+                    .tree_rows
+                    .get(self.grid.cursor.0)
+                    .map(|r| path_label(&r.path))
+                    .unwrap_or_default();
+                if path.is_empty() {
+                    format!("Row: {row} of {total}")
+                } else {
+                    format!("Row: {row} of {total}   {path}")
+                }
+            }
+            ViewMode::Table => {
+                let (_, rows, cols) = self.table_dims();
+                let (r, c) = self.grid.cursor;
+                format!("Row: {} of {}   Column: {} of {}", r + 1, rows, c + 1, cols)
+            }
+        }
+    }
+
     /// Note a successful write.
     pub fn mark_saved(&mut self, what: &str) {
         self.dirty = false;
@@ -568,31 +674,101 @@ impl Session {
     pub fn entry(&self) -> Option<(char, &str)> {
         match &self.mode {
             Mode::Normal => None,
-            Mode::Edit { buf } => Some(('>', buf.as_str())),
+            Mode::Edit { buf, .. } => Some(('>', buf.as_str())),
             Mode::Command { buf } => Some((':', buf.as_str())),
             Mode::Prompt { kind, buf } => Some((kind.sigil(), buf.as_str())),
         }
     }
 
-    /// Append to whatever is being entered.
+    /// Insert a character at the caret.
     pub fn input_char(&mut self, c: char) {
         match &mut self.mode {
             Mode::Normal => {}
-            Mode::Edit { buf } | Mode::Command { buf } | Mode::Prompt { buf, .. } => buf.push(c),
+            Mode::Edit { buf, caret } => {
+                let at = (*caret).min(buf.len());
+                buf.insert(at, c);
+                *caret = at + c.len_utf8();
+            }
+            Mode::Command { buf } | Mode::Prompt { buf, .. } => buf.push(c),
         }
     }
 
+    /// Delete the character before the caret.
     pub fn input_backspace(&mut self) {
         match &mut self.mode {
             Mode::Normal => {}
-            Mode::Edit { buf } | Mode::Command { buf } | Mode::Prompt { buf, .. } => {
+            Mode::Edit { buf, caret } => {
+                let at = (*caret).min(buf.len());
+                if let Some(prev) = buf[..at].chars().next_back() {
+                    let start = at - prev.len_utf8();
+                    buf.remove(start);
+                    *caret = start;
+                }
+            }
+            Mode::Command { buf } | Mode::Prompt { buf, .. } => {
                 buf.pop();
             }
         }
     }
 
+    /// Delete the character at the caret.
+    pub fn input_delete(&mut self) {
+        if let Mode::Edit { buf, caret } = &mut self.mode {
+            let at = (*caret).min(buf.len());
+            if at < buf.len() {
+                buf.remove(at);
+            }
+        }
+    }
+
+    /// Move the caret one character left.
+    pub fn input_left(&mut self) {
+        if let Mode::Edit { buf, caret } = &mut self.mode
+            && let Some(prev) = buf[..(*caret).min(buf.len())].chars().next_back()
+        {
+            *caret -= prev.len_utf8();
+        }
+    }
+
+    /// Move the caret one character right.
+    pub fn input_right(&mut self) {
+        if let Mode::Edit { buf, caret } = &mut self.mode
+            && let Some(next) = buf[(*caret).min(buf.len())..].chars().next()
+        {
+            *caret += next.len_utf8();
+        }
+    }
+
+    pub fn input_home(&mut self) {
+        if let Mode::Edit { caret, .. } = &mut self.mode {
+            *caret = 0;
+        }
+    }
+
+    pub fn input_end(&mut self) {
+        if let Mode::Edit { buf, caret } = &mut self.mode {
+            *caret = buf.len();
+        }
+    }
+
+    /// Where the caret sits in the text being entered, as a byte index.
+    pub fn entry_caret(&self) -> usize {
+        match &self.mode {
+            Mode::Edit { caret, .. } => *caret,
+            Mode::Command { buf } | Mode::Prompt { buf, .. } => buf.len(),
+            Mode::Normal => 0,
+        }
+    }
+
+    /// True while a cell, line or key is being edited in place, as opposed
+    /// to a `:` command or a search prompt.
+    pub fn is_editing_inline(&self) -> bool {
+        matches!(self.mode, Mode::Edit { .. })
+    }
+
     /// Abandon what is being entered.
     pub fn input_cancel(&mut self) {
+        self.renaming = false;
         self.mode = Mode::Normal;
     }
 
@@ -601,7 +777,7 @@ impl Session {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
         match mode {
             Mode::Normal => Effect::None,
-            Mode::Edit { buf } => {
+            Mode::Edit { buf, .. } => {
                 self.commit_edit(buf);
                 Effect::None
             }
@@ -628,7 +804,11 @@ impl Session {
             return;
         }
         if self.view == ViewMode::Tree {
-            self.commit_tree_edit(row, &value);
+            if std::mem::take(&mut self.renaming) {
+                self.commit_rename(row, value);
+            } else {
+                self.commit_tree_edit(row, &value);
+            }
             return;
         }
         let row = self.grid.source_row(row);
@@ -639,6 +819,24 @@ impl Session {
                 if self.doc.sheet().is_some() && !self.doc.is_csv() {
                     self.rebuild_table_widths();
                 }
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// Give the key under the cursor a new name.
+    fn commit_rename(&mut self, row: usize, name: String) {
+        if name.is_empty() {
+            self.status = "a key cannot be empty".into();
+            return;
+        }
+        let Some((parent, index)) = self.slot_of(row) else {
+            return;
+        };
+        match self.doc.rename_node(&parent, index, name) {
+            Ok(()) => {
+                self.dirty = true;
+                self.rebuild_tree();
             }
             Err(e) => self.status = e.to_string(),
         }
@@ -700,7 +898,12 @@ impl Session {
 
     /// The cursor row's parent path and its position among its siblings.
     fn cursor_slot(&self) -> Option<(Vec<crate::PathSeg>, usize)> {
-        let row = self.tree_rows.get(self.grid.cursor.0)?;
+        self.slot_of(self.grid.cursor.0)
+    }
+
+    /// A row's parent path and its position among its siblings.
+    fn slot_of(&self, row: usize) -> Option<(Vec<crate::PathSeg>, usize)> {
+        let row = self.tree_rows.get(row)?;
         let (last, parent) = row.path.split_last()?;
         let index = match last {
             crate::PathSeg::Index(i) => *i,
@@ -1170,7 +1373,9 @@ impl Session {
                 })
                 .unwrap_or_default(),
         };
-        self.mode = Mode::Edit { buf };
+        // Start at the end, the way a rename or a tweak usually wants.
+        let caret = buf.len();
+        self.mode = Mode::Edit { buf, caret };
     }
 
     fn clamp_cursor(&mut self) {

@@ -8,6 +8,7 @@
 
 mod command;
 mod csv;
+mod diagnostics;
 pub mod json;
 pub mod node;
 mod ops;
@@ -21,11 +22,14 @@ mod xml;
 
 pub use command::Command;
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
+pub use diagnostics::{Diagnostic, Severity, scan_json};
 pub use json::{JsonDoc, Layout};
 pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};
 pub use ops::EditOp;
 pub use search::Search;
-pub use session::{Effect, Mode, NewNode, PromptKind, Session, SortSpec, ViewMode, escape};
+pub use session::{
+    Effect, Mode, NewNode, PromptKind, Session, SortSpec, ViewMode, escape, path_label,
+};
 pub use sheet::Sheet;
 pub use sort::{SortDirection, SortKind, natural_cmp, sort_rows};
 pub use tree::{Expansion, RowKind, TreeRow, ValueKind};
@@ -419,6 +423,15 @@ impl Document {
         self.undo.push(inverse);
         self.redo.clear();
         Ok(())
+    }
+
+    /// Problems that are legal but probably wrong — duplicate keys and
+    /// the like. Empty for formats that have none.
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        match &self.kind {
+            Kind::Json(_) => diagnostics::scan_json(&self.serialize()),
+            _ => Vec::new(),
+        }
     }
 
     /// Re-lay-out the document, undoably.

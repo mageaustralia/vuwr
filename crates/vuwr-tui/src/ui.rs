@@ -121,6 +121,8 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     });
 
     let search = app.search.clone();
+    // Which cell, if any, is being typed into right now.
+    let editing_cell = app.is_editing_inline().then_some(app.grid.cursor);
     let mut rows = Vec::new();
     for r in offset_row..row_count.min(offset_row + area.height as usize) {
         let source = app.grid.source_row(r);
@@ -128,6 +130,9 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
         let mut cells =
             vec![TCell::from(if marked { "*" } else { " " }).style(Style::default().bold())];
         cells.extend(shown.iter().map(|&c| {
+            if editing_cell == Some((r, c)) {
+                return TCell::from(Line::from(caret_spans(app)));
+            }
             let text = app.table_cell(r, c).unwrap_or_default();
             let mut style = Style::default();
             if r == 0 && !app.has_separate_header() {
@@ -281,22 +286,55 @@ fn render_text(frame: &mut Frame, app: &mut App, area: Rect) {
     let cursor = app.grid.cursor.0;
     let gutter = total.to_string().len().max(2);
 
+    let editing = app.is_editing_inline();
     let mut lines: Vec<Line> = Vec::new();
     for n in offset..total.min(offset + area.height as usize) {
+        let gutter_span = Span::styled(
+            format!("{:>gutter$} ", n + 1, gutter = gutter),
+            Style::default().dim(),
+        );
+
+        // The line under edit shows the buffer being typed, with a caret,
+        // rather than the value it had before.
+        if editing && n == cursor {
+            let mut spans = vec![gutter_span];
+            spans.extend(caret_spans(app));
+            lines.push(Line::from(spans));
+            continue;
+        }
+
         let text = app.table_cell(n, 0).unwrap_or_default();
         let mut style = Style::default();
         if n == cursor {
             style = style.reversed();
         }
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:>gutter$} ", n + 1, gutter = gutter),
-                Style::default().dim(),
-            ),
-            Span::styled(text, style),
-        ]));
+        lines.push(Line::from(vec![gutter_span, Span::styled(text, style)]));
     }
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// The text being typed, split around the caret so the caret sits where
+/// it actually is rather than always at the end.
+fn caret_spans(app: &App) -> Vec<Span<'static>> {
+    let Some((_, buf)) = app.entry() else {
+        return Vec::new();
+    };
+    let caret = app.entry_caret().min(buf.len());
+    let (before, after) = buf.split_at(caret);
+    let mut after_chars = after.chars();
+    let under = after_chars.next();
+    let rest: String = after_chars.collect();
+
+    vec![
+        Span::raw(before.to_string()),
+        // The character under the caret is highlighted; at the end of the
+        // line there is none, so a space stands in.
+        Span::styled(
+            under.map(|c| c.to_string()).unwrap_or_else(|| " ".into()),
+            Style::default().reversed(),
+        ),
+        Span::raw(rest),
+    ]
 }
 
 fn span_width(widths: &[usize], from: usize, to: usize) -> usize {
@@ -362,9 +400,20 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
         Mode::Prompt { kind, buf } => format!(" {}{buf}▏", kind.sigil()),
-        Mode::Edit { buf } => {
+        // An inline edit is visible where it is happening, so the status
+        // line reports position instead of repeating the text.
+        Mode::Edit { .. } => {
             let (r, c) = app.grid.cursor;
-            format!(" ({},{}) > {buf}▏", r + 1, c + 1)
+            let what = if app.is_renaming() {
+                "renaming"
+            } else {
+                "editing"
+            };
+            format!(
+                " ({},{}) {what} — Enter to commit, Esc to cancel",
+                r + 1,
+                c + 1
+            )
         }
         Mode::Command { buf } => format!(" :{buf}▏"),
     };

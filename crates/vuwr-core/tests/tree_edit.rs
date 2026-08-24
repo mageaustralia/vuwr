@@ -99,3 +99,95 @@ fn xml_removal_skips_whitespace_between_elements() {
     assert!(d.undo());
     assert_eq!(text(&d), src, "including the whitespace around it");
 }
+
+// --- Diagnostics and renaming, from the editor's point of view ---
+
+use vuwr_core::{Command, Session};
+
+fn session(src: &str) -> Session {
+    Session::new(json(src))
+}
+
+/// A duplicate key must be reported with somewhere to go, not just noted.
+#[test]
+fn duplicate_keys_surface_as_diagnostics_with_positions() {
+    let s = session("{\n  \"color\": true,\n  \"color\": \"gold\"\n}");
+    let found = s.diagnostics();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].line, 3);
+    assert!(found[0].message.contains("duplicate key 'color'"));
+}
+
+#[test]
+fn a_clean_document_has_no_diagnostics() {
+    assert!(session(r#"{"a":1,"b":2}"#).diagnostics().is_empty());
+}
+
+/// "Show me" has to actually show you: revealing switches to the view
+/// where an offset means something and puts the cursor on that line.
+#[test]
+fn revealing_a_diagnostic_goes_to_its_line() {
+    let mut s = session("{\n  \"color\": true,\n  \"color\": \"gold\"\n}");
+    let d = s.diagnostics().remove(0);
+    s.reveal(d.offset);
+    assert_eq!(s.view_mode(), vuwr_core::ViewMode::Text);
+    assert_eq!(s.grid.cursor.0, 2, "line 3, zero-indexed");
+}
+
+#[test]
+fn renaming_a_key_from_the_tree() {
+    let mut s = session(r#"{"old":1,"other":2}"#);
+    s.execute(Command::RenameKey);
+    assert!(s.is_renaming());
+    for c in "new".chars() {
+        s.input_char(c);
+    }
+    // The prompt starts with the old name, so clear it first.
+    let mut s = session(r#"{"old":1,"other":2}"#);
+    s.execute(Command::RenameKey);
+    for _ in 0.."old".len() {
+        s.input_backspace();
+    }
+    for c in "new".chars() {
+        s.input_char(c);
+    }
+    s.input_submit();
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        r#"{"new":1,"other":2}"#
+    );
+    assert!(!s.is_renaming(), "the flag clears after committing");
+}
+
+#[test]
+fn cancelling_a_rename_changes_nothing() {
+    let src = r#"{"old":1}"#;
+    let mut s = session(src);
+    s.execute(Command::RenameKey);
+    s.input_char('x');
+    s.input_cancel();
+    assert!(!s.is_renaming());
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+}
+
+#[test]
+fn an_empty_key_is_refused() {
+    let src = r#"{"old":1}"#;
+    let mut s = session(src);
+    s.execute(Command::RenameKey);
+    for _ in 0.."old".len() {
+        s.input_backspace();
+    }
+    s.input_submit();
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+    assert!(s.status.contains("cannot be empty"), "{}", s.status);
+}
+
+/// Array items have no key to rename, and saying so beats doing nothing.
+#[test]
+fn renaming_an_array_item_reports_why_it_cannot() {
+    let mut s = Session::new(json("[1,2]"));
+    s.execute(Command::RenameKey);
+    assert!(!s.is_renaming());
+    assert!(s.status.contains("only object keys"), "{}", s.status);
+}

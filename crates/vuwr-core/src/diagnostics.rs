@@ -1,0 +1,198 @@
+//! Problems worth telling someone about.
+//!
+//! Distinct from a parse error, which stops everything: a diagnostic is
+//! about a document that parsed fine and is still probably wrong.
+//!
+//! These are found by scanning the source text rather than the parsed
+//! tree, because a position is the useful part — "duplicate key" without
+//! a line number leaves you hunting. The tree has no offsets (it is built
+//! to preserve layout, not to record where things came from), so the scan
+//! runs over the bytes the document would serialize to, which is exactly
+//! what text view shows.
+
+use crate::line_col;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub severity: Severity,
+    pub message: String,
+    /// Byte offset into the source this was scanned from.
+    pub offset: usize,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl Diagnostic {
+    /// `line:column: message`, the form an editor can jump from.
+    pub fn located(&self) -> String {
+        format!("{}:{}: {}", self.line, self.column, self.message)
+    }
+}
+
+/// Scan JSON text for problems that are legal but almost certainly wrong.
+///
+/// Only duplicate keys today. A duplicate is valid JSON, and most parsers
+/// keep the last one silently, so the earlier value is dead — the kind of
+/// bug that costs an afternoon.
+pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
+    let Ok(text) = std::str::from_utf8(source) else {
+        return Vec::new();
+    };
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    // One set of seen keys per open object. Arrays push a marker so their
+    // strings are values, never keys.
+    let mut stack: Vec<Option<Vec<(String, usize)>>> = Vec::new();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => {
+                stack.push(Some(Vec::new()));
+                i += 1;
+            }
+            b'[' => {
+                stack.push(None);
+                i += 1;
+            }
+            b'}' | b']' => {
+                stack.pop();
+                i += 1;
+            }
+            b'"' => {
+                let start = i;
+                let Some((value, end)) = scan_string(text, i) else {
+                    break;
+                };
+                i = end;
+                // A string is a key only if the next thing is a colon and
+                // we are directly inside an object.
+                let mut j = i;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                let is_key = bytes.get(j) == Some(&b':');
+                if is_key && let Some(Some(seen)) = stack.last_mut() {
+                    if let Some((_, first)) = seen.iter().find(|(k, _)| k == &value) {
+                        let (line, column) = line_col(source, start);
+                        let (first_line, _) = line_col(source, *first);
+                        out.push(Diagnostic {
+                            severity: Severity::Warning,
+                            message: format!(
+                                "duplicate key '{value}' — also at line {first_line}; \
+                                 most parsers keep only the last one"
+                            ),
+                            offset: start,
+                            line,
+                            column,
+                        });
+                    } else {
+                        seen.push((value, start));
+                    }
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// Read the string starting at `at`, returning its contents and the offset
+/// just past the closing quote. Escapes are skipped, not decoded: only the
+/// identity of the key matters here.
+fn scan_string(text: &str, at: usize) -> Option<(String, usize)> {
+    let bytes = text.as_bytes();
+    let mut i = at + 1;
+    let mut value = String::new();
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => return Some((value, i + 1)),
+            b'\\' => {
+                // Keep the escape as written; two keys that differ only in
+                // how they are escaped are not worth calling duplicates.
+                value.push('\\');
+                if let Some(&next) = bytes.get(i + 1) {
+                    value.push(next as char);
+                }
+                i += 2;
+            }
+            _ => {
+                let ch = text[i..].chars().next()?;
+                value.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_duplicate_key_is_reported_with_a_position() {
+        let src = b"{\n  \"a\": 1,\n  \"color\": true,\n  \"color\": \"gold\"\n}";
+        let found = scan_json(src);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].line, 4, "the second occurrence is the problem");
+        assert!(found[0].message.contains("duplicate key 'color'"));
+        assert!(
+            found[0].message.contains("line 3"),
+            "and it names where the first one was: {}",
+            found[0].message
+        );
+    }
+
+    #[test]
+    fn distinct_keys_are_not_reported() {
+        assert!(scan_json(br#"{"a":1,"b":2,"c":3}"#).is_empty());
+    }
+
+    /// The same key in *different* objects is not a duplicate.
+    #[test]
+    fn keys_are_scoped_to_their_object() {
+        assert!(scan_json(br#"{"a":{"k":1},"b":{"k":2}}"#).is_empty());
+    }
+
+    /// Strings inside arrays are values, and repeat freely.
+    #[test]
+    fn repeated_strings_in_arrays_are_not_keys() {
+        assert!(scan_json(br#"{"xs":["k","k","k"]}"#).is_empty());
+    }
+
+    /// A value that happens to equal a key must not be mistaken for one.
+    #[test]
+    fn values_are_not_mistaken_for_keys() {
+        assert!(scan_json(br#"{"a":"a","b":"a"}"#).is_empty());
+    }
+
+    #[test]
+    fn several_duplicates_are_all_reported() {
+        let found = scan_json(br#"{"a":1,"a":2,"a":3,"b":1,"b":2}"#);
+        assert_eq!(found.len(), 3, "two extra a's and one extra b");
+    }
+
+    #[test]
+    fn braces_inside_strings_do_not_confuse_the_scan() {
+        assert!(scan_json(br#"{"a":"}{","b":"[]"}"#).is_empty());
+        assert_eq!(scan_json(br#"{"a":"}{","a":1}"#).len(), 1);
+    }
+
+    #[test]
+    fn escaped_quotes_do_not_end_a_string_early() {
+        assert!(scan_json(br#"{"a":"say \"hi\"","b":2}"#).is_empty());
+    }
+
+    #[test]
+    fn malformed_input_returns_what_it_found_rather_than_looping() {
+        let _ = scan_json(br#"{"a":1,"a":"#);
+        let _ = scan_json(b"{\"unterminated");
+    }
+}

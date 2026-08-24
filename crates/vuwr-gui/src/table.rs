@@ -11,12 +11,13 @@ use vuwr_core::{PathSeg, RowKind, Session, ValueKind};
 /// what a page-down means.
 const PAGE_ROWS: usize = 25;
 
-pub fn table(session: &mut Session, ui: &mut egui::Ui) {
+pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     session.set_viewport_rows(PAGE_ROWS);
+    let mut edit = false;
     let (headers, rows, cols) = session.table_dims();
     if rows == 0 || cols == 0 {
         ui.label("nothing to show in this view");
-        return;
+        return false;
     }
 
     let cursor = session.grid.cursor;
@@ -56,14 +57,20 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) {
                             rich = rich.underline();
                         }
                         let selected = (r, c) == cursor;
-                        if ui.selectable_label(selected, rich).clicked() {
+                        let response = ui.selectable_label(selected, rich);
+                        if response.clicked() {
                             session.grid.cursor = (r, c);
+                        }
+                        if response.double_clicked() {
+                            session.grid.cursor = (r, c);
+                            edit = true;
                         }
                     }
                     ui.end_row();
                 }
             });
     });
+    edit
 }
 
 /// A small filled circle marking a repeated key. Painted for the same
@@ -74,6 +81,39 @@ fn duplicate_dot(ui: &mut egui::Ui) -> egui::Response {
     ui.painter()
         .circle_filled(rect.center(), 3.5, Color32::from_rgb(220, 80, 80));
     response
+}
+
+/// The text being typed, with a caret drawn where it actually is.
+///
+/// egui's own TextEdit would bring its own state and its own key
+/// handling; the buffer lives in the session so both frontends commit the
+/// same way, so this renders it rather than replacing it.
+pub fn caret_text(session: &Session) -> egui::text::LayoutJob {
+    use egui::text::{LayoutJob, TextFormat};
+    let mut job = LayoutJob::default();
+    let Some((_, buf)) = session.entry() else {
+        return job;
+    };
+    let caret = session.entry_caret().min(buf.len());
+    let (before, after) = buf.split_at(caret);
+    let font = egui::FontId::monospace(13.0);
+
+    job.append(before, 0.0, TextFormat::simple(font.clone(), Color32::GRAY));
+    let mut chars = after.chars();
+    let under = chars.next();
+    let rest: String = chars.collect();
+    job.append(
+        &under.map(|c| c.to_string()).unwrap_or_else(|| " ".into()),
+        0.0,
+        TextFormat {
+            font_id: font.clone(),
+            color: Color32::BLACK,
+            background: Color32::from_rgb(255, 210, 90),
+            ..Default::default()
+        },
+    );
+    job.append(&rest, 0.0, TextFormat::simple(font, Color32::GRAY));
+    job
 }
 
 /// Width of the disclosure control, so leaves line up with containers.
@@ -149,7 +189,13 @@ pub enum TreeAction {
     Toggle(Vec<PathSeg>),
     Select(usize),
     Edit(usize),
-    Context { row: usize, action: NodeAction },
+    RenameKey(usize),
+    /// Edit whatever the cursor is on now.
+    EditCurrent,
+    Context {
+        row: usize,
+        action: NodeAction,
+    },
 }
 
 /// A per-node action from the context menu.
@@ -223,6 +269,11 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
                 if response.clicked() {
                     action = Some(TreeAction::Select(i));
                 }
+                // Double-clicking a key renames it; double-clicking the
+                // value edits the value. Each edits what you clicked.
+                if response.double_clicked() {
+                    action = Some(TreeAction::RenameKey(i));
+                }
 
                 ui.label(RichText::new(":").weak().monospace());
 
@@ -295,7 +346,15 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) {
     let gutter = lines.to_string().len().max(2);
 
     egui::ScrollArea::both().show(ui, |ui| {
+        let editing = session.is_editing_inline();
         for n in 0..lines {
+            if editing && n == cursor_row {
+                ui.horizontal(|ui| {
+                    ui.monospace(format!("{:>gutter$} ", n + 1, gutter = gutter));
+                    ui.label(caret_text(session));
+                });
+                continue;
+            }
             let line = session.table_cell(n, 0).unwrap_or_default();
             let selected = n == cursor_row;
             let text = format!("{:>gutter$}  {}", n + 1, line, gutter = gutter);

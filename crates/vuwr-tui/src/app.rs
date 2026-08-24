@@ -71,6 +71,19 @@ impl App {
                     self.apply(effect);
                 }
                 KeyCode::Backspace => self.session.input_backspace(),
+                KeyCode::Delete => self.session.input_delete(),
+                // Caret movement, so an edit is an edit rather than a
+                // field you can only append to.
+                KeyCode::Left => self.session.input_left(),
+                KeyCode::Right => self.session.input_right(),
+                KeyCode::Home => self.session.input_home(),
+                KeyCode::End => self.session.input_end(),
+                KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
+                    self.session.input_home()
+                }
+                KeyCode::Char('e') if key.modifiers == KeyModifiers::CONTROL => {
+                    self.session.input_end()
+                }
                 KeyCode::Char(c)
                     if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
                 {
