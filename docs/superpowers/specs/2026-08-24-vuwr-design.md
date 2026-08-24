@@ -89,7 +89,7 @@ Three modes over any document, cycled by key, with per-format defaults:
 
 | Format  | Default | Also available                        |
 |---------|---------|---------------------------------------|
-| CSV/TSV | table   | text                                  |
+| CSV/TSV | table   | text (a `less`-style pager)           |
 | JSON    | tree    | table (array-of-objects), text        |
 | XML     | tree    | table (repeated sibling elements), text |
 
