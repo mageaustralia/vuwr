@@ -4,7 +4,7 @@
 mod app;
 pub mod ui;
 
-pub use app::App;
+pub use app::{App, ViewMode};
 
 use std::io;
 use std::path::PathBuf;

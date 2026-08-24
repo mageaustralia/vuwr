@@ -7,10 +7,12 @@
 //! this crate against the wasm target on every push.
 
 mod csv;
+pub mod json;
 mod ops;
 mod view;
 
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
+pub use json::{Array, JsonDoc, Map, Node};
 pub use ops::EditOp;
 pub use view::GridState;
 
@@ -56,6 +58,10 @@ pub enum Error {
     RaggedRows,
     /// The document has no rows, so the operation makes no sense.
     EmptyDocument,
+    /// JSON parse error: unexpected token.
+    UnexpectedToken {
+        offset: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -76,6 +82,9 @@ impl fmt::Display for Error {
             }
             Error::RaggedRows => write!(f, "rows have differing widths"),
             Error::EmptyDocument => write!(f, "document has no rows"),
+            Error::UnexpectedToken { offset } => {
+                write!(f, "unexpected token at byte {offset}")
+            }
         }
     }
 }
@@ -95,15 +104,29 @@ pub struct Document {
 
 enum Kind {
     Csv(CsvDoc),
+    Json(JsonDoc),
 }
 
 impl Document {
+    /// Detect format from content and parse. JSON is detected when the
+    /// first non-whitespace byte is `{` or `[`.
     pub fn parse(bytes: &[u8], hint: FormatHint) -> Result<Document, Error> {
-        Ok(Document {
-            kind: Kind::Csv(CsvDoc::parse(bytes, hint)?),
-            undo: Vec::new(),
-            redo: Vec::new(),
-        })
+        let trimmed = bytes.iter().find(|&&b| !b.is_ascii_whitespace());
+        match trimmed {
+            Some(b'{') | Some(b'[') => {
+                let doc = JsonDoc::parse(bytes)?;
+                Ok(Document {
+                    kind: Kind::Json(doc),
+                    undo: Vec::new(),
+                    redo: Vec::new(),
+                })
+            }
+            _ => Ok(Document {
+                kind: Kind::Csv(CsvDoc::parse(bytes, hint)?),
+                undo: Vec::new(),
+                redo: Vec::new(),
+            }),
+        }
     }
 
     /// Byte-for-byte faithful rendering of the document: delimiter, line
@@ -112,6 +135,7 @@ impl Document {
     pub fn serialize(&self) -> Vec<u8> {
         match &self.kind {
             Kind::Csv(doc) => doc.serialize(),
+            Kind::Json(doc) => doc.serialize(),
         }
     }
 
@@ -151,12 +175,71 @@ impl Document {
     fn apply_inner(&mut self, op: EditOp) -> Result<EditOp, Error> {
         match &mut self.kind {
             Kind::Csv(doc) => doc.apply(op),
+            Kind::Json(_) => Ok(op), // JSON edits not yet implemented
         }
     }
 
     pub fn as_csv(&self) -> Option<&CsvDoc> {
         match &self.kind {
             Kind::Csv(doc) => Some(doc),
+            _ => None,
         }
+    }
+
+    pub fn as_json(&self) -> Option<&JsonDoc> {
+        match &self.kind {
+            Kind::Json(doc) => Some(doc),
+            _ => None,
+        }
+    }
+
+    pub fn as_json_mut(&mut self) -> Option<&mut JsonDoc> {
+        match &mut self.kind {
+            Kind::Json(doc) => Some(doc),
+            _ => None,
+        }
+    }
+
+    /// Returns true if this document is a CSV (table-shaped by default).
+    pub fn is_csv(&self) -> bool {
+        matches!(self.kind, Kind::Csv(_))
+    }
+
+    /// Returns true if this document is JSON (tree-shaped by default).
+    pub fn is_json(&self) -> bool {
+        matches!(self.kind, Kind::Json(_))
+    }
+
+    /// If JSON, returns true when the root is an array of objects
+    /// (eligible for table view).
+    pub fn json_table_eligible(&self) -> bool {
+        match &self.kind {
+            Kind::Json(doc) => is_array_of_objects(doc.root()),
+            _ => false,
+        }
+    }
+}
+
+/// Check if a node is an array whose every element is an object with
+/// the same keys (table-shaped).
+fn is_array_of_objects(node: &Node) -> bool {
+    match node {
+        Node::Array(arr) if !arr.items.is_empty() => {
+            let keys = match &arr.items[0] {
+                Node::Map(m) => m.entries.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
+                _ => return false,
+            };
+            arr.items.iter().all(|item| match item {
+                Node::Map(m) => {
+                    m.entries.len() == keys.len()
+                        && m.entries
+                            .iter()
+                            .zip(keys.iter())
+                            .all(|(a, b)| &a.0 == b)
+                }
+                _ => false,
+            })
+        }
+        _ => false,
     }
 }

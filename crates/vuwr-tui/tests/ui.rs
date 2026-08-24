@@ -6,11 +6,16 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use vuwr_core::{Document, FormatHint};
-use vuwr_tui::App;
+use vuwr_tui::{App, ViewMode};
 
 fn app(input: &str) -> App {
     let doc = Document::parse(input.as_bytes(), FormatHint::Csv).unwrap();
     App::new(PathBuf::from("test.csv"), doc)
+}
+
+fn json_app(input: &str) -> App {
+    let doc = Document::parse(input.as_bytes(), FormatHint::Auto).unwrap();
+    App::new(PathBuf::from("test.json"), doc)
 }
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -134,4 +139,75 @@ fn scrolling_follows_the_cursor() {
     }
     let out = render(&mut a, 20, 6);
     assert!(out.contains("r20"), "cursor row should be visible:\n{out}");
+}
+
+// --- JSON tree view tests ---
+
+#[test]
+fn json_opens_in_tree_mode() {
+    let a = json_app("{\"a\":1,\"b\":2}");
+    assert_eq!(a.view_mode(), ViewMode::Tree);
+}
+
+#[test]
+fn json_tree_shows_keys_and_values() {
+    let mut a = json_app("{\"name\":\"Alice\",\"age\":30}");
+    let out = render(&mut a, 40, 10);
+    assert!(out.contains("name"), "should show key: {out}");
+    assert!(out.contains("Alice"), "should show value: {out}");
+    assert!(out.contains("age"), "should show key: {out}");
+}
+
+#[test]
+fn json_tree_cursor_moves() {
+    let mut a = json_app("{\"a\":1,\"b\":2,\"c\":3}");
+    a.handle_key(key(KeyCode::Char('j')));
+    assert_eq!(a.grid.cursor, (1, 0));
+    a.handle_key(key(KeyCode::Char('k')));
+    assert_eq!(a.grid.cursor, (0, 0));
+}
+
+#[test]
+fn json_tree_drill_down_and_up() {
+    let mut a = json_app("{\"nested\":{\"x\":1},\"other\":2}");
+    // Cursor is at row 0 (nested object)
+    a.handle_key(key(KeyCode::Enter)); // drill into nested
+    assert_eq!(a.grid.depth(), 1);
+    let out = render(&mut a, 40, 10);
+    assert!(out.contains("x"), "should show inner key: {out}");
+    a.handle_key(key(KeyCode::Esc)); // drill back up
+    assert_eq!(a.grid.depth(), 0);
+}
+
+#[test]
+fn json_tree_drill_array() {
+    let mut a = json_app("{\"items\":[1,2,3],\"name\":\"test\"}");
+    a.handle_key(key(KeyCode::Enter)); // drill into items array
+    assert_eq!(a.grid.depth(), 1);
+    let out = render(&mut a, 40, 10);
+    assert!(out.contains("1"), "should show array element: {out}");
+}
+
+#[test]
+fn json_table_view_for_array_of_objects() {
+    let mut a = json_app("[{\"a\":1,\"b\":2},{\"a\":3,\"b\":4}]");
+    assert_eq!(a.view_mode(), ViewMode::Tree); // starts in tree
+    a.handle_key(key(KeyCode::Tab)); // cycle to table
+    assert_eq!(a.view_mode(), ViewMode::Table);
+    let out = render(&mut a, 40, 10);
+    assert!(out.contains("a"), "should show header: {out}");
+}
+
+#[test]
+fn json_table_not_available_for_non_array() {
+    let mut a = json_app("{\"a\":1}");
+    a.handle_key(key(KeyCode::Tab));
+    assert_eq!(a.view_mode(), ViewMode::Tree); // stays tree
+    assert!(a.status.contains("not available"));
+}
+
+#[test]
+fn json_tree_snapshot() {
+    let mut a = json_app("{\n  \"name\": \"Alice\",\n  \"age\": 30,\n  \"tags\": [\"admin\"]\n}");
+    insta::assert_snapshot!(render(&mut a, 40, 8));
 }

@@ -1,14 +1,16 @@
-//! Application state and key handling for the table view.
+//! Application state and key handling for the TUI.
 //!
 //! Key scheme: vim-flavoured, arrows always work. `i`/`Enter` edit a cell,
 //! `:` opens the command line (`w`, `q`, `q!`, `wq`), `u`/`Ctrl-R` are
 //! undo/redo, `gg`/`G` jump, PageUp/PageDown scroll a viewport.
+//! Tab cycles view modes (table/tree). In tree mode, Enter drills down
+//! into a nested value, Esc drills up.
 
 use std::fs;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use vuwr_core::{CsvDoc, Document, EditOp, GridState};
+use vuwr_core::{CsvDoc, Document, EditOp, GridState, Node};
 
 pub enum Mode {
     Normal,
@@ -22,26 +24,44 @@ pub enum Mode {
     },
 }
 
+/// Which view we're showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Table,
+    Tree,
+}
+
 pub struct App {
     pub doc: Document,
     pub grid: GridState,
     pub mode: Mode,
+    pub view: ViewMode,
     pub status: String,
     pub dirty: bool,
     pub quit: bool,
-    path: PathBuf,
+    pub path: PathBuf,
     widths: Vec<usize>,
     pending_g: bool,
     viewport_rows: usize,
+    /// For tree view: the keys visible in the current node (or column
+    /// headers for table view).
+    pub tree_keys: Vec<String>,
+    /// For tree view: summary strings for each visible row.
+    pub tree_summaries: Vec<String>,
 }
 
 impl App {
     pub fn new(path: PathBuf, doc: Document) -> App {
-        let widths = compute_widths(doc.as_csv().expect("phase 2: CSV only"));
-        App {
+        let (view, widths, tree_keys, tree_summaries) = if doc.is_json() {
+            (ViewMode::Tree, vec![], vec![], vec![])
+        } else {
+            (ViewMode::Table, compute_widths(doc.as_csv().expect("CSV only")), vec![], vec![])
+        };
+        let mut app = App {
             doc,
             grid: GridState::new(),
             mode: Mode::Normal,
+            view,
             status: String::new(),
             dirty: false,
             quit: false,
@@ -49,30 +69,104 @@ impl App {
             widths,
             pending_g: false,
             viewport_rows: 10,
+            tree_keys,
+            tree_summaries,
+        };
+        if app.view == ViewMode::Tree {
+            app.rebuild_tree();
         }
-    }
-
-    pub fn csv(&self) -> &CsvDoc {
-        self.doc.as_csv().expect("phase 2: CSV only")
+        app
     }
 
     pub fn path(&self) -> &PathBuf {
         &self.path
     }
 
-    /// Rendered width of each column. Computed once at load.
+    pub fn csv(&self) -> &CsvDoc {
+        self.doc.as_csv().expect("CSV only")
+    }
+
+    /// For table view: returns (headers, row_count, column_count).
+    pub fn table_dims(&self) -> (Vec<String>, usize, usize) {
+        match self.view {
+            ViewMode::Table => {
+                if let Some(csv) = self.doc.as_csv() {
+                    let headers: Vec<String> = (0..csv.width())
+                        .map(|c| {
+                            csv.cell(0, c)
+                                .map(|cell| cell.value.clone())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    (headers, csv.height(), csv.width())
+                } else if let Some(json) = self.doc.as_json() {
+                    let headers = json_table_headers(json.root()).unwrap_or_default();
+                    let rows = match json.root() {
+                        Node::Array(a) => a.items.len(),
+                        _ => 0,
+                    };
+                    (headers.clone(), rows, headers.len())
+                } else {
+                    (vec![], 0, 0)
+                }
+            }
+            ViewMode::Tree => (self.tree_keys.clone(), self.tree_summaries.len(), 1),
+        }
+    }
+
+    /// Get a cell value for table rendering.
+    pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
+        match self.view {
+            ViewMode::Table => {
+                if let Some(csv) = self.doc.as_csv() {
+                    csv.cell(row, col)
+                        .map(|cell| escape(&cell.value))
+                } else if let Some(json) = self.doc.as_json() {
+                    match json.root() {
+                        Node::Array(arr) => {
+                            let item = arr.items.get(row)?;
+                            if let Node::Map(m) = item {
+                                let (_, val) = m.entries.get(col)?;
+                                Some(summarize_node(val))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            ViewMode::Tree => self.tree_summaries.get(row).cloned(),
+        }
+    }
+
+    pub fn view_mode(&self) -> ViewMode {
+        self.view
+    }
+
+    /// True if Tab can cycle to another view mode.
+    pub fn can_cycle_view(&self) -> bool {
+        if self.doc.is_json() {
+            // JSON: tree always available, table if array-of-objects
+            true
+        } else {
+            // CSV: only table (text view deferred to phase 5)
+            false
+        }
+    }
+
+    /// Rendered width of each column (table mode only).
     pub fn widths(&self) -> &[usize] {
         &self.widths
     }
 
-    /// Called by the renderer each frame so PageUp/PageDown know the
-    /// viewport size.
     pub fn set_viewport_rows(&mut self, rows: usize) {
         self.viewport_rows = rows.max(1);
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Ctrl-C behaves like `q`: it refuses to discard unsaved changes.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.try_quit();
             return;
@@ -87,13 +181,20 @@ impl App {
     }
 
     fn normal_key(&mut self, key: KeyEvent) {
-        let (rows, cols) = (self.csv().height(), self.csv().width());
         let was_pending_g = self.pending_g;
         self.pending_g = false;
         match key.code {
             KeyCode::Char('q') => self.try_quit(),
             KeyCode::Char(':') => self.mode = Mode::Command { buf: String::new() },
-            KeyCode::Char('i') | KeyCode::Enter => self.start_edit(),
+            KeyCode::Tab if self.can_cycle_view() => self.cycle_view(),
+            KeyCode::Char('i') | KeyCode::Enter if self.view == ViewMode::Table => {
+                self.start_edit()
+            }
+            KeyCode::Enter if self.view == ViewMode::Tree => self.tree_drill(),
+            KeyCode::Esc if self.view == ViewMode::Tree => {
+                self.grid.drill_up();
+                self.rebuild_tree();
+            }
             KeyCode::Char('u') => {
                 if self.doc.undo() {
                     self.dirty = true;
@@ -107,37 +208,165 @@ impl App {
                 }
             }
             KeyCode::Char('g') if was_pending_g => {
+                let (rows, cols) = self.grid_dims();
                 self.grid.move_to(0, self.grid.cursor.1, rows, cols)
             }
             KeyCode::Char('g') => self.pending_g = true,
-            KeyCode::Char('G') => self
-                .grid
-                .move_to(usize::MAX, self.grid.cursor.1, rows, cols),
-            KeyCode::Left | KeyCode::Char('h') => self.grid.move_by(0, -1, rows, cols),
-            KeyCode::Down | KeyCode::Char('j') => self.grid.move_by(1, 0, rows, cols),
-            KeyCode::Up | KeyCode::Char('k') => self.grid.move_by(-1, 0, rows, cols),
-            KeyCode::Right | KeyCode::Char('l') => self.grid.move_by(0, 1, rows, cols),
-            KeyCode::PageDown => self
-                .grid
-                .move_by(self.viewport_rows as isize, 0, rows, cols),
-            KeyCode::PageUp => self
-                .grid
-                .move_by(-(self.viewport_rows as isize), 0, rows, cols),
-            KeyCode::Home => self.grid.move_to(self.grid.cursor.0, 0, rows, cols),
-            KeyCode::End => self
-                .grid
-                .move_to(self.grid.cursor.0, usize::MAX, rows, cols),
+            KeyCode::Char('G') => {
+                let (rows, cols) = self.grid_dims();
+                self.grid
+                    .move_to(usize::MAX, self.grid.cursor.1, rows, cols)
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                let (rows, cols) = self.grid_dims();
+                self.grid.move_by(0, -1, rows, cols)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let (rows, cols) = self.grid_dims();
+                self.grid.move_by(1, 0, rows, cols)
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let (rows, cols) = self.grid_dims();
+                self.grid.move_by(-1, 0, rows, cols)
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                let (rows, cols) = self.grid_dims();
+                self.grid.move_by(0, 1, rows, cols)
+            }
+            KeyCode::PageDown => {
+                let (rows, cols) = self.grid_dims();
+                self.grid
+                    .move_by(self.viewport_rows as isize, 0, rows, cols)
+            }
+            KeyCode::PageUp => {
+                let (rows, cols) = self.grid_dims();
+                self.grid
+                    .move_by(-(self.viewport_rows as isize), 0, rows, cols)
+            }
+            KeyCode::Home => {
+                let (rows, cols) = self.grid_dims();
+                self.grid.move_to(self.grid.cursor.0, 0, rows, cols)
+            }
+            KeyCode::End => {
+                let (rows, cols) = self.grid_dims();
+                self.grid
+                    .move_to(self.grid.cursor.0, usize::MAX, rows, cols)
+            }
             _ => {}
+        }
+    }
+
+    /// (rows, cols) of the current grid, adapting to view mode.
+    fn grid_dims(&self) -> (usize, usize) {
+        match self.view {
+            ViewMode::Table => {
+                if let Some(csv) = self.doc.as_csv() {
+                    (csv.height(), csv.width())
+                } else {
+                    (0, 0)
+                }
+            }
+            ViewMode::Tree => (self.tree_summaries.len(), self.tree_keys.len().max(1)),
+        }
+    }
+
+    fn cycle_view(&mut self) {
+        if !self.doc.is_json() {
+            return;
+        }
+        self.view = match self.view {
+            ViewMode::Tree => {
+                if self.doc.json_table_eligible() {
+                    self.rebuild_table_widths();
+                    ViewMode::Table
+                } else {
+                    self.status = "table view not available (not an array of objects)".into();
+                    ViewMode::Tree
+                }
+            }
+            ViewMode::Table => {
+                self.rebuild_tree();
+                ViewMode::Tree
+            }
+        };
+        self.grid.cursor = (0, 0);
+        self.grid.offset = (0, 0);
+    }
+
+    fn rebuild_table_widths(&mut self) {
+        if let Some(json) = self.doc.as_json()
+            && let Some(headers) = json_table_headers(json.root())
+        {
+            self.widths = vec![3usize; headers.len()];
+            self.tree_keys = headers;
+        }
+    }
+
+    fn rebuild_tree(&mut self) {
+        self.tree_keys.clear();
+        self.tree_summaries.clear();
+        if self.doc.is_json() {
+            let node = self.current_json_node().clone();
+            build_tree_view(&node, &mut self.tree_keys, &mut self.tree_summaries);
+        }
+    }
+
+    /// The JSON node we're currently viewing (respects drill-down stack).
+    fn current_json_node(&self) -> &Node {
+        let json = self.doc.as_json().expect("JSON doc");
+        let mut node = json.root();
+        for entry in &self.grid.drill_stack {
+            node = match node {
+                Node::Map(m) => m.entries.get(entry.parent_row).map(|(_, v)| v).unwrap_or(node),
+                Node::Array(a) => a.items.get(entry.parent_row).unwrap_or(node),
+                _ => node,
+            };
+        }
+        node
+    }
+
+    fn tree_drill(&mut self) {
+        let node = self.current_json_node();
+        let (row, _col) = self.grid.cursor;
+        let child = match node {
+            Node::Map(m) => m.entries.get(row).map(|(_, v)| v),
+            Node::Array(a) => a.items.get(row),
+            _ => None,
+        };
+        match child {
+            Some(Node::Map(_)) | Some(Node::Array(_)) => {
+                self.grid.drill_down();
+                self.rebuild_tree();
+            }
+            _ => {
+                // Scalar: start editing instead
+                self.start_edit();
+            }
         }
     }
 
     fn start_edit(&mut self) {
         let (r, c) = self.grid.cursor;
-        let buf = self
-            .csv()
-            .cell(r, c)
-            .map(|cell| cell.value.clone())
-            .unwrap_or_default();
+        let buf = match self.view {
+            ViewMode::Table => {
+                if let Some(csv) = self.doc.as_csv() {
+                    csv.cell(r, c)
+                        .map(|cell| cell.value.clone())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            }
+            ViewMode::Tree => {
+                // Edit the value at the current tree row
+                let node = self.current_json_node();
+                match node {
+                    Node::Map(m) => m.entries.get(r).map(|(_, v)| node_to_edit_string(v)).unwrap_or_default(),
+                    Node::Array(a) => a.items.get(r).map(node_to_edit_string).unwrap_or_default(),
+                    _ => String::new(),
+                }
+            }
+        };
         self.mode = Mode::Edit { buf };
     }
 
@@ -224,9 +453,8 @@ impl App {
         }
     }
 
-    /// After undo/redo the cursor can sit outside the restored sheet.
     fn clamp_cursor(&mut self) {
-        let (rows, cols) = (self.csv().height(), self.csv().width());
+        let (rows, cols) = self.grid_dims();
         let (r, c) = self.grid.cursor;
         self.grid.move_to(r, c, rows, cols);
     }
@@ -251,4 +479,80 @@ pub(crate) fn escape(value: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+/// Get table headers from a JSON array-of-objects.
+fn json_table_headers(node: &Node) -> Option<Vec<String>> {
+    match node {
+        Node::Array(arr) if !arr.items.is_empty() => {
+            if let Node::Map(m) = &arr.items[0] {
+                Some(m.entries.iter().map(|(k, _)| k.clone()).collect())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Build tree view keys and summaries for a JSON node.
+fn build_tree_view(node: &Node, keys: &mut Vec<String>, summaries: &mut Vec<String>) {
+    keys.clear();
+    summaries.clear();
+    match node {
+        Node::Map(m) => {
+            for (key, val) in &m.entries {
+                keys.push(key.clone());
+                summaries.push(summarize_node(val));
+            }
+        }
+        Node::Array(arr) => {
+            for (i, item) in arr.items.iter().enumerate() {
+                keys.push(i.to_string());
+                summaries.push(summarize_node(item));
+            }
+        }
+        _ => {
+            keys.push("value".to_string());
+            summaries.push(summarize_node(node));
+        }
+    }
+}
+
+/// Summarize a node for display: `{key1, key2}` for objects, `[n]` for
+/// arrays, the value for scalars.
+fn summarize_node(node: &Node) -> String {
+    match node {
+        Node::Null => "null".to_string(),
+        Node::Bool(b) => b.to_string(),
+        Node::Number(s) => s.clone(),
+        Node::Str(s) => format!("\"{}\"", s),
+        Node::Map(m) => {
+            if m.entries.is_empty() {
+                "{}".to_string()
+            } else {
+                let keys: Vec<&str> = m.entries.iter().take(3).map(|(k, _)| k.as_str()).collect();
+                let more = if m.entries.len() > 3 { ",…" } else { "" };
+                format!("{{{},{}}}", keys.join(", "), more)
+            }
+        }
+        Node::Array(arr) => {
+            if arr.items.is_empty() {
+                "[]".to_string()
+            } else {
+                format!("[{}]", arr.items.len())
+            }
+        }
+    }
+}
+
+/// Convert a JSON node to an editable string (for inline editing).
+fn node_to_edit_string(node: &Node) -> String {
+    match node {
+        Node::Null => String::new(),
+        Node::Bool(b) => b.to_string(),
+        Node::Number(s) => s.clone(),
+        Node::Str(s) => s.clone(),
+        _ => String::new(),
+    }
 }

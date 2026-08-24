@@ -1,0 +1,13 @@
+---
+source: crates/vuwr-tui/tests/ui.rs
+assertion_line: 212
+expression: "render(&mut a, 40, 8)"
+---
+"name                 "Alice"            "
+"age                  30                 "
+"tags                 [1]                "
+"                                        "
+"                                        "
+"                                        "
+"                                        "
+" test.json [tree]  1/3                  "
