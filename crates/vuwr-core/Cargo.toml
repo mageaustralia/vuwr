@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+# Search and filter. Permissive, wasm-clean, and the CI wasm32 check keeps
+# it that way.
+regex = "1"
+
 [lints.rust]
 unsafe_code = "forbid"
 

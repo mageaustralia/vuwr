@@ -22,6 +22,16 @@ pub struct GridState {
     pub offset: (usize, usize),
     /// Stack of drill-down entries for tree navigation.
     pub drill_stack: Vec<DrillEntry>,
+    /// How many columns are pinned to the left edge while scrolling
+    /// horizontally. Wide files are unreadable without this: you lose
+    /// sight of which row you are on.
+    pub frozen_cols: usize,
+    /// Marked rows, by *source* index so marks survive filtering.
+    pub marks: std::collections::BTreeSet<usize>,
+    /// Source row indices currently visible, or `None` for all of them.
+    /// The cursor addresses display rows; the sheet addresses source rows,
+    /// and [`GridState::source_row`] is the only bridge between them.
+    pub visible: Option<Vec<usize>>,
 }
 
 impl GridState {
@@ -79,6 +89,52 @@ impl GridState {
         true
     }
 
+    /// The source row a display row refers to.
+    ///
+    /// Every lookup into a `Sheet` must go through this: with a filter
+    /// applied, display row 3 is not source row 3, and mixing the two
+    /// shows one row's data under another row's heading.
+    pub fn source_row(&self, display_row: usize) -> usize {
+        match &self.visible {
+            Some(rows) => rows.get(display_row).copied().unwrap_or(display_row),
+            None => display_row,
+        }
+    }
+
+    /// How many rows are on display.
+    pub fn visible_rows(&self, total: usize) -> usize {
+        match &self.visible {
+            Some(rows) => rows.len(),
+            None => total,
+        }
+    }
+
+    /// The display row showing `source`, if it is visible.
+    pub fn display_row(&self, source: usize) -> Option<usize> {
+        match &self.visible {
+            Some(rows) => rows.iter().position(|&r| r == source),
+            None => Some(source),
+        }
+    }
+
+    /// Drop any filter, keeping the cursor on the same source row.
+    pub fn clear_filter(&mut self) {
+        let source = self.source_row(self.cursor.0);
+        self.visible = None;
+        self.cursor.0 = source;
+    }
+
+    /// Mark or unmark a source row. Returns true if it is now marked.
+    pub fn toggle_mark(&mut self, source: usize) -> bool {
+        if self.marks.contains(&source) {
+            self.marks.remove(&source);
+            false
+        } else {
+            self.marks.insert(source);
+            true
+        }
+    }
+
     /// How deep we are in the tree (0 = root).
     pub fn depth(&self) -> usize {
         self.drill_stack.len()
@@ -126,6 +182,45 @@ mod tests {
         g.drill_up();
         assert_eq!(g.cursor, (5, 2));
         assert_eq!(g.depth(), 0);
+    }
+
+    #[test]
+    fn source_row_maps_through_a_filter() {
+        let mut g = GridState::new();
+        assert_eq!(g.source_row(3), 3, "no filter: identity");
+
+        g.visible = Some(vec![0, 4, 9]);
+        assert_eq!(g.source_row(0), 0);
+        assert_eq!(g.source_row(1), 4);
+        assert_eq!(g.source_row(2), 9);
+        assert_eq!(g.visible_rows(100), 3);
+        assert_eq!(g.display_row(9), Some(2));
+        assert_eq!(g.display_row(5), None, "filtered out");
+    }
+
+    /// Clearing a filter should leave you looking at the same row, not
+    /// jump to whatever row happens to share the display index.
+    #[test]
+    fn clearing_a_filter_keeps_the_cursor_on_its_row() {
+        let mut g = GridState::new();
+        g.visible = Some(vec![0, 4, 9]);
+        g.cursor = (2, 0);
+        g.clear_filter();
+        assert_eq!(g.cursor.0, 9);
+        assert!(g.visible.is_none());
+    }
+
+    /// Marks are stored by source row, so filtering does not lose them.
+    #[test]
+    fn marks_survive_filtering() {
+        let mut g = GridState::new();
+        assert!(g.toggle_mark(7));
+        g.visible = Some(vec![7]);
+        assert!(g.marks.contains(&7));
+        g.visible = None;
+        assert!(g.marks.contains(&7));
+        assert!(!g.toggle_mark(7), "toggles off");
+        assert!(g.marks.is_empty());
     }
 
     #[test]

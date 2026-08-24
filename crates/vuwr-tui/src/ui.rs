@@ -76,11 +76,19 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let (cursor_row, cursor_col) = app.grid.cursor;
     let offset_row = app.grid.offset.0;
-
     let widths = app.widths().to_vec();
-    let mut start_col = app.grid.offset.1.min(cursor_col);
-    while start_col < cursor_col && span_width(&widths, start_col, cursor_col) > area.width as usize
-    {
+    let frozen = app.grid.frozen_cols.min(widths.len());
+
+    // A one-character gutter carries the mark indicator. It is always
+    // present so columns do not shift when a row is marked.
+    let gutter = 1usize;
+    let frozen_width: usize = widths[..frozen].iter().map(|w| w + 1).sum();
+    let scroll_area = (area.width as usize).saturating_sub(gutter + 1 + frozen_width);
+
+    // Frozen columns never scroll, so the scrolling window starts after
+    // them and the cursor is kept inside it.
+    let mut start_col = app.grid.offset.1.max(frozen).min(cursor_col.max(frozen));
+    while start_col < cursor_col && span_width(&widths, start_col, cursor_col) > scroll_area {
         start_col += 1;
     }
     app.grid.offset.1 = start_col;
@@ -89,44 +97,53 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut used = 0;
     while end_col < widths.len() {
         let w = widths[end_col] + 1;
-        if used + w > area.width as usize && end_col > start_col {
+        if used + w > scroll_area && end_col > start_col {
             break;
         }
         used += w;
         end_col += 1;
     }
 
-    let constraints: Vec<Constraint> = widths[start_col..end_col]
-        .iter()
-        .map(|&w| Constraint::Length(w as u16))
-        .collect();
+    // Column order on screen: gutter, frozen columns, then the window.
+    let shown: Vec<usize> = (0..frozen).chain(start_col..end_col).collect();
+
+    let mut constraints = vec![Constraint::Length(gutter as u16)];
+    constraints.extend(shown.iter().map(|&c| Constraint::Length(widths[c] as u16)));
 
     let (headers, row_count, _col_count) = app.table_dims();
-    // CSV's header is row 0 of its own data; JSON and XML carry column
-    // names separately, so draw them as a real header row.
     let header_row = app.has_separate_header().then(|| {
-        TRow::new(
-            headers[start_col..end_col.min(headers.len())]
-                .iter()
-                .map(|h| TCell::from(h.clone()).style(Style::default().bold()))
-                .collect::<Vec<_>>(),
-        )
+        let mut cells = vec![TCell::from("")];
+        cells.extend(shown.iter().map(|&c| {
+            TCell::from(headers.get(c).cloned().unwrap_or_default()).style(Style::default().bold())
+        }));
+        TRow::new(cells)
     });
+
+    let search = app.search.clone();
     let mut rows = Vec::new();
     for r in offset_row..row_count.min(offset_row + area.height as usize) {
-        let cells: Vec<TCell> = (start_col..end_col)
-            .map(|c| {
-                let text = app.table_cell(r, c).unwrap_or_default();
-                let mut cell = TCell::from(text);
-                if r == 0 {
-                    cell = cell.style(Style::default().bold());
-                }
-                if (r, c) == (cursor_row, cursor_col) {
-                    cell = cell.style(Style::default().reversed());
-                }
-                cell
-            })
-            .collect();
+        let source = app.grid.source_row(r);
+        let marked = app.grid.marks.contains(&source);
+        let mut cells =
+            vec![TCell::from(if marked { "*" } else { " " }).style(Style::default().bold())];
+        cells.extend(shown.iter().map(|&c| {
+            let text = app.table_cell(r, c).unwrap_or_default();
+            let mut style = Style::default();
+            if r == 0 && !app.has_separate_header() {
+                style = style.bold();
+            }
+            // Show where the matches are, not just where the cursor landed.
+            if search.as_ref().is_some_and(|s| s.matches(&text)) {
+                style = style.underlined();
+            }
+            if marked {
+                style = style.bold();
+            }
+            if (r, c) == (cursor_row, cursor_col) {
+                style = style.reversed();
+            }
+            TCell::from(text).style(style)
+        }));
         rows.push(TRow::new(cells));
     }
 
@@ -313,6 +330,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
                 }
             }
         }
+        Mode::Prompt { kind, buf } => format!(" {}{buf}▏", kind.sigil()),
         Mode::Edit { buf } => {
             let (r, c) = app.grid.cursor;
             format!(" ({},{}) > {buf}▏", r + 1, c + 1)

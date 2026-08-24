@@ -542,7 +542,8 @@ fn text_view_is_available_for_every_format() {
 #[test]
 fn hint_bar_shows_keys_along_the_bottom() {
     let mut app = app("name,age\nAlice,30\n");
-    let out = render(&mut app, 76, 8);
+    // Wide enough for the whole bar; it truncates gracefully when narrower.
+    let out = render(&mut app, 120, 8);
     let last = out.lines().last().unwrap();
     assert!(last.contains("help"), "hint bar on the last line: {last}");
     assert!(last.contains("edit") && last.contains("quit"), "{last}");
@@ -791,4 +792,212 @@ fn text_and_table_views_stay_in_step() {
     app.handle_key(key(KeyCode::Char('1'))); // back to table
     assert_eq!(app.table_cell(1, 0).as_deref(), Some("5"));
     assert_eq!(app.table_cell(1, 1).as_deref(), Some("6"));
+}
+
+// --- Search, filter, marks, frozen columns (phase 4.7) ---
+
+fn typed(app: &mut App, s: &str) {
+    for c in s.chars() {
+        let code = if c == '\n' {
+            KeyCode::Enter
+        } else {
+            KeyCode::Char(c)
+        };
+        app.handle_key(key(code));
+    }
+}
+
+const SAMPLE: &str = "name,city,age\nAlice,Sydney,30\nBob,Perth,25\nCarol,Sydney,41\n";
+
+#[test]
+fn filter_shows_only_matching_rows_and_keeps_the_header() {
+    let mut app = app(SAMPLE);
+    typed(&mut app, "&Sydney\n");
+
+    let (_, rows, _) = app.table_dims();
+    assert_eq!(rows, 3, "header plus two matches");
+    assert_eq!(app.table_cell(0, 0).as_deref(), Some("name"));
+    assert_eq!(app.table_cell(1, 0).as_deref(), Some("Alice"));
+    assert_eq!(app.table_cell(2, 0).as_deref(), Some("Carol"));
+}
+
+/// The cursor addresses display rows and the sheet addresses source rows;
+/// an edit under a filter must land on the row you can see.
+#[test]
+fn editing_under_a_filter_writes_to_the_right_row() {
+    let mut app = app(SAMPLE);
+    typed(&mut app, "&Sydney\n");
+    app.grid.move_to(2, 0, 3, 3); // display row 2 == Carol == source row 3
+
+    app.handle_key(key(KeyCode::Char('c')));
+    typed(&mut app, "Caroline\n");
+
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "name,city,age\nAlice,Sydney,30\nBob,Perth,25\nCaroline,Sydney,41\n"
+    );
+}
+
+#[test]
+fn clearing_a_filter_keeps_you_on_the_same_row() {
+    let mut app = app(SAMPLE);
+    typed(&mut app, "&Sydney\n");
+    app.grid.move_to(2, 0, 3, 3); // Carol
+    app.handle_key(key(KeyCode::Char('r')));
+
+    let (_, rows, _) = app.table_dims();
+    assert_eq!(rows, 4, "all rows back");
+    assert_eq!(
+        app.table_cell(app.grid.cursor.0, 0).as_deref(),
+        Some("Carol")
+    );
+}
+
+#[test]
+fn filter_with_no_matches_changes_nothing() {
+    let mut app = app(SAMPLE);
+    typed(&mut app, "&zzzz\n");
+    let (_, rows, _) = app.table_dims();
+    assert_eq!(rows, 4, "the view is left alone");
+    assert!(app.status.contains("no rows match"), "{}", app.status);
+}
+
+#[test]
+fn a_bad_pattern_reports_instead_of_panicking() {
+    let mut app = app(SAMPLE);
+    typed(&mut app, "&[unclosed\n");
+    assert!(app.status.contains("bad pattern"), "{}", app.status);
+}
+
+#[test]
+fn find_jumps_to_matches_and_n_cycles() {
+    let mut app = app(SAMPLE);
+    typed(&mut app, "/sydney\n"); // smart case: lower case matches Sydney
+    assert_eq!(app.grid.cursor, (1, 1), "first match");
+
+    app.handle_key(key(KeyCode::Char('n')));
+    assert_eq!(app.grid.cursor, (3, 1), "next match");
+
+    app.handle_key(key(KeyCode::Char('n')));
+    assert_eq!(app.grid.cursor, (1, 1), "wraps around");
+
+    app.handle_key(key(KeyCode::Char('N')));
+    assert_eq!(app.grid.cursor, (3, 1), "backwards");
+}
+
+#[test]
+fn find_reports_when_nothing_matches() {
+    let mut app = app(SAMPLE);
+    typed(&mut app, "/zzzz\n");
+    assert!(app.status.contains("no match"), "{}", app.status);
+}
+
+#[test]
+fn n_without_a_search_says_so() {
+    let mut app = app(SAMPLE);
+    app.handle_key(key(KeyCode::Char('n')));
+    assert!(app.status.contains("no search yet"), "{}", app.status);
+}
+
+#[test]
+fn marks_toggle_and_survive_filtering() {
+    let mut app = app(SAMPLE);
+    app.grid.move_to(2, 0, 4, 3); // Bob
+    app.handle_key(key(KeyCode::Char('m')));
+    assert!(app.grid.marks.contains(&2));
+
+    typed(&mut app, "&Sydney\n"); // Bob is filtered out
+    assert!(app.grid.marks.contains(&2), "the mark is kept");
+    app.handle_key(key(KeyCode::Char('r')));
+
+    app.grid.move_to(2, 0, 4, 3);
+    app.handle_key(key(KeyCode::Char('m')));
+    assert!(!app.grid.marks.contains(&2), "toggles off");
+}
+
+/// CSV's first row is column names, and it is emitted with the marks
+/// anyway, so marking it would only duplicate it.
+#[test]
+fn the_csv_header_cannot_be_marked() {
+    let mut app = app(SAMPLE);
+    app.handle_key(key(KeyCode::Char('m')));
+    assert!(app.grid.marks.is_empty());
+    assert!(
+        app.status.contains("header row cannot be marked"),
+        "{}",
+        app.status
+    );
+}
+
+#[test]
+fn ctrl_e_prints_marked_rows_with_the_header_and_exits() {
+    let mut app = app(SAMPLE);
+    app.grid.move_to(1, 0, 4, 3);
+    app.handle_key(key(KeyCode::Char('m')));
+    app.grid.move_to(3, 0, 4, 3);
+    app.handle_key(key(KeyCode::Char('m')));
+
+    app.handle_key(ctrl('e'));
+    assert!(app.quit, "Ctrl-E exits");
+    assert_eq!(
+        app.take_output().unwrap(),
+        "name,city,age\nAlice,Sydney,30\nCarol,Sydney,41\n"
+    );
+}
+
+#[test]
+fn ctrl_e_with_no_marks_reports_rather_than_quitting() {
+    let mut app = app(SAMPLE);
+    app.handle_key(ctrl('e'));
+    assert!(!app.quit);
+    assert!(app.status.contains("no rows marked"), "{}", app.status);
+}
+
+#[test]
+fn freezing_pins_columns_left_of_the_cursor() {
+    let mut app = app(SAMPLE);
+    app.grid.move_to(0, 1, 4, 3);
+    app.handle_key(key(KeyCode::Char('f')));
+    assert_eq!(app.grid.frozen_cols, 1);
+    assert!(app.status.contains("frozen"), "{}", app.status);
+
+    app.handle_key(key(KeyCode::Char('f')));
+    assert_eq!(app.grid.frozen_cols, 0, "same key unfreezes");
+}
+
+/// A frozen column stays on screen when the cursor scrolls far right.
+#[test]
+fn frozen_columns_stay_visible_when_scrolled() {
+    let mut wide = String::from("id,");
+    wide.push_str(
+        &(0..20)
+            .map(|i| format!("col{i}"))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    wide.push_str("\nKEY,");
+    wide.push_str(
+        &(0..20)
+            .map(|i| format!("v{i}"))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    wide.push('\n');
+
+    let mut app = app(&wide);
+    app.grid.move_to(0, 0, 2, 21);
+    app.handle_key(key(KeyCode::Char('f'))); // freeze nothing yet (col 0)
+    app.grid.move_to(0, 1, 2, 21);
+    app.handle_key(key(KeyCode::Char('f'))); // freeze the id column
+    app.grid.move_to(1, 20, 2, 21);
+
+    let out = render(&mut app, 40, 6);
+    assert!(
+        out.contains("KEY"),
+        "the frozen column is still shown:\n{out}"
+    );
+    assert!(
+        out.contains("v19"),
+        "and so is the far-right column:\n{out}"
+    );
 }

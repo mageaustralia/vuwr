@@ -2,11 +2,11 @@
 source: crates/vuwr-tui/tests/ui.rs
 expression: "render(&mut app, 30, 8)"
 ---
-"name  age                     "
-"Alice 30                      "
-"Bob   25                      "
+"  name  age                   "
+"  Alice 30                    "
+"  Bob   25                    "
 "                              "
 "                              "
 "                              "
 " test.csv  [table] text  row 1"
-" ?  help   i  edit   c  replac"
+" ?  help   i  edit   /  find  "

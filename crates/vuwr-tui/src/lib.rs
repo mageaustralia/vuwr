@@ -20,22 +20,37 @@ use vuwr_core::Document;
 
 /// Run the interactive table UI until the user quits. The terminal is always
 /// restored, even on error.
-pub fn run(path: PathBuf, doc: Document) -> io::Result<()> {
+/// Run the terminal UI.
+///
+/// Returns anything the session asked to hand back to the shell — the
+/// marked rows from `Ctrl-E`, say. It is printed by the caller after the
+/// alternate screen is gone, so it lands in the scrollback and can be
+/// piped, which is the whole point of it.
+pub fn run(path: PathBuf, doc: Document) -> io::Result<Option<String>> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-    let result = event_loop(&mut terminal, App::new(path, doc));
+    let terminal = Terminal::new(CrosstermBackend::new(io::stdout()));
+    let mut terminal = match terminal {
+        Ok(t) => t,
+        Err(e) => {
+            disable_raw_mode().ok();
+            io::stdout().execute(LeaveAlternateScreen).ok();
+            return Err(e);
+        }
+    };
+    let mut app = App::new(path, doc);
+    let result = event_loop(&mut terminal, &mut app);
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
-    result
+    result.map(|()| app.take_output())
 }
 
 fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    mut app: App,
+    app: &mut App,
 ) -> io::Result<()> {
     while !app.quit {
-        terminal.draw(|f| ui::render(f, &mut app))?;
+        terminal.draw(|f| ui::render(f, app))?;
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {

@@ -10,7 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use vuwr_core::{Command, CsvDoc, Document, GridState, Node};
+use vuwr_core::{Command, CsvDoc, Document, GridState, Node, Search};
 
 use crate::keymap::Resolved;
 
@@ -24,6 +24,26 @@ pub enum Mode {
     Command {
         buf: String,
     },
+    /// A `/` or `&` prompt.
+    Prompt {
+        kind: PromptKind,
+        buf: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+    Find,
+    Filter,
+}
+
+impl PromptKind {
+    pub fn sigil(self) -> char {
+        match self {
+            PromptKind::Find => '/',
+            PromptKind::Filter => '&',
+        }
+    }
 }
 
 /// Which view we're showing.
@@ -58,6 +78,10 @@ pub struct App {
     /// are not guessable, and a viewer people reach for occasionally
     /// should not require remembering them.
     pub show_hints: bool,
+    /// Text to hand back to the shell on exit, from `Ctrl-E`.
+    pending_output: Option<String>,
+    /// The last search, reused by `n` and `N` and for highlighting.
+    pub search: Option<Search>,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
     /// The exact bytes those lines came from, and each line's byte span
@@ -95,6 +119,8 @@ impl App {
             tree_summaries,
             show_help: false,
             show_hints: true,
+            pending_output: None,
+            search: None,
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -115,7 +141,9 @@ impl App {
             ViewMode::Table => match self.doc.sheet() {
                 Some(sheet) => {
                     let (rows, cols) = sheet.dims();
-                    (sheet.headers(), rows, cols)
+                    // A filter changes how many rows are on display, not
+                    // how many the document has.
+                    (sheet.headers(), self.grid.visible_rows(rows), cols)
                 }
                 None => (Vec::new(), 0, 0),
             },
@@ -127,7 +155,12 @@ impl App {
     /// The display text of one cell.
     pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
         match self.view {
-            ViewMode::Table => self.doc.sheet()?.cell(row, col).map(|v| escape(&v)),
+            // `row` is a display row; the sheet speaks source rows.
+            ViewMode::Table => self
+                .doc
+                .sheet()?
+                .cell(self.grid.source_row(row), col)
+                .map(|v| escape(&v)),
             ViewMode::Tree => self.tree_summaries.get(row).cloned(),
             ViewMode::Text => self.text_lines.get(row).cloned(),
         }
@@ -165,14 +198,23 @@ impl App {
     /// differs sharply between a table, a tree, a pager and an open edit.
     pub fn hints(&self) -> Vec<Command> {
         match self.mode {
-            Mode::Edit { .. } | Mode::Command { .. } => Vec::new(),
+            Mode::Edit { .. } | Mode::Command { .. } | Mode::Prompt { .. } => Vec::new(),
             Mode::Normal => {
                 let mut v = vec![Command::Help];
                 match self.view {
                     ViewMode::Table => {
                         if self.doc.sheet().is_some() {
                             v.push(Command::EditCell);
-                            v.push(Command::ReplaceCell);
+                            v.push(Command::Find);
+                            if self.grid.visible.is_some() {
+                                v.push(Command::ClearFilter);
+                            } else {
+                                v.push(Command::Filter);
+                            }
+                            v.push(Command::ToggleMark);
+                            if !self.grid.marks.is_empty() {
+                                v.push(Command::PrintMarks);
+                            }
                         }
                         v.push(Command::Undo);
                     }
@@ -227,12 +269,11 @@ impl App {
             self.try_quit();
             return;
         }
-        if matches!(self.mode, Mode::Normal) {
-            self.normal_key(key);
-        } else if matches!(self.mode, Mode::Edit { .. }) {
-            self.edit_key(key);
-        } else {
-            self.command_key(key);
+        match self.mode {
+            Mode::Normal => self.normal_key(key),
+            Mode::Edit { .. } => self.edit_key(key),
+            Mode::Prompt { .. } => self.prompt_key(key),
+            Mode::Command { .. } => self.command_key(key),
         }
     }
 
@@ -327,6 +368,74 @@ impl App {
                 }
             }
 
+            Command::Find => {
+                self.mode = Mode::Prompt {
+                    kind: PromptKind::Find,
+                    buf: String::new(),
+                }
+            }
+            Command::Filter => {
+                self.mode = Mode::Prompt {
+                    kind: PromptKind::Filter,
+                    buf: String::new(),
+                }
+            }
+            Command::FindNext => self.find_step(true),
+            Command::FindPrev => self.find_step(false),
+            Command::ClearFilter => {
+                if self.grid.visible.is_some() {
+                    self.grid.clear_filter();
+                    self.status = "filter cleared".into();
+                } else {
+                    self.status = "no filter".into();
+                }
+            }
+            Command::ToggleMark => {
+                if self.view == ViewMode::Table {
+                    let source = self.grid.source_row(self.grid.cursor.0);
+                    // CSV's first row is the column names, not data. It is
+                    // emitted with the marked rows regardless, so marking
+                    // it would only duplicate it.
+                    if source == 0 && !self.has_separate_header() {
+                        self.status = "the header row cannot be marked".into();
+                        return;
+                    }
+                    let now = self.grid.toggle_mark(source);
+                    self.status = format!(
+                        "row {} {}  ({} marked)",
+                        source + 1,
+                        if now { "marked" } else { "unmarked" },
+                        self.grid.marks.len()
+                    );
+                }
+            }
+            Command::ClearMarks => {
+                let n = self.grid.marks.len();
+                self.grid.marks.clear();
+                self.status = format!("cleared {n} marks");
+            }
+            Command::PrintMarks => match self.marked_rows_text() {
+                Some(text) => {
+                    self.pending_output = Some(text);
+                    self.quit = true;
+                }
+                None => self.status = "no rows marked — press m to mark one".into(),
+            },
+            Command::FreezeColumns => {
+                // Pin everything left of the cursor, or unpin if already
+                // pinned there — one key both ways.
+                let want = self.grid.cursor.1;
+                self.grid.frozen_cols = if self.grid.frozen_cols == want {
+                    0
+                } else {
+                    want
+                };
+                self.status = match self.grid.frozen_cols {
+                    0 => "columns unfrozen".into(),
+                    n => format!("{n} column(s) frozen"),
+                };
+            }
+
             Command::Save => self.save(),
             Command::Quit => self.try_quit(),
             Command::ForceQuit => self.quit = true,
@@ -343,6 +452,105 @@ impl App {
         }
     }
 
+    /// Take whatever should be written to stdout after the UI exits.
+    pub fn take_output(&mut self) -> Option<String> {
+        self.pending_output.take()
+    }
+
+    /// The marked rows as delimited text, with the header first so the
+    /// output stands on its own in a pipeline.
+    fn marked_rows_text(&self) -> Option<String> {
+        if self.grid.marks.is_empty() {
+            return None;
+        }
+        let sheet = self.doc.sheet()?;
+        let (_, cols) = sheet.dims();
+        let row_text = |r: usize| {
+            (0..cols)
+                .map(|c| sheet.cell(r, c).unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let mut out = String::new();
+        if self.has_separate_header() {
+            out.push_str(&sheet.headers().join(","));
+        } else {
+            out.push_str(&row_text(0));
+        }
+        out.push('\n');
+        for &r in &self.grid.marks {
+            out.push_str(&row_text(r));
+            out.push('\n');
+        }
+        Some(out)
+    }
+
+    /// Jump to the next or previous match of the current search.
+    fn find_step(&mut self, forward: bool) {
+        let Some(search) = self.search.clone() else {
+            self.status = "no search yet — press / to search".into();
+            return;
+        };
+        let Some(sheet) = self.doc.sheet() else {
+            self.status = "search needs a table view".into();
+            return;
+        };
+        let from = (self.grid.source_row(self.grid.cursor.0), self.grid.cursor.1);
+        match search.find_from(sheet, from, forward) {
+            Some((row, col)) => {
+                // A match in a filtered-out row cannot be shown, so drop
+                // the filter rather than moving the cursor somewhere the
+                // user cannot see.
+                if self.grid.display_row(row).is_none() {
+                    self.grid.clear_filter();
+                }
+                let display = self.grid.display_row(row).unwrap_or(row);
+                let (rows, cols) = self.grid_dims();
+                self.grid.move_to(display, col, rows, cols);
+                self.status = format!("/{}", search.pattern());
+            }
+            None => self.status = format!("no match for /{}", search.pattern()),
+        }
+    }
+
+    fn commit_prompt(&mut self, kind: PromptKind, pattern: String) {
+        if pattern.is_empty() {
+            return;
+        }
+        let search = match Search::new(&pattern) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status = e.to_string();
+                return;
+            }
+        };
+        match kind {
+            PromptKind::Find => {
+                self.search = Some(search);
+                self.find_step(true);
+            }
+            PromptKind::Filter => {
+                let Some(sheet) = self.doc.sheet() else {
+                    self.status = "filter needs a table view".into();
+                    return;
+                };
+                let rows = search.filter_rows(sheet, true);
+                let data_rows = rows
+                    .len()
+                    .saturating_sub(usize::from(sheet.header_is_first_row()));
+                if data_rows == 0 {
+                    self.status = format!("no rows match &{pattern}");
+                    return;
+                }
+                self.search = Some(search);
+                self.grid.visible = Some(rows);
+                self.grid.cursor = (0, self.grid.cursor.1);
+                self.grid.offset = (0, self.grid.offset.1);
+                self.status = format!("&{pattern}  ({data_rows} rows)");
+            }
+        }
+    }
+
     /// Refresh derived state after the document changed.
     fn after_edit(&mut self) {
         self.clamp_cursor();
@@ -356,7 +564,13 @@ impl App {
     /// (rows, cols) of the current grid, adapting to view mode.
     fn grid_dims(&self) -> (usize, usize) {
         match self.view {
-            ViewMode::Table => self.doc.sheet().map(|s| s.dims()).unwrap_or((0, 0)),
+            ViewMode::Table => match self.doc.sheet() {
+                Some(sheet) => {
+                    let (rows, cols) = sheet.dims();
+                    (self.grid.visible_rows(rows), cols)
+                }
+                None => (0, 0),
+            },
             ViewMode::Tree => (self.tree_summaries.len(), self.tree_keys.len().max(1)),
             ViewMode::Text => (self.text_lines.len(), 1),
         }
@@ -382,6 +596,11 @@ impl App {
     }
 
     fn set_view(&mut self, view: ViewMode) {
+        if view != ViewMode::Table {
+            // The row mapping belongs to the table; carrying it into a
+            // tree or a pager would index rows that mean something else.
+            self.grid.clear_filter();
+        }
         self.view = view;
         match view {
             ViewMode::Table => self.rebuild_table_widths(),
@@ -545,7 +764,7 @@ impl App {
             ViewMode::Table => self
                 .doc
                 .sheet()
-                .and_then(|s| s.cell(r, c))
+                .and_then(|s| s.cell(self.grid.source_row(r), c))
                 .unwrap_or_default(),
             ViewMode::Text => self.text_lines.get(r).cloned().unwrap_or_default(),
             ViewMode::Tree => {
@@ -587,6 +806,7 @@ impl App {
                     self.commit_text_line(row, &value);
                     return;
                 }
+                let row = self.grid.source_row(row);
                 match self.doc.set_cell(row, column, &value) {
                     Ok(()) => {
                         self.dirty = true;
@@ -597,6 +817,30 @@ impl App {
                     }
                     Err(e) => self.status = e.to_string(),
                 }
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+            }
+            KeyCode::Char(c)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                buf.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn prompt_key(&mut self, key: KeyEvent) {
+        let Mode::Prompt { kind, buf } = &mut self.mode else {
+            return;
+        };
+        let kind = *kind;
+        match key.code {
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Enter => {
+                let pattern = std::mem::take(buf);
+                self.mode = Mode::Normal;
+                self.commit_prompt(kind, pattern);
             }
             KeyCode::Backspace => {
                 buf.pop();

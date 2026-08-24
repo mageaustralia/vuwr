@@ -67,6 +67,18 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         (KeyCode::Char('u'), false) => Command::Undo,
         (KeyCode::Char('r'), true) => Command::Redo,
 
+        // Search, filter, marks — csvlens bindings, which are close to
+        // less's where they overlap.
+        (KeyCode::Char('/'), false) => Command::Find,
+        (KeyCode::Char('n'), false) => Command::FindNext,
+        (KeyCode::Char('N'), false) => Command::FindPrev,
+        (KeyCode::Char('&'), false) => Command::Filter,
+        (KeyCode::Char('r'), false) => Command::ClearFilter,
+        (KeyCode::Char('m'), false) => Command::ToggleMark,
+        (KeyCode::Char('M'), false) => Command::ClearMarks,
+        (KeyCode::Char('e'), true) => Command::PrintMarks,
+        (KeyCode::Char('f'), false) => Command::FreezeColumns,
+
         // File and interface
         (KeyCode::Char('q'), false) => Command::Quit,
         (KeyCode::Char(':'), false) => Command::OpenPalette,
@@ -101,6 +113,15 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::ViewText => "3",
         Command::DrillDown => "Enter",
         Command::DrillUp => "Esc",
+        Command::Find => "/",
+        Command::FindNext => "n",
+        Command::FindPrev => "N",
+        Command::Filter => "&",
+        Command::ClearFilter => "r",
+        Command::ToggleMark => "m",
+        Command::ClearMarks => "M",
+        Command::PrintMarks => "Ctrl-E",
+        Command::FreezeColumns => "f",
         Command::EditCell => "i  Enter",
         Command::ReplaceCell => "c",
         Command::Undo => "u",

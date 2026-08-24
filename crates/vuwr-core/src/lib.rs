@@ -11,6 +11,7 @@ mod csv;
 pub mod json;
 pub mod node;
 mod ops;
+mod search;
 mod sheet;
 mod view;
 mod xml;
@@ -20,6 +21,7 @@ pub use csv::{Cell, CsvDoc, LineEnding, Row};
 pub use json::JsonDoc;
 pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};
 pub use ops::EditOp;
+pub use search::Search;
 pub use sheet::Sheet;
 pub use view::GridState;
 pub use xml::XmlDoc;
@@ -89,6 +91,8 @@ pub enum Error {
     },
     /// An edit addressed a node that does not exist.
     NoSuchPath,
+    /// A search pattern would not compile.
+    InvalidRegex(String),
     /// The document has no table-shaped view (not an array of objects, not
     /// repeated sibling elements).
     NotTableShaped,
@@ -125,6 +129,7 @@ impl fmt::Display for Error {
                 write!(f, "editing {format} documents is not supported yet")
             }
             Error::NoSuchPath => write!(f, "no such path in the document"),
+            Error::InvalidRegex(msg) => write!(f, "bad pattern: {msg}"),
             Error::NotTableShaped => write!(f, "document has no table-shaped view"),
         }
     }

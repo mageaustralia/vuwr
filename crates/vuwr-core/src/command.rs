@@ -35,6 +35,18 @@ pub enum Command {
     DrillDown,
     DrillUp,
 
+    // --- Search, filter, marks ---
+    Find,
+    FindNext,
+    FindPrev,
+    Filter,
+    ClearFilter,
+    ToggleMark,
+    ClearMarks,
+    /// Print the marked rows to stdout and exit.
+    PrintMarks,
+    FreezeColumns,
+
     // --- Editing ---
     EditCell,
     ReplaceCell,
@@ -75,6 +87,15 @@ impl Command {
         Command::ViewText,
         Command::DrillDown,
         Command::DrillUp,
+        Command::Find,
+        Command::FindNext,
+        Command::FindPrev,
+        Command::Filter,
+        Command::ClearFilter,
+        Command::ToggleMark,
+        Command::ClearMarks,
+        Command::PrintMarks,
+        Command::FreezeColumns,
         Command::EditCell,
         Command::ReplaceCell,
         Command::Undo,
@@ -109,6 +130,15 @@ impl Command {
             Command::ViewText => "view-text",
             Command::DrillDown => "drill-down",
             Command::DrillUp => "drill-up",
+            Command::Find => "find",
+            Command::FindNext => "find-next",
+            Command::FindPrev => "find-prev",
+            Command::Filter => "filter",
+            Command::ClearFilter => "clear-filter",
+            Command::ToggleMark => "mark",
+            Command::ClearMarks => "clear-marks",
+            Command::PrintMarks => "print-marks",
+            Command::FreezeColumns => "freeze-columns",
             Command::EditCell => "edit-cell",
             Command::ReplaceCell => "replace-cell",
             Command::Undo => "undo",
@@ -144,6 +174,15 @@ impl Command {
             Command::ViewText => "switch to text view (pager)",
             Command::DrillDown => "descend into the selected value",
             Command::DrillUp => "return to the parent",
+            Command::Find => "search for a pattern",
+            Command::FindNext => "jump to the next match",
+            Command::FindPrev => "jump to the previous match",
+            Command::Filter => "show only rows matching a pattern",
+            Command::ClearFilter => "show all rows again",
+            Command::ToggleMark => "mark or unmark this row",
+            Command::ClearMarks => "clear all marks",
+            Command::PrintMarks => "print marked rows to stdout and exit",
+            Command::FreezeColumns => "pin columns left of the cursor",
             Command::EditCell => "edit the selected cell",
             Command::ReplaceCell => "replace the selected cell",
             Command::Undo => "undo the last edit",
@@ -180,6 +219,15 @@ impl Command {
             Command::ViewText => "text",
             Command::DrillDown => "open",
             Command::DrillUp => "back",
+            Command::Find => "find",
+            Command::FindNext => "next",
+            Command::FindPrev => "prev",
+            Command::Filter => "filter",
+            Command::ClearFilter => "unfilter",
+            Command::ToggleMark => "mark",
+            Command::ClearMarks => "unmark all",
+            Command::PrintMarks => "print marked",
+            Command::FreezeColumns => "freeze",
             Command::EditCell => "edit",
             Command::ReplaceCell => "replace",
             Command::Undo => "undo",
@@ -242,7 +290,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 29, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 38, "update ALL when adding a command");
     }
 
     #[test]
