@@ -250,3 +250,19 @@ fn check_covers_csv() {
     assert!(err.contains("bad.csv:2:"), "with a position: {err}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The bundled fonts carry licences that require their notices to be
+/// distributed. The GUI shows them under Help; this is the same thing for
+/// anyone who never opens a window.
+#[test]
+fn licenses_flag_prints_the_bundled_notices() {
+    let out = Command::new(env!("CARGO_BIN_EXE_vuwr"))
+        .arg("--licenses")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("UBUNTU FONT LICENCE"), "Ubuntu notice");
+    assert!(text.contains("SIL OPEN FONT LICENSE"), "OFL notice");
+    assert!(text.contains("MIT OR Apache-2.0"), "vuwr's own licence");
+}

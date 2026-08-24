@@ -20,6 +20,9 @@ struct Args {
     /// With --check, print nothing and rely on the exit status alone.
     #[arg(short, long)]
     quiet: bool,
+    /// Print the licence notices bundled with this binary and exit.
+    #[arg(long)]
+    licenses: bool,
     /// Force the terminal UI
     #[arg(long)]
     tui: bool,
@@ -102,6 +105,25 @@ fn check(args: &Args) -> ExitCode {
 
 fn main() -> ExitCode {
     let args = Args::parse();
+
+    // The bundled fonts are under licences requiring their notices to be
+    // distributed with the software; the GUI shows them under Help, and
+    // this is the same thing for anyone who never opens a window.
+    if args.licenses {
+        println!("vuwr is MIT OR Apache-2.0.\n");
+        println!(
+            "Built on egui and eframe (MIT OR Apache-2.0), ratatui (MIT), regex,\n\
+             serde and clap (MIT OR Apache-2.0), and others — all permissive.\n"
+        );
+        println!(
+            "The fonts below are bundled by egui and carry licences that require\n\
+             these notices to be distributed with the software.\n"
+        );
+        for (title, text) in vuwr_gui::LICENSE_NOTICES {
+            println!("{}\n{}\n{text}\n", title, "-".repeat(title.len()));
+        }
+        return ExitCode::SUCCESS;
+    }
 
     if args.check {
         return check(&args);

@@ -41,6 +41,8 @@ pub struct VuwrApp {
     pending_g: bool,
     /// Why the last load failed, shown in the drop zone.
     load_error: Option<String>,
+    /// The Acknowledgements window.
+    show_licenses: bool,
 }
 
 impl VuwrApp {
@@ -51,6 +53,7 @@ impl VuwrApp {
             last_output: None,
             pending_g: false,
             load_error: None,
+            show_licenses: false,
         }
     }
 
@@ -62,6 +65,7 @@ impl VuwrApp {
             last_output: None,
             pending_g: false,
             load_error: None,
+            show_licenses: false,
         }
     }
 
@@ -99,6 +103,11 @@ impl VuwrApp {
             Some(s) => s.report(message),
             None => self.load_error = Some(message),
         }
+    }
+
+    /// Open the Acknowledgements window.
+    pub fn show_acknowledgements(&mut self) {
+        self.show_licenses = true;
     }
 
     /// True when a document is open.
@@ -256,6 +265,9 @@ impl eframe::App for VuwrApp {
         if self.session.as_ref().is_some_and(|s| s.show_help) {
             self.help_window(ctx);
         }
+        if self.show_licenses {
+            self.licenses_window(ctx);
+        }
     }
 }
 
@@ -324,6 +336,10 @@ impl VuwrApp {
                     self.run(Command::Help, ctx);
                     ui.close();
                 }
+                if ui.button("Acknowledgements").clicked() {
+                    self.show_licenses = true;
+                    ui.close();
+                }
             });
 
             ui.separator();
@@ -383,6 +399,12 @@ impl VuwrApp {
         });
     }
 
+    fn licenses_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_licenses;
+        render_license_window(&mut open, ctx);
+        self.show_licenses = open;
+    }
+
     fn help_window(&mut self, ctx: &egui::Context) {
         let mut open = true;
         egui::Window::new("Keys")
@@ -402,6 +424,64 @@ impl VuwrApp {
         }
     }
 }
+
+/// Acknowledgements.
+///
+/// The bundled fonts are distributed under licences that require their
+/// notices to travel with the software, so the notices are embedded in the
+/// binary rather than merely referenced. Everything else is
+/// MIT/Apache-2.0-style and needs attribution, which the summary provides.
+///
+/// A free function so it can be drawn headlessly in tests, like
+/// [`render_view`].
+pub fn render_license_window(open: &mut bool, ctx: &egui::Context) {
+    egui::Window::new("Acknowledgements")
+        .open(open)
+        .resizable(true)
+        .default_size([620.0, 460.0])
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.label(
+                    "vuwr is MIT OR Apache-2.0. It is built on egui and eframe \
+                     (MIT OR Apache-2.0), ratatui (MIT), regex, serde and clap \
+                     (MIT OR Apache-2.0), and others — all permissive.",
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    "The fonts below are bundled by egui and carry licences that \
+                     require these notices to be distributed with the software.",
+                );
+                for (title, text) in LICENSE_NOTICES {
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.heading(*title);
+                    ui.add_space(4.0);
+                    ui.monospace(*text);
+                }
+            });
+        });
+}
+
+/// Licence notices that must be distributed with the binary, embedded so
+/// they cannot be separated from it.
+pub const LICENSE_NOTICES: &[(&str, &str)] = &[
+    (
+        "Ubuntu Light — Ubuntu Font Licence 1.0",
+        include_str!("../licenses/UFL.txt"),
+    ),
+    (
+        "Noto Emoji — SIL Open Font License 1.1",
+        include_str!("../licenses/OFL.txt"),
+    ),
+    (
+        "Hack — MIT (bitmap fonts: Bitstream Vera / Arev)",
+        include_str!("../licenses/Hack-Regular.txt"),
+    ),
+    (
+        "emoji-icon-font — MIT",
+        include_str!("../licenses/emoji-icon-font-mit-license.txt"),
+    ),
+];
 
 /// What the browser shows before a file arrives.
 fn drop_zone(ui: &mut egui::Ui, error: Option<&str>) {

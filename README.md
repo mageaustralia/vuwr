@@ -37,6 +37,7 @@ cat data.csv | vuwr        # reads stdin
 vuwr data.csv | head       # piped output writes the document through
 
 vuwr --check *.json        # exit 0 valid, 1 invalid, 2 unreadable
+vuwr --licenses            # notices for the bundled fonts
 ```
 
 Press `?` for the keys. The bar along the bottom lists the ones that
@@ -77,3 +78,8 @@ That is deliberate — the design and its reasoning are in
 ## Licence
 
 MIT OR Apache-2.0.
+
+egui bundles fonts under the SIL Open Font License and the Ubuntu Font
+Licence, which require their notices to travel with the software. They are
+embedded in the binary: `vuwr --licenses`, or Help → Acknowledgements in
+the GUI.

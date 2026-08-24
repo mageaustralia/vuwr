@@ -333,3 +333,38 @@ fn the_hint_bar_draws() {
     app.run(Command::ToggleHints, &ctx);
     assert!(app.session().show_hints);
 }
+
+/// The bundled fonts are under licences that require their notices to be
+/// distributed with the software, so they are embedded and reachable.
+#[test]
+fn license_notices_are_embedded_and_complete() {
+    let notices = vuwr_gui::LICENSE_NOTICES;
+    assert!(notices.len() >= 4, "one notice per bundled font");
+
+    let all: String = notices.iter().map(|(_, text)| *text).collect();
+    // The two that egui's crate metadata names as non-MIT obligations.
+    assert!(all.contains("SIL OPEN FONT LICENSE"), "OFL notice present");
+    assert!(
+        all.contains("UBUNTU FONT LICENCE"),
+        "Ubuntu font notice present"
+    );
+
+    for (title, text) in notices {
+        assert!(!title.trim().is_empty());
+        assert!(
+            text.len() > 200,
+            "{title} looks truncated ({} bytes)",
+            text.len()
+        );
+    }
+}
+
+#[test]
+fn the_acknowledgements_window_draws() {
+    let ctx = ctx();
+    let mut open = true;
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        vuwr_gui::render_license_window(&mut open, ctx);
+    });
+    assert!(open, "the window stays open until closed");
+}
