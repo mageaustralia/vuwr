@@ -6,6 +6,7 @@
 //! an edit changed it.
 
 use crate::Error;
+use crate::node::{Array, Map, Node};
 
 /// Indentation style sniffed from the source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,43 +17,6 @@ pub enum IndentStyle {
     Spaces(u8),
     /// Tabs: one tab per level.
     Tabs,
-}
-
-/// A JSON value with source-fidelity metadata.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Node {
-    Null,
-    Bool(bool),
-    Number(String),
-    Str(String),
-    Array(Array),
-    Map(Map),
-}
-
-/// An array preserves its opening bracket, trailing comma, and indentation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Array {
-    pub open: char,
-    pub close: char,
-    pub items: Vec<Node>,
-    pub trailing_comma: bool,
-    /// True if the original source had this array on a single line.
-    pub inline: bool,
-    /// True if the original had spaces after commas (`, ` not `,`).
-    pub spaced: bool,
-}
-
-/// A map preserves key order, trailing comma, and indentation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Map {
-    pub open: char,
-    pub close: char,
-    pub entries: Vec<(String, Node)>,
-    pub trailing_comma: bool,
-    /// True if the original source had this map on a single line.
-    pub inline: bool,
-    /// True if the original had spaces after commas (`, ` not `,`).
-    pub spaced: bool,
 }
 
 /// A parsed JSON document.
@@ -66,7 +30,7 @@ impl JsonDoc {
     pub fn parse(bytes: &[u8]) -> Result<JsonDoc, Error> {
         let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let indent = sniff_indent(text);
-        let (node, _rest) = parse_value(text.trim_start())?;
+        let (node, _rest) = parse_value(text, text.trim_start())?;
         Ok(JsonDoc { root: node, indent })
     }
 
@@ -166,23 +130,31 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>, depth: usize, indent: IndentSt
             }
             out.push(map.close as u8);
         }
+        _ => {} // XML-only nodes ignored in JSON context
     }
 }
 
 fn serialize_string(s: &str, out: &mut Vec<u8>) {
     out.push(b'"');
-    for b in s.bytes() {
-        match b {
-            b'"' => out.extend_from_slice(b"\\\""),
-            b'\\' => out.extend_from_slice(b"\\\\"),
-            b'\n' => out.extend_from_slice(b"\\n"),
-            b'\r' => out.extend_from_slice(b"\\r"),
-            b'\t' => out.extend_from_slice(b"\\t"),
-            0x20..=0x7e => out.push(b),
-            _ => {
-                // Control characters: escape as \uXXXX
-                let hex = format!("\\u{:04x}", b);
-                out.extend_from_slice(hex.as_bytes());
+    // Iterate chars, not bytes: escaping per-byte would split a multi-byte
+    // character into individual `\u00xx` escapes and corrupt the text.
+    for ch in s.chars() {
+        match ch {
+            '"' => out.extend_from_slice(b"\\\""),
+            '\\' => out.extend_from_slice(b"\\\\"),
+            '\n' => out.extend_from_slice(b"\\n"),
+            '\r' => out.extend_from_slice(b"\\r"),
+            '\t' => out.extend_from_slice(b"\\t"),
+            // Other C0 control characters have no short escape.
+            c if (c as u32) < 0x20 => {
+                out.extend_from_slice(format!("\\u{:04x}", c as u32).as_bytes())
+            }
+            // Everything else, including non-ASCII, is emitted literally as
+            // UTF-8. A source that spelled it `\uXXXX` round-trips to the
+            // literal character: semantically identical, not byte-identical.
+            c => {
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
             }
         }
     }
@@ -216,7 +188,12 @@ fn sniff_indent(text: &str) -> IndentStyle {
     }
     for line in &lines {
         let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed == "{" || trimmed == "}" || trimmed == "[" || trimmed == "]" {
+        if trimmed.is_empty()
+            || trimmed == "{"
+            || trimmed == "}"
+            || trimmed == "["
+            || trimmed == "]"
+        {
             continue;
         }
         let indent_len = line.len() - trimmed.len();
@@ -236,31 +213,54 @@ fn sniff_indent(text: &str) -> IndentStyle {
 }
 
 // --- Parser ---
+//
+// Every parser function receives the full document text plus the remaining
+// suffix, so an error can name an absolute byte offset. Phase 5 (live lint
+// and `--check`) turns those offsets into line/column positions.
 
-fn parse_value(input: &str) -> Result<(Node, &str), Error> {
+/// Absolute byte offset of `rest` within `full`. Sound because every parser
+/// function only ever receives a suffix of `full`.
+fn offset_of(full: &str, rest: &str) -> usize {
+    full.len() - rest.len()
+}
+
+fn parse_value<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
     let input = input.trim_start();
     if input.is_empty() {
-        return Err(Error::InvalidUtf8);
+        return Err(Error::UnexpectedEof { offset: full.len() });
     }
     match input.as_bytes()[0] {
         b'"' => {
-            let (s, rest) = parse_string(input)?;
+            let (s, rest) = parse_string(full, input)?;
             Ok((Node::Str(s), rest))
         }
-        b'{' => parse_map(input),
-        b'[' => parse_array(input),
+        b'{' => parse_map(full, input),
+        b'[' => parse_array(full, input),
         b't' if input.starts_with("true") => Ok((Node::Bool(true), &input[4..])),
         b'f' if input.starts_with("false") => Ok((Node::Bool(false), &input[5..])),
         b'n' if input.starts_with("null") => Ok((Node::Null, &input[4..])),
-        b'-' | b'0'..=b'9' => parse_number(input),
-        _ => Err(Error::InvalidUtf8),
+        b'-' | b'0'..=b'9' => parse_number(full, input),
+        _ => Err(Error::UnexpectedToken {
+            offset: offset_of(full, input),
+        }),
     }
 }
 
-fn parse_string(input: &str) -> Result<(String, &str), Error> {
+/// Read exactly four hex digits at `at` (a byte index into `input`).
+fn parse_hex4(input: &str, at: usize, base: usize) -> Result<u32, Error> {
+    let hex = input
+        .get(at..at + 4)
+        .ok_or(Error::UnexpectedEof { offset: base + at })?;
+    u32::from_str_radix(hex, 16).map_err(|_| Error::InvalidEscape { offset: base + at })
+}
+
+fn parse_string<'a>(full: &str, input: &'a str) -> Result<(String, &'a str), Error> {
+    let base = offset_of(full, input);
     let bytes = input.as_bytes();
-    if bytes[0] != b'"' {
-        return Err(Error::InvalidUtf8);
+    match bytes.first() {
+        Some(b'"') => {}
+        Some(_) => return Err(Error::UnexpectedToken { offset: base }),
+        None => return Err(Error::UnexpectedEof { offset: base }),
     }
     let mut i = 1;
     let mut result = String::new();
@@ -269,44 +269,83 @@ fn parse_string(input: &str) -> Result<(String, &str), Error> {
             b'"' => return Ok((result, &input[i + 1..])),
             b'\\' => {
                 i += 1;
-                if i >= bytes.len() {
-                    return Err(Error::InvalidUtf8);
-                }
-                match bytes[i] {
-                    b'"' => result.push('"'),
-                    b'\\' => result.push('\\'),
-                    b'/' => result.push('/'),
-                    b'n' => result.push('\n'),
-                    b'r' => result.push('\r'),
-                    b't' => result.push('\t'),
-                    b'b' => result.push('\u{0008}'),
-                    b'f' => result.push('\u{000C}'),
-                    b'u' => {
-                        // Parse 4 hex digits
-                        if i + 4 >= bytes.len() {
-                            return Err(Error::InvalidUtf8);
-                        }
-                        let hex: String = input[i + 1..i + 5].to_string();
-                        let code = u32::from_str_radix(&hex, 16)
-                            .map_err(|_| Error::InvalidUtf8)?;
-                        let ch = char::from_u32(code).ok_or(Error::InvalidUtf8)?;
-                        result.push(ch);
-                        i += 4;
+                let Some(&esc) = bytes.get(i) else {
+                    return Err(Error::UnexpectedEof { offset: base + i });
+                };
+                match esc {
+                    b'"' => {
+                        result.push('"');
+                        i += 1;
                     }
-                    _ => return Err(Error::InvalidUtf8),
+                    b'\\' => {
+                        result.push('\\');
+                        i += 1;
+                    }
+                    b'/' => {
+                        result.push('/');
+                        i += 1;
+                    }
+                    b'n' => {
+                        result.push('\n');
+                        i += 1;
+                    }
+                    b'r' => {
+                        result.push('\r');
+                        i += 1;
+                    }
+                    b't' => {
+                        result.push('\t');
+                        i += 1;
+                    }
+                    b'b' => {
+                        result.push('\u{0008}');
+                        i += 1;
+                    }
+                    b'f' => {
+                        result.push('\u{000C}');
+                        i += 1;
+                    }
+                    b'u' => {
+                        let hi = parse_hex4(input, i + 1, base)?;
+                        i += 5;
+                        let ch = if (0xD800..0xDC00).contains(&hi) {
+                            // High surrogate: a matching low surrogate must
+                            // follow, or the pair cannot form a character.
+                            if bytes.get(i) != Some(&b'\\') || bytes.get(i + 1) != Some(&b'u') {
+                                return Err(Error::InvalidEscape { offset: base + i });
+                            }
+                            let lo = parse_hex4(input, i + 2, base)?;
+                            if !(0xDC00..0xE000).contains(&lo) {
+                                return Err(Error::InvalidEscape { offset: base + i });
+                            }
+                            i += 6;
+                            let cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+                            char::from_u32(cp).ok_or(Error::InvalidEscape { offset: base + i })?
+                        } else {
+                            char::from_u32(hi).ok_or(Error::InvalidEscape { offset: base + i })?
+                        };
+                        result.push(ch);
+                    }
+                    _ => return Err(Error::InvalidEscape { offset: base + i }),
                 }
             }
-            0x20..=0x7e => {
-                result.push(bytes[i] as char);
+            _ => {
+                // Any other character is literal — including multi-byte
+                // UTF-8, which must be pushed whole rather than per byte.
+                let ch = input[i..]
+                    .chars()
+                    .next()
+                    .expect("i is on a char boundary inside the string");
+                result.push(ch);
+                i += ch.len_utf8();
             }
-            _ => return Err(Error::InvalidUtf8),
         }
-        i += 1;
     }
-    Err(Error::UnclosedQuote { offset: 0 })
+    Err(Error::UnclosedQuote { offset: base })
 }
 
-fn parse_number(input: &str) -> Result<(Node, &str), Error> {
+fn parse_number<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    let base = offset_of(full, input);
     let bytes = input.as_bytes();
     let mut i = 0;
     if bytes[i] == b'-' {
@@ -331,17 +370,15 @@ fn parse_number(input: &str) -> Result<(Node, &str), Error> {
         }
     }
     if i == 0 || (i == 1 && bytes[0] == b'-') {
-        return Err(Error::InvalidUtf8);
+        return Err(Error::UnexpectedToken { offset: base });
     }
-    let num_str = input[..i].to_string();
-    let rest = &input[i..];
-    Ok((Node::Number(num_str), rest))
+    Ok((Node::Number(input[..i].to_string()), &input[i..]))
 }
 
-fn parse_map(input: &str) -> Result<(Node, &str), Error> {
-    let bytes = input.as_bytes();
-    if bytes[0] != b'{' {
-        return Err(Error::InvalidUtf8);
+fn parse_map<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    let base = offset_of(full, input);
+    if input.as_bytes()[0] != b'{' {
+        return Err(Error::UnexpectedToken { offset: base });
     }
     let mut rest = &input[1..];
     let mut entries = Vec::new();
@@ -367,13 +404,20 @@ fn parse_map(input: &str) -> Result<(Node, &str), Error> {
     let mut trailing_comma = false;
     loop {
         rest = rest.trim_start();
-        let (key, r) = parse_string(rest)?;
+        // Without this, a truncated object walks off the end: `parse_string`
+        // would be handed an empty slice on every iteration.
+        if rest.is_empty() {
+            return Err(Error::UnexpectedEof { offset: full.len() });
+        }
+        let (key, r) = parse_string(full, rest)?;
         rest = r.trim_start();
         if !rest.starts_with(':') {
-            return Err(Error::InvalidUtf8);
+            return Err(Error::UnexpectedToken {
+                offset: offset_of(full, rest),
+            });
         }
         rest = rest[1..].trim_start();
-        let (val, r) = parse_value(rest)?;
+        let (val, r) = parse_value(full, rest)?;
         entries.push((key, val));
         rest = r.trim_start();
         let has_comma = rest.starts_with(',');
@@ -384,6 +428,11 @@ fn parse_map(input: &str) -> Result<(Node, &str), Error> {
         rest = rest.trim_start();
         if rest.starts_with('}') {
             break;
+        }
+        if !has_comma {
+            return Err(Error::UnexpectedToken {
+                offset: offset_of(full, rest),
+            });
         }
     }
     // Check if content between { and } had any newlines or spaces after commas
@@ -405,10 +454,10 @@ fn parse_map(input: &str) -> Result<(Node, &str), Error> {
     ))
 }
 
-fn parse_array(input: &str) -> Result<(Node, &str), Error> {
-    let bytes = input.as_bytes();
-    if bytes[0] != b'[' {
-        return Err(Error::InvalidUtf8);
+fn parse_array<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    let base = offset_of(full, input);
+    if input.as_bytes()[0] != b'[' {
+        return Err(Error::UnexpectedToken { offset: base });
     }
     let mut rest = &input[1..];
     let mut items = Vec::new();
@@ -433,7 +482,10 @@ fn parse_array(input: &str) -> Result<(Node, &str), Error> {
     let mut trailing_comma = false;
     loop {
         rest = rest.trim_start();
-        let (val, r) = parse_value(rest)?;
+        if rest.is_empty() {
+            return Err(Error::UnexpectedEof { offset: full.len() });
+        }
+        let (val, r) = parse_value(full, rest)?;
         items.push(val);
         rest = r.trim_start();
         let has_comma = rest.starts_with(',');
@@ -444,6 +496,11 @@ fn parse_array(input: &str) -> Result<(Node, &str), Error> {
         rest = rest.trim_start();
         if rest.starts_with(']') {
             break;
+        }
+        if !has_comma {
+            return Err(Error::UnexpectedToken {
+                offset: offset_of(full, rest),
+            });
         }
     }
     let content_len = content_start.len() - rest.len() - 1;

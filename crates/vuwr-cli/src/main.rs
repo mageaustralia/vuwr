@@ -29,9 +29,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // An explicit extension is trusted over content sniffing, so a .csv
+    // whose first cell starts with `{` is still parsed as CSV.
     let hint = match args.file.extension().and_then(|e| e.to_str()) {
         Some("csv") => FormatHint::Csv,
         Some("tsv") => FormatHint::Tsv,
+        Some("json") => FormatHint::Json,
+        Some("xml") => FormatHint::Xml,
         _ => FormatHint::Auto,
     };
     let doc = match Document::parse(&bytes, hint) {

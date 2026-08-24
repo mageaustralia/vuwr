@@ -8,13 +8,17 @@
 
 mod csv;
 pub mod json;
+pub mod node;
 mod ops;
 mod view;
+mod xml;
 
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
-pub use json::{Array, JsonDoc, Map, Node};
+pub use json::JsonDoc;
+pub use node::{Array, Element, Map, Node, XmlDecl};
 pub use ops::EditOp;
 pub use view::GridState;
+pub use xml::XmlDoc;
 
 use std::fmt;
 
@@ -28,6 +32,10 @@ pub enum FormatHint {
     Csv,
     /// Tab-separated.
     Tsv,
+    /// JSON.
+    Json,
+    /// XML.
+    Xml,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,9 +66,22 @@ pub enum Error {
     RaggedRows,
     /// The document has no rows, so the operation makes no sense.
     EmptyDocument,
-    /// JSON parse error: unexpected token.
+    /// JSON/XML parse error: unexpected token.
     UnexpectedToken {
         offset: usize,
+    },
+    /// Input ended in the middle of a value.
+    UnexpectedEof {
+        offset: usize,
+    },
+    /// A `\` escape inside a JSON string is malformed.
+    InvalidEscape {
+        offset: usize,
+    },
+    /// This format's editing support is not implemented yet. Returned
+    /// rather than silently discarding the edit.
+    EditNotSupported {
+        format: &'static str,
     },
 }
 
@@ -85,6 +106,15 @@ impl fmt::Display for Error {
             Error::UnexpectedToken { offset } => {
                 write!(f, "unexpected token at byte {offset}")
             }
+            Error::UnexpectedEof { offset } => {
+                write!(f, "unexpected end of input at byte {offset}")
+            }
+            Error::InvalidEscape { offset } => {
+                write!(f, "invalid escape sequence at byte {offset}")
+            }
+            Error::EditNotSupported { format } => {
+                write!(f, "editing {format} documents is not supported yet")
+            }
         }
     }
 }
@@ -100,42 +130,69 @@ pub struct Document {
     kind: Kind,
     undo: Vec<EditOp>,
     redo: Vec<EditOp>,
+    /// The source began with a UTF-8 BOM. Stripped before parsing so it
+    /// cannot leak into the first key or cell, and re-emitted on save so
+    /// the round-trip stays byte-exact.
+    bom: bool,
 }
 
 enum Kind {
     Csv(CsvDoc),
     Json(JsonDoc),
+    Xml(XmlDoc),
 }
 
 impl Document {
-    /// Detect format from content and parse. JSON is detected when the
-    /// first non-whitespace byte is `{` or `[`.
+    /// Parse bytes into a document.
+    ///
+    /// An explicit `hint` wins over content sniffing — a `.csv` file whose
+    /// first cell happens to start with `{` is still a CSV. Only
+    /// [`FormatHint::Auto`] sniffs, in which case the first non-whitespace
+    /// byte decides: `{`/`[` is JSON, `<` is XML, anything else is CSV.
     pub fn parse(bytes: &[u8], hint: FormatHint) -> Result<Document, Error> {
-        let trimmed = bytes.iter().find(|&&b| !b.is_ascii_whitespace());
-        match trimmed {
-            Some(b'{') | Some(b'[') => {
-                let doc = JsonDoc::parse(bytes)?;
-                Ok(Document {
-                    kind: Kind::Json(doc),
-                    undo: Vec::new(),
-                    redo: Vec::new(),
-                })
-            }
-            _ => Ok(Document {
-                kind: Kind::Csv(CsvDoc::parse(bytes, hint)?),
-                undo: Vec::new(),
-                redo: Vec::new(),
-            }),
-        }
+        // A BOM must not defeat format detection (it is not ASCII
+        // whitespace, so it would otherwise sniff as CSV) and must not end
+        // up inside the first key or cell.
+        let (bom, bytes) = match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF][..]) {
+            Some(rest) => (true, rest),
+            None => (false, bytes),
+        };
+
+        let kind = match hint {
+            FormatHint::Csv | FormatHint::Tsv => Kind::Csv(CsvDoc::parse(bytes, hint)?),
+            FormatHint::Json => Kind::Json(JsonDoc::parse(bytes)?),
+            FormatHint::Xml => Kind::Xml(XmlDoc::parse(bytes)?),
+            FormatHint::Auto => match bytes.iter().find(|&&b| !b.is_ascii_whitespace()) {
+                Some(b'{') | Some(b'[') => Kind::Json(JsonDoc::parse(bytes)?),
+                Some(b'<') => Kind::Xml(XmlDoc::parse(bytes)?),
+                _ => Kind::Csv(CsvDoc::parse(bytes, hint)?),
+            },
+        };
+
+        Ok(Document {
+            kind,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            bom,
+        })
     }
 
     /// Byte-for-byte faithful rendering of the document: delimiter, line
     /// endings, per-cell quoting and the trailing newline are all reproduced
     /// from the source unless an edit changed them.
     pub fn serialize(&self) -> Vec<u8> {
-        match &self.kind {
+        let body = match &self.kind {
             Kind::Csv(doc) => doc.serialize(),
             Kind::Json(doc) => doc.serialize(),
+            Kind::Xml(doc) => doc.serialize(),
+        };
+        if self.bom {
+            let mut out = Vec::with_capacity(body.len() + 3);
+            out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+            out.extend_from_slice(&body);
+            out
+        } else {
+            body
         }
     }
 
@@ -175,7 +232,12 @@ impl Document {
     fn apply_inner(&mut self, op: EditOp) -> Result<EditOp, Error> {
         match &mut self.kind {
             Kind::Csv(doc) => doc.apply(op),
-            Kind::Json(_) => Ok(op), // JSON edits not yet implemented
+            // Returning `Ok(op)` here would report success, push a bogus
+            // inverse onto the undo stack, and let the frontend mark the
+            // document dirty — so a save would write back the unchanged
+            // file and the user's edit would vanish. Fail loudly instead.
+            Kind::Json(_) => Err(Error::EditNotSupported { format: "JSON" }),
+            Kind::Xml(_) => Err(Error::EditNotSupported { format: "XML" }),
         }
     }
 
@@ -200,6 +262,20 @@ impl Document {
         }
     }
 
+    pub fn as_xml(&self) -> Option<&XmlDoc> {
+        match &self.kind {
+            Kind::Xml(doc) => Some(doc),
+            _ => None,
+        }
+    }
+
+    pub fn as_xml_mut(&mut self) -> Option<&mut XmlDoc> {
+        match &mut self.kind {
+            Kind::Xml(doc) => Some(doc),
+            _ => None,
+        }
+    }
+
     /// Returns true if this document is a CSV (table-shaped by default).
     pub fn is_csv(&self) -> bool {
         matches!(self.kind, Kind::Csv(_))
@@ -210,11 +286,25 @@ impl Document {
         matches!(self.kind, Kind::Json(_))
     }
 
+    /// Returns true if this document is XML (tree-shaped by default).
+    pub fn is_xml(&self) -> bool {
+        matches!(self.kind, Kind::Xml(_))
+    }
+
     /// If JSON, returns true when the root is an array of objects
     /// (eligible for table view).
     pub fn json_table_eligible(&self) -> bool {
         match &self.kind {
             Kind::Json(doc) => is_array_of_objects(doc.root()),
+            _ => false,
+        }
+    }
+
+    /// If XML, returns true when the root element has repeated child
+    /// elements with the same tag name (eligible for table view).
+    pub fn xml_table_eligible(&self) -> bool {
+        match &self.kind {
+            Kind::Xml(doc) => is_repeated_siblings(doc.root()),
             _ => false,
         }
     }
@@ -232,11 +322,26 @@ fn is_array_of_objects(node: &Node) -> bool {
             arr.items.iter().all(|item| match item {
                 Node::Map(m) => {
                     m.entries.len() == keys.len()
-                        && m.entries
-                            .iter()
-                            .zip(keys.iter())
-                            .all(|(a, b)| &a.0 == b)
+                        && m.entries.iter().zip(keys.iter()).all(|(a, b)| &a.0 == b)
                 }
+                _ => false,
+            })
+        }
+        _ => false,
+    }
+}
+
+/// Check if an XML element has repeated child elements with the same
+/// tag name (table-shaped).
+fn is_repeated_siblings(node: &Node) -> bool {
+    match node {
+        Node::Element(e) if e.children.len() > 1 => {
+            let first_tag = match &e.children[0] {
+                Node::Element(child) => &child.tag,
+                _ => return false,
+            };
+            e.children.iter().all(|child| match child {
+                Node::Element(c) => c.tag == *first_tag,
                 _ => false,
             })
         }

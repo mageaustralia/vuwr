@@ -52,10 +52,15 @@ pub struct App {
 
 impl App {
     pub fn new(path: PathBuf, doc: Document) -> App {
-        let (view, widths, tree_keys, tree_summaries) = if doc.is_json() {
+        let (view, widths, tree_keys, tree_summaries) = if doc.is_json() || doc.is_xml() {
             (ViewMode::Tree, vec![], vec![], vec![])
         } else {
-            (ViewMode::Table, compute_widths(doc.as_csv().expect("CSV only")), vec![], vec![])
+            (
+                ViewMode::Table,
+                compute_widths(doc.as_csv().expect("CSV only")),
+                vec![],
+                vec![],
+            )
         };
         let mut app = App {
             doc,
@@ -80,10 +85,6 @@ impl App {
 
     pub fn path(&self) -> &PathBuf {
         &self.path
-    }
-
-    pub fn csv(&self) -> &CsvDoc {
-        self.doc.as_csv().expect("CSV only")
     }
 
     /// For table view: returns (headers, row_count, column_count).
@@ -119,8 +120,7 @@ impl App {
         match self.view {
             ViewMode::Table => {
                 if let Some(csv) = self.doc.as_csv() {
-                    csv.cell(row, col)
-                        .map(|cell| escape(&cell.value))
+                    csv.cell(row, col).map(|cell| escape(&cell.value))
                 } else if let Some(json) = self.doc.as_json() {
                     match json.root() {
                         Node::Array(arr) => {
@@ -133,6 +133,32 @@ impl App {
                             }
                         }
                         _ => None,
+                    }
+                } else if let Some(xml) = self.doc.as_xml() {
+                    // Table view: rows are child elements, cols are attributes + child elements
+                    if let Node::Element(root) = xml.root() {
+                        let elem = root.children.get(row)?;
+                        if let Node::Element(e) = elem {
+                            // First cols are attributes, then child elements
+                            let _attr_count = self.tree_keys.len();
+                            if col < e.attributes.len() {
+                                Some(e.attributes[col].1.clone())
+                            } else {
+                                let child_idx = col - e.attributes.len();
+                                if let Node::Element(child) = e.children.get(child_idx)? {
+                                    match &child.children[0] {
+                                        Node::Text(t) => Some(t.clone()),
+                                        _ => Some(summarize_node(&child.children[0])),
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
                     }
                 } else {
                     None
@@ -148,13 +174,7 @@ impl App {
 
     /// True if Tab can cycle to another view mode.
     pub fn can_cycle_view(&self) -> bool {
-        if self.doc.is_json() {
-            // JSON: tree always available, table if array-of-objects
-            true
-        } else {
-            // CSV: only table (text view deferred to phase 5)
-            false
-        }
+        self.doc.is_json() || self.doc.is_xml()
     }
 
     /// Rendered width of each column (table mode only).
@@ -188,7 +208,13 @@ impl App {
             KeyCode::Char(':') => self.mode = Mode::Command { buf: String::new() },
             KeyCode::Tab if self.can_cycle_view() => self.cycle_view(),
             KeyCode::Char('i') | KeyCode::Enter if self.view == ViewMode::Table => {
-                self.start_edit()
+                // Only CSV is editable so far. Refuse up front rather than
+                // letting the user type a value the core will reject.
+                if self.doc.is_csv() {
+                    self.start_edit()
+                } else {
+                    self.status = "editing this format is not supported yet".into();
+                }
             }
             KeyCode::Enter if self.view == ViewMode::Tree => self.tree_drill(),
             KeyCode::Esc if self.view == ViewMode::Tree => {
@@ -271,16 +297,21 @@ impl App {
     }
 
     fn cycle_view(&mut self) {
-        if !self.doc.is_json() {
+        if !self.doc.is_json() && !self.doc.is_xml() {
             return;
         }
         self.view = match self.view {
             ViewMode::Tree => {
-                if self.doc.json_table_eligible() {
+                let eligible = if self.doc.is_json() {
+                    self.doc.json_table_eligible()
+                } else {
+                    self.doc.xml_table_eligible()
+                };
+                if eligible {
                     self.rebuild_table_widths();
                     ViewMode::Table
                 } else {
-                    self.status = "table view not available (not an array of objects)".into();
+                    self.status = "table view not available (repeated structure required)".into();
                     ViewMode::Tree
                 }
             }
@@ -299,6 +330,11 @@ impl App {
         {
             self.widths = vec![3usize; headers.len()];
             self.tree_keys = headers;
+        } else if let Some(xml) = self.doc.as_xml()
+            && let Some(headers) = xml_table_headers(xml.root())
+        {
+            self.widths = vec![3usize; headers.len()];
+            self.tree_keys = headers;
         }
     }
 
@@ -308,6 +344,9 @@ impl App {
         if self.doc.is_json() {
             let node = self.current_json_node().clone();
             build_tree_view(&node, &mut self.tree_keys, &mut self.tree_summaries);
+        } else if self.doc.is_xml() {
+            let node = self.current_xml_node().clone();
+            build_xml_tree_view(&node, &mut self.tree_keys, &mut self.tree_summaries);
         }
     }
 
@@ -317,7 +356,11 @@ impl App {
         let mut node = json.root();
         for entry in &self.grid.drill_stack {
             node = match node {
-                Node::Map(m) => m.entries.get(entry.parent_row).map(|(_, v)| v).unwrap_or(node),
+                Node::Map(m) => m
+                    .entries
+                    .get(entry.parent_row)
+                    .map(|(_, v)| v)
+                    .unwrap_or(node),
                 Node::Array(a) => a.items.get(entry.parent_row).unwrap_or(node),
                 _ => node,
             };
@@ -325,21 +368,38 @@ impl App {
         node
     }
 
+    /// The XML node we're currently viewing (respects drill-down stack).
+    fn current_xml_node(&self) -> &Node {
+        let xml = self.doc.as_xml().expect("XML doc");
+        let mut node = xml.root();
+        for entry in &self.grid.drill_stack {
+            node = match node {
+                Node::Element(e) => e.children.get(entry.parent_row).unwrap_or(node),
+                _ => node,
+            };
+        }
+        node
+    }
+
     fn tree_drill(&mut self) {
-        let node = self.current_json_node();
+        let node = if self.doc.is_json() {
+            self.current_json_node()
+        } else {
+            self.current_xml_node()
+        };
         let (row, _col) = self.grid.cursor;
         let child = match node {
             Node::Map(m) => m.entries.get(row).map(|(_, v)| v),
             Node::Array(a) => a.items.get(row),
+            Node::Element(e) => e.children.get(row),
             _ => None,
         };
         match child {
-            Some(Node::Map(_)) | Some(Node::Array(_)) => {
+            Some(Node::Map(_)) | Some(Node::Array(_)) | Some(Node::Element(_)) => {
                 self.grid.drill_down();
                 self.rebuild_tree();
             }
             _ => {
-                // Scalar: start editing instead
                 self.start_edit();
             }
         }
@@ -358,11 +418,23 @@ impl App {
                 }
             }
             ViewMode::Tree => {
-                // Edit the value at the current tree row
-                let node = self.current_json_node();
+                let node = if self.doc.is_json() {
+                    self.current_json_node()
+                } else {
+                    self.current_xml_node()
+                };
                 match node {
-                    Node::Map(m) => m.entries.get(r).map(|(_, v)| node_to_edit_string(v)).unwrap_or_default(),
+                    Node::Map(m) => m
+                        .entries
+                        .get(r)
+                        .map(|(_, v)| node_to_edit_string(v))
+                        .unwrap_or_default(),
                     Node::Array(a) => a.items.get(r).map(node_to_edit_string).unwrap_or_default(),
+                    Node::Element(e) => e
+                        .children
+                        .get(r)
+                        .map(node_to_edit_string)
+                        .unwrap_or_default(),
                     _ => String::new(),
                 }
             }
@@ -543,6 +615,11 @@ fn summarize_node(node: &Node) -> String {
                 format!("[{}]", arr.items.len())
             }
         }
+        Node::Element(e) => format!("<{}>", e.tag),
+        Node::Comment(text) => format!("<!--{}-->", text.chars().take(20).collect::<String>()),
+        Node::Text(s) => s.chars().take(30).collect(),
+        Node::XmlDecl(_) => "<?xml?>".to_string(),
+        Node::ProcessingInstruction { target, .. } => format!("<?{target}?>"),
     }
 }
 
@@ -553,6 +630,96 @@ fn node_to_edit_string(node: &Node) -> String {
         Node::Bool(b) => b.to_string(),
         Node::Number(s) => s.clone(),
         Node::Str(s) => s.clone(),
+        Node::Text(s) => s.clone(),
         _ => String::new(),
+    }
+}
+
+/// Get table headers from an XML element with repeated children.
+fn xml_table_headers(node: &Node) -> Option<Vec<String>> {
+    match node {
+        Node::Element(e) if !e.children.is_empty() => {
+            if let Node::Element(first) = &e.children[0] {
+                // Headers are attribute names + child element tag names
+                let mut headers: Vec<String> =
+                    first.attributes.iter().map(|(k, _, _)| k.clone()).collect();
+                // Add child element tags as column names
+                for child in &first.children {
+                    if let Node::Element(c) = child {
+                        headers.push(c.tag.clone());
+                    }
+                }
+                Some(headers)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Build tree view for an XML node.
+fn build_xml_tree_view(node: &Node, keys: &mut Vec<String>, summaries: &mut Vec<String>) {
+    keys.clear();
+    summaries.clear();
+    match node {
+        Node::Element(e) => {
+            for (i, child) in e.children.iter().enumerate() {
+                match child {
+                    Node::Element(c) => {
+                        keys.push(format!("<{}>", c.tag));
+                        summaries.push(summarize_xml_element(c));
+                    }
+                    Node::Comment(text) => {
+                        keys.push(format!("<!--{i}-->"));
+                        summaries.push(text.trim().to_string());
+                    }
+                    Node::Text(text) => {
+                        keys.push(format!("text{i}"));
+                        summaries.push(text.trim().to_string());
+                    }
+                    Node::XmlDecl(_) => {
+                        keys.push("<?xml?>".to_string());
+                        summaries.push("declaration".to_string());
+                    }
+                    Node::ProcessingInstruction { target, .. } => {
+                        keys.push(format!("<?{target}?>"));
+                        summaries.push(target.clone());
+                    }
+                    _ => {
+                        keys.push(i.to_string());
+                        summaries.push(summarize_node(child));
+                    }
+                }
+            }
+        }
+        _ => {
+            keys.push("value".to_string());
+            summaries.push(summarize_node(node));
+        }
+    }
+}
+
+/// Summarize an XML element for display.
+fn summarize_xml_element(elem: &vuwr_core::Element) -> String {
+    if elem.children.is_empty() {
+        if elem.attributes.is_empty() {
+            "/>".to_string()
+        } else {
+            let attrs: Vec<&str> = elem
+                .attributes
+                .iter()
+                .take(3)
+                .map(|(k, _, _)| k.as_str())
+                .collect();
+            format!("{}…", attrs.join(", "))
+        }
+    } else if elem.children.len() == 1 {
+        match &elem.children[0] {
+            Node::Text(t) => t.chars().take(30).collect(),
+            _ => format!("[{}]", elem.children.len()),
+        }
+    } else {
+        format!("[{}]", elem.children.len())
     }
 }

@@ -12,11 +12,7 @@ fn json_auto_detected() {
 
 #[test]
 fn json_table_eligible_array_of_objects() {
-    let doc = Document::parse(
-        b"[{\"a\":1},{\"a\":2}]",
-        FormatHint::Auto,
-    )
-    .unwrap();
+    let doc = Document::parse(b"[{\"a\":1},{\"a\":2}]", FormatHint::Auto).unwrap();
     assert!(doc.json_table_eligible());
 }
 
@@ -28,11 +24,7 @@ fn json_not_table_eligible_array_of_scalars() {
 
 #[test]
 fn json_not_table_eligible_nested_objects() {
-    let doc = Document::parse(
-        b"[{\"a\":1},{\"b\":2}]",
-        FormatHint::Auto,
-    )
-    .unwrap();
+    let doc = Document::parse(b"[{\"a\":1},{\"b\":2}]", FormatHint::Auto).unwrap();
     assert!(!doc.json_table_eligible());
 }
 

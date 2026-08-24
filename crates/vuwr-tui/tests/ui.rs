@@ -211,3 +211,40 @@ fn json_tree_snapshot() {
     let mut a = json_app("{\n  \"name\": \"Alice\",\n  \"age\": 30,\n  \"tags\": [\"admin\"]\n}");
     insta::assert_snapshot!(render(&mut a, 40, 8));
 }
+
+fn xml_app(input: &str) -> App {
+    let doc = Document::parse(input.as_bytes(), FormatHint::Auto).unwrap();
+    App::new(PathBuf::from("test.xml"), doc)
+}
+
+#[test]
+fn xml_opens_in_tree_mode() {
+    let a = xml_app("<root><child/></root>");
+    assert_eq!(a.view_mode(), ViewMode::Tree);
+}
+
+#[test]
+fn xml_tree_shows_elements() {
+    let mut a = xml_app("<root><item name=\"a\"/><item name=\"b\"/></root>");
+    let out = render(&mut a, 40, 10);
+    assert!(out.contains("<item>"), "should show element tag: {out}");
+}
+
+#[test]
+fn xml_tree_drill_into_element() {
+    let mut a = xml_app("<root><child>hello</child></root>");
+    // Cursor at row 0 (the <child> element), drill into it
+    a.handle_key(key(KeyCode::Char('i')));
+    // Should now show child's content
+    let out = render(&mut a, 40, 10);
+    assert!(out.contains("hello"), "should show text content: {out}");
+}
+
+#[test]
+fn xml_drill_up_from_root_is_noop() {
+    let mut a = xml_app("<root><child/></root>");
+    a.handle_key(ctrl('u'));
+    assert_eq!(a.view_mode(), ViewMode::Tree);
+    let out = render(&mut a, 40, 10);
+    assert!(out.contains("<child"), "should still show child: {out}");
+}

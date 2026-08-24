@@ -62,7 +62,9 @@ impl CsvDoc {
         let delimiter = match hint {
             FormatHint::Csv => b',',
             FormatHint::Tsv => b'\t',
-            FormatHint::Auto => sniff_delimiter(text),
+            // Json/Xml never reach here via `Document::parse`; if a caller
+            // uses `CsvDoc::parse` directly with one, sniff like Auto.
+            FormatHint::Auto | FormatHint::Json | FormatHint::Xml => sniff_delimiter(text),
         };
 
         let bytes = text.as_bytes();
