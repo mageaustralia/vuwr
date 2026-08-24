@@ -379,3 +379,29 @@ fn the_acknowledgements_window_draws() {
     });
     assert!(open, "the window stays open until closed");
 }
+
+/// The platform's fonts are preferred over the bundled ones, which look
+/// out of place and lack most symbols. A missing font must not be fatal.
+#[test]
+fn system_fonts_are_adopted_when_present() {
+    let ctx = ctx();
+    let adopted = vuwr_gui::install_fonts(&ctx);
+    if cfg!(target_os = "macos") {
+        assert!(
+            !adopted.is_empty(),
+            "macOS ships fonts we can read; found none"
+        );
+        assert!(
+            adopted
+                .iter()
+                .any(|p| p.contains("SFNS") || p.contains("Monaco")),
+            "expected a system face, got {adopted:?}"
+        );
+    }
+    // Whatever happened, the context still draws.
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label("still renders");
+        });
+    });
+}

@@ -194,3 +194,130 @@ fn errors_carry_a_position() {
         "points into the document: {located}"
     );
 }
+
+// --- Constructs real files use ---
+//
+// A Google Shopping feed failed to open at all: `<![CDATA[...]]>` was read
+// as a tag name, so every value in the file was a parse error. The corpus
+// now carries `feed.xml` exercising these, and the round-trip test covers
+// it; these assert the meaning rather than just the bytes.
+
+fn xml(src: &str) -> Document {
+    Document::parse(src.as_bytes(), FormatHint::Xml).unwrap()
+}
+fn out(d: &Document) -> String {
+    String::from_utf8(d.serialize()).unwrap()
+}
+
+#[test]
+fn cdata_sections_parse_and_survive() {
+    let src = "<r><id><![CDATA[WRZ990100SI]]></id></r>";
+    let d = xml(src);
+    assert_eq!(out(&d), src);
+}
+
+/// The point of CDATA is that its contents are not markup. Angle brackets
+/// and ampersands inside must not be treated as tags or entities, and must
+/// not be escaped on the way out.
+#[test]
+fn cdata_contents_are_not_markup() {
+    let src = "<r><t><![CDATA[a <not a tag> & not an entity]]></t></r>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+/// `]]` may appear inside a section as long as it is not `]]>`.
+#[test]
+fn cdata_ending_is_only_the_full_terminator() {
+    let src = "<r><t><![CDATA[a ]] b ]]]></t></r>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+#[test]
+fn an_unterminated_cdata_is_an_error() {
+    assert!(Document::parse(b"<r><![CDATA[oops</r>", FormatHint::Xml).is_err());
+}
+
+/// An element's value is its text whether written plainly or wrapped in
+/// CDATA — a feed that wraps everything would otherwise show empty rows.
+#[test]
+fn cdata_reads_as_the_elements_value() {
+    let d = xml("<rows><row><name><![CDATA[Alice]]></name></row></rows>");
+    assert_eq!(
+        d.as_xml().unwrap().table_cell(0, 0).as_deref(),
+        Some("Alice")
+    );
+}
+
+#[test]
+fn editing_a_cdata_value_keeps_it_a_cdata_section() {
+    let mut d = xml("<rows><row><name><![CDATA[Alice]]></name></row></rows>");
+    d.set_cell(0, 0, "Bob").unwrap();
+    assert_eq!(
+        out(&d),
+        "<rows><row><name><![CDATA[Bob]]></name></row></rows>",
+        "rewriting it as plain text would change how the document escapes"
+    );
+}
+
+#[test]
+fn doctype_declarations_survive() {
+    let src = "<!DOCTYPE html><html><body/></html>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+/// An internal subset contains `>` inside brackets, so the scan cannot
+/// stop at the first one.
+#[test]
+fn doctype_with_an_internal_subset_survives() {
+    let src = "<!DOCTYPE rss [\n  <!ENTITY brand \"Acme\">\n]>\n<rss/>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+/// `<?xml-stylesheet ...?>` is a processing instruction. Matching it as
+/// the XML declaration threw its contents away and wrote back
+/// `<?xml version=""?>`.
+#[test]
+fn a_pi_starting_with_xml_is_not_the_declaration() {
+    let src = "<?xml version=\"1.0\"?><?xml-stylesheet type=\"text/xsl\" href=\"f.xsl\"?><r/>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+#[test]
+fn namespaced_tags_and_attributes_survive() {
+    let src = "<rss xmlns:g=\"http://base.google.com/ns/1.0\"><g:id>1</g:id></rss>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+/// Entities outside CDATA are left exactly as written: decoding them would
+/// change the bytes on save.
+#[test]
+fn entities_are_preserved_verbatim() {
+    let src = "<r><t>&amp; &lt; &gt; &quot; &apos; &#169; &#x2014;</t></r>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+#[test]
+fn single_and_double_quoted_attributes_keep_their_quotes() {
+    let src = "<r a='one' b=\"two\"/>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+#[test]
+fn mixed_content_survives() {
+    let src = "<p>text <b>bold</b> tail</p>";
+    assert_eq!(out(&xml(src)), src);
+}
+
+/// Real feeds contain `<tag >` and `<tag />`. Dropping the space rewrote
+/// bytes nobody asked us to touch — 1,377 of them in a 6.7 MB feed.
+#[test]
+fn whitespace_inside_a_tag_survives() {
+    for src in [
+        "<r><g:item_group_id ><![CDATA[3046]]></g:item_group_id ></r>",
+        "<r><a /></r>",
+        "<r><a\n  b=\"1\"\n/></r>",
+        "<r><a b=\"1\"   ></a></r>",
+    ] {
+        assert_eq!(out(&xml(src)), src, "{src}");
+    }
+}

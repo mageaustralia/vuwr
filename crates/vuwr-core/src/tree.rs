@@ -48,7 +48,9 @@ impl ValueKind {
             Node::Map(_) => ValueKind::Object,
             Node::Element(_) => ValueKind::Element,
             Node::Comment(_) => ValueKind::Comment,
-            Node::Text(_) => ValueKind::Text,
+            // CDATA is text as far as a reader is concerned; only the
+            // escaping differs.
+            Node::Text(_) | Node::CData(_) => ValueKind::Text,
             _ => ValueKind::Other,
         }
     }
@@ -261,11 +263,14 @@ pub fn summarize(node: &Node) -> String {
         Node::Array(a) => format!("[{}]", a.items.len()),
         Node::Map(m) => format!("{{{}}}", m.entries.len()),
         Node::Element(e) => {
+            // An element's value is its text, whether written plainly or
+            // wrapped in CDATA — a feed that wraps everything in CDATA
+            // would otherwise show nothing but empty rows.
             let text: String = e
                 .children
                 .iter()
                 .filter_map(|c| match c {
-                    Node::Text(t) => Some(t.trim()),
+                    Node::Text(t) | Node::CData(t) => Some(t.trim()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -278,6 +283,8 @@ pub fn summarize(node: &Node) -> String {
         }
         Node::Comment(c) => format!("<!--{}-->", c.trim()),
         Node::Text(t) => t.trim().to_string(),
+        Node::CData(t) => t.trim().to_string(),
+        Node::Doctype(raw) => raw.clone(),
         Node::XmlDecl(_) => "<?xml?>".to_string(),
         Node::ProcessingInstruction { target, .. } => format!("<?{target}?>"),
     }

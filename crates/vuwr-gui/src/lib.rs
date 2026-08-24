@@ -5,6 +5,7 @@
 //! cannot. No behaviour is decided here — that is why the two frontends
 //! cannot drift apart.
 
+mod fonts;
 mod input;
 mod table;
 mod toolbar;
@@ -15,6 +16,12 @@ use eframe::egui;
 use vuwr_core::{Command, Document, Effect, NewNode, Session, ViewMode};
 
 pub use input::{command_for, command_for_char};
+
+/// Adopt the platform's fonts, returning the faces used. Exposed so tests
+/// can check the platform we build for actually has them.
+pub fn install_fonts(ctx: &egui::Context) -> Vec<String> {
+    fonts::install(ctx)
+}
 
 /// Commands the GUI offers only through the menu bar. Help says "menu" for
 /// these, and the File menu builds from the same list, so the two cannot
@@ -57,6 +64,22 @@ pub struct VuwrApp {
 }
 
 impl VuwrApp {
+    /// Build the app and adopt the platform's fonts.
+    ///
+    /// Separate from `new` because it needs a context; callers that have
+    /// one (both entry points do) should use it.
+    pub fn with_context(
+        ctx: &egui::Context,
+        path: Option<PathBuf>,
+        doc: Option<Document>,
+    ) -> VuwrApp {
+        fonts::install(ctx);
+        match doc {
+            Some(doc) => VuwrApp::new(path, doc),
+            None => VuwrApp::empty(),
+        }
+    }
+
     pub fn new(path: Option<PathBuf>, doc: Document) -> VuwrApp {
         VuwrApp {
             session: Some(Session::new(doc)),
@@ -627,10 +650,7 @@ pub fn render_view(session: &mut Session, ui: &mut egui::Ui) -> Option<table::Tr
     match session.view_mode() {
         ViewMode::Table => table::table(session, ui).then_some(table::TreeAction::EditCurrent),
         ViewMode::Tree => table::tree(session, ui),
-        ViewMode::Text => {
-            table::text(session, ui);
-            None
-        }
+        ViewMode::Text => table::text(session, ui).then_some(table::TreeAction::EditCurrent),
     }
 }
 
@@ -644,6 +664,12 @@ pub fn run(path: Option<PathBuf>, doc: Document) -> eframe::Result {
     eframe::run_native(
         "vuwr",
         options,
-        Box::new(|_cc| Ok(Box::new(VuwrApp::new(path, doc)))),
+        Box::new(|cc| {
+            Ok(Box::new(VuwrApp::with_context(
+                &cc.egui_ctx,
+                path,
+                Some(doc),
+            )))
+        }),
     )
 }

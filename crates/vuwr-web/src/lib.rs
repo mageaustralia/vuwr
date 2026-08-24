@@ -32,7 +32,7 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
         .start(
             canvas,
             eframe::WebOptions::default(),
-            Box::new(|_cc| Ok(Box::new(VuwrApp::empty()))),
+            Box::new(|cc| Ok(Box::new(VuwrApp::with_context(&cc.egui_ctx, None, None)))),
         )
         .await
 }

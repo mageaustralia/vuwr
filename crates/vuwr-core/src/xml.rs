@@ -76,7 +76,11 @@ impl XmlDoc {
         let Some(first) = rows.first() else {
             return Vec::new();
         };
-        let mut headers: Vec<String> = first.attributes.iter().map(|(k, _, _)| k.clone()).collect();
+        let mut headers: Vec<String> = first
+            .attributes
+            .iter()
+            .map(|(k, _, _, _)| k.clone())
+            .collect();
         headers.extend(first.children.iter().filter_map(|c| match c {
             Node::Element(e) => Some(e.tag.clone()),
             _ => None,
@@ -90,7 +94,7 @@ impl XmlDoc {
         use crate::node::PathSeg;
         let rows = self.row_elements();
         let elem = rows.get(row)?;
-        if let Some((name, _, _)) = elem.attributes.get(col) {
+        if let Some((name, _, _, _)) = elem.attributes.get(col) {
             return Some(vec![PathSeg::Index(row), PathSeg::Attr(name.clone())]);
         }
         let child_idx = col - elem.attributes.len();
@@ -111,7 +115,7 @@ impl XmlDoc {
     pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
         let rows = self.row_elements();
         let elem = rows.get(row)?;
-        if let Some((_, value, _)) = elem.attributes.get(col) {
+        if let Some((_, value, _, _)) = elem.attributes.get(col) {
             return Some(value.clone());
         }
         let child_idx = col - elem.attributes.len();
@@ -130,7 +134,7 @@ impl XmlDoc {
                 .children
                 .iter()
                 .filter_map(|c| match c {
-                    Node::Text(t) => Some(t.as_str()),
+                    Node::Text(t) | Node::CData(t) => Some(t.as_str()),
                     _ => None,
                 })
                 .collect::<String>(),
@@ -167,6 +171,14 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>) {
         Node::Text(text) => {
             out.extend_from_slice(text.as_bytes());
         }
+        Node::CData(text) => {
+            out.extend_from_slice(b"<![CDATA[");
+            out.extend_from_slice(text.as_bytes());
+            out.extend_from_slice(b"]]>");
+        }
+        Node::Doctype(raw) => {
+            out.extend_from_slice(raw.as_bytes());
+        }
         Node::ProcessingInstruction { target, data } => {
             out.extend_from_slice(format!("<?{}", target).as_bytes());
             if !data.is_empty() {
@@ -178,11 +190,18 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>) {
         Node::Element(elem) => {
             out.push(b'<');
             out.extend_from_slice(elem.tag.as_bytes());
-            for (name, value, q) in &elem.attributes {
-                out.push(b' ');
+            for (name, value, q, leading) in &elem.attributes {
+                // An empty separator would run attributes together, so a
+                // single space stands in for one we never saw.
+                if leading.is_empty() {
+                    out.push(b' ');
+                } else {
+                    out.extend_from_slice(leading.as_bytes());
+                }
                 out.extend_from_slice(name.as_bytes());
                 out.extend_from_slice(format!("={}{}{}", q, value, q).as_bytes());
             }
+            out.extend_from_slice(elem.tag_trailing.as_bytes());
             if elem.self_closing {
                 out.extend_from_slice(b"/>");
             } else {
@@ -192,6 +211,7 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>) {
                 }
                 out.extend_from_slice(b"</");
                 out.extend_from_slice(elem.tag.as_bytes());
+                out.extend_from_slice(elem.close_trailing.as_bytes());
                 out.push(b'>');
             }
         }
@@ -222,10 +242,17 @@ fn parse_children<'a>(full: &str, input: &'a str) -> Result<(Vec<Node>, &'a str)
 }
 
 fn parse_node<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
-    if input.starts_with("<?xml") || input.starts_with("<?XML") {
+    // `<?xml` must be the whole target: `<?xml-stylesheet ...?>` is a
+    // processing instruction, and treating it as the declaration threw
+    // its contents away and wrote back `<?xml version=""?>`.
+    if is_xml_declaration(input) {
         parse_xml_decl(full, input)
     } else if input.starts_with("<!--") {
         parse_comment(full, input)
+    } else if input.starts_with("<![CDATA[") {
+        parse_cdata(full, input)
+    } else if input.starts_with("<!DOCTYPE") || input.starts_with("<!doctype") {
+        parse_doctype(full, input)
     } else if input.starts_with("<?") {
         parse_pi(full, input)
     } else if input.starts_with('<') {
@@ -235,6 +262,57 @@ fn parse_node<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> 
         let text = input[..end].to_string();
         Ok((Node::Text(text), &input[end..]))
     }
+}
+
+/// True for `<?xml ...?>` itself, not for a PI whose target merely starts
+/// with those letters.
+fn is_xml_declaration(input: &str) -> bool {
+    let Some(rest) = input
+        .strip_prefix("<?xml")
+        .or_else(|| input.strip_prefix("<?XML"))
+    else {
+        return false;
+    };
+    matches!(rest.chars().next(), Some(c) if c.is_whitespace()) || rest.starts_with("?>")
+}
+
+/// `<![CDATA[ ... ]]>`.
+///
+/// The contents are held raw. A CDATA section exists precisely so its
+/// text is not markup, so touching the escaping would change what the
+/// document says.
+fn parse_cdata<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    const OPEN: &str = "<![CDATA[";
+    let rest = &input[OPEN.len()..];
+    let end = rest.find("]]>").ok_or(Error::UnexpectedEof {
+        offset: offset_of(full, input),
+    })?;
+    Ok((
+        Node::CData(rest[..end].to_string()),
+        &rest[end + "]]>".len()..],
+    ))
+}
+
+/// `<!DOCTYPE ...>`, kept verbatim.
+///
+/// Internal subsets can contain `>` inside brackets, so the scan tracks
+/// them rather than stopping at the first one.
+fn parse_doctype<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
+    let bytes = input.as_bytes();
+    let mut depth = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'[' => depth += 1,
+            b']' => depth = depth.saturating_sub(1),
+            b'>' if depth == 0 => {
+                return Ok((Node::Doctype(input[..=i].to_string()), &input[i + 1..]));
+            }
+            _ => {}
+        }
+    }
+    Err(Error::UnexpectedEof {
+        offset: offset_of(full, input),
+    })
 }
 
 fn parse_xml_decl<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
@@ -305,6 +383,12 @@ fn parse_element<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Erro
         tag_content
     };
 
+    // Whatever sits between the last attribute and the `>` (or `/>`).
+    // Generated feeds contain `<tag >` and `<tag />`, and dropping it
+    // rewrites bytes nobody asked us to touch.
+    let trimmed = tag_content.trim_end();
+    let tag_trailing = tag_content[trimmed.len()..].to_string();
+
     let (tag, attrs) = parse_tag_and_attrs(tag_content)?;
 
     if self_closing {
@@ -314,6 +398,8 @@ fn parse_element<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Erro
                 attributes: attrs,
                 children: Vec::new(),
                 self_closing: true,
+                tag_trailing,
+                close_trailing: String::new(),
             }),
             rest,
         ))
@@ -330,7 +416,9 @@ fn parse_element<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Erro
         let close_end = rest
             .find('>')
             .ok_or(Error::UnexpectedEof { offset: full.len() })?;
-        let closing = rest[2..close_end].trim();
+        let close_raw = &rest[2..close_end];
+        let closing = close_raw.trim();
+        let close_trailing = close_raw[close_raw.trim_end().len()..].to_string();
         if closing != tag {
             return Err(Error::MismatchedTag {
                 opened: tag,
@@ -344,6 +432,8 @@ fn parse_element<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Erro
                 attributes: attrs,
                 children,
                 self_closing: false,
+                tag_trailing,
+                close_trailing,
             }),
             &rest[close_end + 1..],
         ))
@@ -387,7 +477,11 @@ fn parse_attrs(content: &str) -> Vec<Attr> {
     let mut attrs = Vec::new();
     let mut rest = content;
     loop {
+        // Keep whatever separated this attribute from the last one: a
+        // newline and an indent are as valid as a single space.
+        let before = rest;
         rest = rest.trim_start();
+        let leading = before[..before.len() - rest.len()].to_string();
         if rest.is_empty() || rest.starts_with('>') || rest.starts_with('/') {
             break;
         }
@@ -400,7 +494,7 @@ fn parse_attrs(content: &str) -> Vec<Attr> {
         let name = rest[..name_end].to_string();
         rest = &rest[name_end..];
         if !rest.starts_with('=') {
-            attrs.push((name, String::new(), '"'));
+            attrs.push((name, String::new(), '"', leading));
             continue;
         }
         rest = &rest[1..];
@@ -415,14 +509,14 @@ fn parse_attrs(content: &str) -> Vec<Attr> {
                 .map(|i| i + 1)
                 .unwrap_or(rest.len());
             let value = rest[1..close].to_string();
-            attrs.push((name, value, quote as char));
+            attrs.push((name, value, quote as char, leading));
             rest = &rest[close + 1..];
         } else {
             let val_end = rest
                 .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
                 .unwrap_or(rest.len());
             let value = rest[..val_end].to_string();
-            attrs.push((name, value, '"'));
+            attrs.push((name, value, '"', leading));
             rest = &rest[val_end..];
         }
     }

@@ -1,8 +1,12 @@
 //! Shared document node tree. One Node tree carries source-fidelity metadata
 //! for all formats: JSON, XML, and CSV (degenerate case).
 
-/// XML attribute: (name, value, quote_char).
-pub type Attr = (String, String, char);
+/// XML attribute: (name, value, quote_char, leading_whitespace).
+///
+/// The leading whitespace is kept because tags are not always written on
+/// one line — SVG and generated feeds break them across several — and
+/// re-emitting every attribute after a single space rewrites the file.
+pub type Attr = (String, String, char, String);
 
 /// A document node with source-fidelity metadata.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,8 +22,17 @@ pub enum Node {
     Element(Element),
     Comment(String),
     Text(String),
+    /// `<![CDATA[...]]>`. Held raw and re-emitted as it came: the whole
+    /// point of a CDATA section is that its contents are not markup, so
+    /// escaping or unescaping it would change the document.
+    CData(String),
+    /// `<!DOCTYPE ...>`, kept verbatim.
+    Doctype(String),
     XmlDecl(XmlDecl),
-    ProcessingInstruction { target: String, data: String },
+    ProcessingInstruction {
+        target: String,
+        data: String,
+    },
 }
 
 /// An array preserves its opening bracket, trailing comma, and indentation.
@@ -56,6 +69,12 @@ pub struct Element {
     pub attributes: Vec<Attr>,
     pub children: Vec<Node>,
     pub self_closing: bool,
+    /// Whatever sat between the last attribute and the closing `>`.
+    /// `<a >` and `<a/>` are common in generated files, and dropping the
+    /// space rewrites bytes nobody asked us to touch.
+    pub tag_trailing: String,
+    /// The same, inside the closing tag: `</a >`.
+    pub close_trailing: String,
 }
 
 /// XML declaration: `<?xml version="1.0" encoding="UTF-8"?>`.
@@ -108,7 +127,7 @@ impl Node {
                 let attr = e
                     .attributes
                     .iter_mut()
-                    .find(|(k, _, _)| k == name)
+                    .find(|(k, _, _, _)| k == name)
                     .ok_or(crate::Error::NoSuchPath)?;
                 let old = std::mem::replace(
                     &mut attr.1,
@@ -127,7 +146,7 @@ impl Node {
                     .children
                     .iter()
                     .filter_map(|c| match c {
-                        Node::Text(t) => Some(t.as_str()),
+                        Node::Text(t) | Node::CData(t) => Some(t.as_str()),
                         _ => None,
                     })
                     .collect();
@@ -137,14 +156,17 @@ impl Node {
                 };
                 // Replace the first text child and drop any others, so
                 // repeated edits do not accumulate fragments.
+                // Replace the first text-bearing child in place, keeping
+                // it whatever it was: rewriting a CDATA section as a plain
+                // text node would change how the document escapes.
                 let mut replaced = false;
                 e.children.retain_mut(|c| match c {
-                    Node::Text(t) if !replaced => {
+                    Node::Text(t) | Node::CData(t) if !replaced => {
                         *t = text.clone();
                         replaced = true;
                         true
                     }
-                    Node::Text(_) => false,
+                    Node::Text(_) | Node::CData(_) => false,
                     _ => true,
                 });
                 if !replaced {
@@ -314,7 +336,7 @@ impl Node {
             Node::Bool(b) => b.to_string(),
             Node::Number(n) => n.clone(),
             Node::Str(s) => s.clone(),
-            Node::Text(t) => t.clone(),
+            Node::Text(t) | Node::CData(t) => t.clone(),
             _ => String::new(),
         }
     }
@@ -364,6 +386,8 @@ impl Node {
             attributes: Vec::new(),
             children: Vec::new(),
             self_closing: false,
+            tag_trailing: String::new(),
+            close_trailing: String::new(),
         })
     }
 }

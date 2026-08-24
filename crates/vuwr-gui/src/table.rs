@@ -339,14 +339,15 @@ fn node_menu(ui: &mut egui::Ui, is_container: bool) -> Option<NodeAction> {
     chosen
 }
 
-pub fn text(session: &mut Session, ui: &mut egui::Ui) {
+pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
     session.set_viewport_rows(PAGE_ROWS);
     let (_, lines, _) = session.table_dims();
     let cursor_row = session.grid.cursor.0;
     let gutter = lines.to_string().len().max(2);
+    let editing = session.is_editing_inline();
+    let mut edit = false;
 
     egui::ScrollArea::both().show(ui, |ui| {
-        let editing = session.is_editing_inline();
         for n in 0..lines {
             if editing && n == cursor_row {
                 ui.horizontal(|ui| {
@@ -358,12 +359,16 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) {
             let line = session.table_cell(n, 0).unwrap_or_default();
             let selected = n == cursor_row;
             let text = format!("{:>gutter$}  {}", n + 1, line, gutter = gutter);
-            if ui
-                .selectable_label(selected, RichText::new(text).monospace())
-                .clicked()
-            {
+            let response = ui.selectable_label(selected, RichText::new(text).monospace());
+            if response.clicked() {
                 session.grid.cursor = (n, 0);
+            }
+            // Double-click edits the line, as it does a cell or a value.
+            if response.double_clicked() {
+                session.grid.cursor = (n, 0);
+                edit = true;
             }
         }
     });
+    edit
 }

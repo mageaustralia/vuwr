@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE rss [
+  <!ENTITY brand "Acme &#38; Co">
+]>
+<?xml-stylesheet type="text/xsl" href="feed.xsl"?>
+<!-- A feed exercising the constructs real files use. -->
+<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
+  <channel>
+    <item>
+      <g:id><![CDATA[WRZ990100SI]]></g:id>
+      <title><![CDATA[Racquet 1.25mm <not a tag> & not an entity]]></title>
+      <description><![CDATA[&lt;p&gt;Escaped markup inside CDATA stays as written.&lt;/p&gt;]]></description>
+      <plain>Entities out here are real: &amp; &lt; &gt; &quot; &apos; &#169; &#x2014;</plain>
+      <g:price currency="AUD">39.95</g:price>
+      <g:availability value='in stock' note="single and double quotes both occur"/>
+      <empty></empty>
+      <selfclosed/>
+      <mixed>text <b>bold</b> tail</mixed>
+      <cdata-edge><![CDATA[a ]] b ]]]></cdata-edge>
+    </item>
+  </channel>
+</rss>
