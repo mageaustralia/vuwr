@@ -18,17 +18,101 @@ impl XmlDoc {
     pub fn parse(bytes: &[u8]) -> Result<XmlDoc, Error> {
         let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let (children, _rest) = parse_children(text.trim_start())?;
+        // `root`/`root_mut` index into this, so an empty document would
+        // panic. Reject it here instead.
+        if children.is_empty() {
+            return Err(Error::UnexpectedEof {
+                offset: bytes.len(),
+            });
+        }
         Ok(XmlDoc { children })
     }
 
+    /// The document element.
+    ///
+    /// This is the first *element* child, not the first child: a document
+    /// opening with `<?xml ... ?>` or a comment keeps those in `children`
+    /// for round-trip fidelity, and returning the declaration here made
+    /// every real-world file look like it had no table shape.
     pub fn root(&self) -> &Node {
-        self.children.first().expect("XML document has no children")
+        self.children
+            .iter()
+            .find(|n| matches!(n, Node::Element(_)))
+            .or_else(|| self.children.first())
+            .expect("parse rejects an empty document")
     }
 
     pub fn root_mut(&mut self) -> &mut Node {
-        self.children
-            .first_mut()
-            .expect("XML document has no children")
+        let idx = self
+            .children
+            .iter()
+            .position(|n| matches!(n, Node::Element(_)))
+            .unwrap_or(0);
+        &mut self.children[idx]
+    }
+
+    /// The rows of table view: the element children of the document
+    /// element. Whitespace between elements parses as `Text` nodes, and
+    /// comments as `Comment`; neither is a row, so both are skipped —
+    /// otherwise a pretty-printed file's rows are all off by one.
+    pub fn row_elements(&self) -> Vec<&Element> {
+        match self.root() {
+            Node::Element(root) => root
+                .children
+                .iter()
+                .filter_map(|c| match c {
+                    Node::Element(e) => Some(e),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Column headers for table view: the first row's attribute names,
+    /// then the tags of its child elements.
+    pub fn table_headers(&self) -> Vec<String> {
+        let rows = self.row_elements();
+        let Some(first) = rows.first() else {
+            return Vec::new();
+        };
+        let mut headers: Vec<String> = first.attributes.iter().map(|(k, _, _)| k.clone()).collect();
+        headers.extend(first.children.iter().filter_map(|c| match c {
+            Node::Element(e) => Some(e.tag.clone()),
+            _ => None,
+        }));
+        headers
+    }
+
+    /// The value at `(row, col)` under [`XmlDoc::table_headers`].
+    /// Attribute columns come first, then child-element text.
+    pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
+        let rows = self.row_elements();
+        let elem = rows.get(row)?;
+        if let Some((_, value, _)) = elem.attributes.get(col) {
+            return Some(value.clone());
+        }
+        let child_idx = col - elem.attributes.len();
+        let child = elem
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                Node::Element(e) => Some(e),
+                _ => None,
+            })
+            .nth(child_idx)?;
+        // An empty element (`<name/>`) has no children at all — indexing
+        // child.children[0] here used to panic.
+        Some(
+            child
+                .children
+                .iter()
+                .filter_map(|c| match c {
+                    Node::Text(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect::<String>(),
+        )
     }
 
     pub fn serialize(&self) -> Vec<u8> {

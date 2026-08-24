@@ -248,3 +248,27 @@ fn xml_drill_up_from_root_is_noop() {
     let out = render(&mut a, 40, 10);
     assert!(out.contains("<child"), "should still show child: {out}");
 }
+
+/// XML table mode used to render an empty grid: `table_dims` had no XML
+/// branch, so an eligible document switched to Table and showed nothing.
+#[test]
+fn xml_table_mode_renders_rows() {
+    let src = "<?xml version=\"1.0\"?>\n<items>\n  <item name=\"a\" qty=\"1\"/>\n  <item name=\"b\" qty=\"2\"/>\n</items>";
+    let doc = Document::parse(src.as_bytes(), FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    assert_eq!(app.view_mode(), ViewMode::Tree, "XML opens as a tree");
+
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.view_mode(), ViewMode::Table, "Tab reaches table view");
+
+    let (headers, rows, cols) = app.table_dims();
+    assert_eq!(headers, vec!["name", "qty"]);
+    assert_eq!((rows, cols), (2, 2));
+
+    let out = render(&mut app, 40, 8);
+    assert!(out.contains("name"), "headers must render:\n{out}");
+    assert!(
+        out.contains('a') && out.contains('b'),
+        "rows must render:\n{out}"
+    );
+}

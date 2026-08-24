@@ -107,6 +107,9 @@ impl App {
                         _ => 0,
                     };
                     (headers.clone(), rows, headers.len())
+                } else if let Some(xml) = self.doc.as_xml() {
+                    let headers = xml.table_headers();
+                    (headers.clone(), xml.row_elements().len(), headers.len())
                 } else {
                     (vec![], 0, 0)
                 }
@@ -135,31 +138,9 @@ impl App {
                         _ => None,
                     }
                 } else if let Some(xml) = self.doc.as_xml() {
-                    // Table view: rows are child elements, cols are attributes + child elements
-                    if let Node::Element(root) = xml.root() {
-                        let elem = root.children.get(row)?;
-                        if let Node::Element(e) = elem {
-                            // First cols are attributes, then child elements
-                            let _attr_count = self.tree_keys.len();
-                            if col < e.attributes.len() {
-                                Some(e.attributes[col].1.clone())
-                            } else {
-                                let child_idx = col - e.attributes.len();
-                                if let Node::Element(child) = e.children.get(child_idx)? {
-                                    match &child.children[0] {
-                                        Node::Text(t) => Some(t.clone()),
-                                        _ => Some(summarize_node(&child.children[0])),
-                                    }
-                                } else {
-                                    None
-                                }
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
+                    // Shape and addressing live in core, so the GUI and any
+                    // future native frontend get the same table for free.
+                    xml.table_cell(row, col)
                 } else {
                     None
                 }
@@ -324,18 +305,36 @@ impl App {
         self.grid.offset = (0, 0);
     }
 
+    /// Size JSON/XML table columns to their contents, the way CSV columns
+    /// already are. These used to be pinned at 3 characters, so anything
+    /// wider than `abc` — every header longer than three letters included —
+    /// was clipped away entirely.
     fn rebuild_table_widths(&mut self) {
-        if let Some(json) = self.doc.as_json()
-            && let Some(headers) = json_table_headers(json.root())
-        {
-            self.widths = vec![3usize; headers.len()];
-            self.tree_keys = headers;
-        } else if let Some(xml) = self.doc.as_xml()
-            && let Some(headers) = xml_table_headers(xml.root())
-        {
-            self.widths = vec![3usize; headers.len()];
-            self.tree_keys = headers;
+        let (headers, row_count, col_count) = self.table_dims();
+        if col_count == 0 {
+            self.widths = Vec::new();
+            return;
         }
+        let mut widths: Vec<usize> = headers
+            .iter()
+            .map(|h| h.chars().count().clamp(3, 40))
+            .collect();
+        for r in 0..row_count.min(1000) {
+            for (c, w) in widths.iter_mut().enumerate().take(col_count) {
+                if let Some(text) = self.table_cell(r, c) {
+                    *w = (*w).max(text.chars().count()).min(40);
+                }
+            }
+        }
+        self.widths = widths;
+        self.tree_keys = headers;
+    }
+
+    /// True when column names are carried separately from the rows. CSV
+    /// uses its own first row as the header; JSON and XML do not, so the
+    /// renderer has to draw a header row for them.
+    pub fn has_separate_header(&self) -> bool {
+        !self.doc.is_csv()
     }
 
     fn rebuild_tree(&mut self) {
@@ -632,29 +631,6 @@ fn node_to_edit_string(node: &Node) -> String {
         Node::Str(s) => s.clone(),
         Node::Text(s) => s.clone(),
         _ => String::new(),
-    }
-}
-
-/// Get table headers from an XML element with repeated children.
-fn xml_table_headers(node: &Node) -> Option<Vec<String>> {
-    match node {
-        Node::Element(e) if !e.children.is_empty() => {
-            if let Node::Element(first) = &e.children[0] {
-                // Headers are attribute names + child element tag names
-                let mut headers: Vec<String> =
-                    first.attributes.iter().map(|(k, _, _)| k.clone()).collect();
-                // Add child element tags as column names
-                for child in &first.children {
-                    if let Node::Element(c) = child {
-                        headers.push(c.tag.clone());
-                    }
-                }
-                Some(headers)
-            } else {
-                None
-            }
-        }
-        _ => None,
     }
 }
 

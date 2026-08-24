@@ -49,7 +49,17 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|&w| Constraint::Length(w as u16))
         .collect();
 
-    let (_headers, row_count, _col_count) = app.table_dims();
+    let (headers, row_count, _col_count) = app.table_dims();
+    // CSV's header is row 0 of its own data; JSON and XML carry column
+    // names separately, so draw them as a real header row.
+    let header_row = app.has_separate_header().then(|| {
+        TRow::new(
+            headers[start_col..end_col.min(headers.len())]
+                .iter()
+                .map(|h| TCell::from(h.clone()).style(Style::default().bold()))
+                .collect::<Vec<_>>(),
+        )
+    });
     let mut rows = Vec::new();
     for r in offset_row..row_count.min(offset_row + area.height as usize) {
         let cells: Vec<TCell> = (start_col..end_col)
@@ -68,7 +78,10 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
         rows.push(TRow::new(cells));
     }
 
-    let table = Table::new(rows, constraints).column_spacing(1);
+    let mut table = Table::new(rows, constraints).column_spacing(1);
+    if let Some(header) = header_row {
+        table = table.header(header);
+    }
     frame.render_widget(table, area);
 }
 

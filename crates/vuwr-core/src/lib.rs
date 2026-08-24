@@ -304,7 +304,7 @@ impl Document {
     /// elements with the same tag name (eligible for table view).
     pub fn xml_table_eligible(&self) -> bool {
         match &self.kind {
-            Kind::Xml(doc) => is_repeated_siblings(doc.root()),
+            Kind::Xml(doc) => is_repeated_siblings(doc),
             _ => false,
         }
     }
@@ -331,20 +331,12 @@ fn is_array_of_objects(node: &Node) -> bool {
     }
 }
 
-/// Check if an XML element has repeated child elements with the same
-/// tag name (table-shaped).
-fn is_repeated_siblings(node: &Node) -> bool {
-    match node {
-        Node::Element(e) if e.children.len() > 1 => {
-            let first_tag = match &e.children[0] {
-                Node::Element(child) => &child.tag,
-                _ => return false,
-            };
-            e.children.iter().all(|child| match child {
-                Node::Element(c) => c.tag == *first_tag,
-                _ => false,
-            })
-        }
-        _ => false,
-    }
+/// True when the document element has two or more element children that
+/// all share a tag — the shape that maps onto rows.
+///
+/// Whitespace `Text` and `Comment` children are ignored: a pretty-printed
+/// file has text between every element, which used to make it ineligible.
+fn is_repeated_siblings(doc: &XmlDoc) -> bool {
+    let rows = doc.row_elements();
+    rows.len() > 1 && rows.iter().all(|e| e.tag == rows[0].tag)
 }
