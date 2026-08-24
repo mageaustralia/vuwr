@@ -541,3 +541,102 @@ fn text_view_is_available_for_every_format() {
         assert!(lines > 0, "{label}: text view has no lines");
     }
 }
+
+// --- Hint bar ---
+
+#[test]
+fn hint_bar_shows_keys_along_the_bottom() {
+    let mut app = app("name,age\nAlice,30\n");
+    let out = render(&mut app, 76, 8);
+    let last = out.lines().last().unwrap();
+    assert!(last.contains("help"), "hint bar on the last line: {last}");
+    assert!(last.contains("edit") && last.contains("quit"), "{last}");
+}
+
+/// Nano's bar is fixed; ours reflects what is possible right now, so it
+/// cannot advertise an action the current view does not support.
+#[test]
+fn hints_follow_the_view() {
+    let doc = Document::parse(b"{\"x\":{\"y\":1}}", FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+
+    let tree = render(&mut app, 76, 8);
+    let tree_last = tree.lines().last().unwrap().to_string();
+    assert!(
+        tree_last.contains("open"),
+        "tree offers drill-down: {tree_last}"
+    );
+    assert!(
+        !tree_last.contains("edit"),
+        "tree is not a cell editor: {tree_last}"
+    );
+
+    app.handle_key(key(KeyCode::Char('3')));
+    let text = render(&mut app, 76, 8);
+    let text_last = text.lines().last().unwrap().to_string();
+    assert!(
+        text_last.contains("page"),
+        "pager offers paging: {text_last}"
+    );
+    assert!(
+        !text_last.contains("open"),
+        "pager has nothing to open: {text_last}"
+    );
+}
+
+/// The bar must not offer a view the document does not have.
+#[test]
+fn hints_only_offer_available_views() {
+    let doc = Document::parse(b"{\"x\":{\"y\":1}}", FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    let last = render(&mut app, 76, 8).lines().last().unwrap().to_string();
+    assert!(last.contains("text"), "{last}");
+    assert!(
+        !last.contains("table"),
+        "nested JSON has no table view: {last}"
+    );
+}
+
+#[test]
+fn hint_bar_hides_while_editing_and_toggles_with_shift_h() {
+    let mut app = app("a\n1\n");
+    app.grid.move_to(1, 0, 2, 1);
+
+    app.handle_key(key(KeyCode::Char('i')));
+    let editing = render(&mut app, 76, 8);
+    assert!(
+        !editing.lines().last().unwrap().contains("help"),
+        "the bar gives way to the edit prompt"
+    );
+    app.handle_key(key(KeyCode::Esc));
+
+    assert!(app.show_hints);
+    app.handle_key(key(KeyCode::Char('H')));
+    assert!(!app.show_hints);
+    let hidden = render(&mut app, 76, 8);
+    assert!(!hidden.lines().last().unwrap().contains("help"));
+}
+
+/// Every key the bar advertises must resolve to the command it names.
+#[test]
+fn hint_bar_never_advertises_a_binding_that_does_not_exist() {
+    use vuwr_tui::keymap::{Resolved, keys_for, resolve};
+    let doc = Document::parse(br#"[{"a":1}]"#, FormatHint::Auto).unwrap();
+    let app = App::new(PathBuf::from("t.json"), doc);
+
+    for cmd in app.hints() {
+        let keys = keys_for(cmd);
+        assert!(!keys.trim().is_empty(), "{} has no key", cmd.name());
+        let first = keys.split_whitespace().next().unwrap();
+        // Single-character bindings must round-trip through the keymap.
+        if first.chars().count() == 1 && !first.starts_with(':') {
+            let c = first.chars().next().unwrap();
+            let got = resolve(key(KeyCode::Char(c)), false);
+            assert!(
+                matches!(got, Resolved::Run(r) if r == cmd),
+                "hint says {first} runs {}, but the keymap disagrees",
+                cmd.name()
+            );
+        }
+    }
+}

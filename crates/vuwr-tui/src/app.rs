@@ -54,6 +54,10 @@ pub struct App {
     pub tree_summaries: Vec<String>,
     /// Help overlay visibility, toggled by `?`.
     pub show_help: bool,
+    /// Hint bar visibility, toggled by `H`. On by default: the bindings
+    /// are not guessable, and a viewer people reach for occasionally
+    /// should not require remembering them.
+    pub show_hints: bool,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
 }
@@ -85,6 +89,7 @@ impl App {
             tree_keys,
             tree_summaries,
             show_help: false,
+            show_hints: true,
             text_lines: Vec::new(),
         };
         if app.view == ViewMode::Tree {
@@ -145,6 +150,50 @@ impl App {
         }
         views.push(ViewMode::Text);
         views
+    }
+
+    /// The commands worth showing in the hint bar right now.
+    ///
+    /// Context-sensitive rather than nano's fixed list: what you can do
+    /// differs sharply between a table, a tree, a pager and an open edit.
+    pub fn hints(&self) -> Vec<Command> {
+        match self.mode {
+            Mode::Edit { .. } | Mode::Command { .. } => Vec::new(),
+            Mode::Normal => {
+                let mut v = vec![Command::Help];
+                match self.view {
+                    ViewMode::Table => {
+                        if self.doc.sheet().is_some() {
+                            v.push(Command::EditCell);
+                            v.push(Command::ReplaceCell);
+                        }
+                        v.push(Command::Undo);
+                    }
+                    ViewMode::Tree => {
+                        v.push(Command::DrillDown);
+                        v.push(Command::DrillUp);
+                    }
+                    ViewMode::Text => {
+                        v.push(Command::PageDown);
+                        v.push(Command::PageUp);
+                    }
+                }
+                // Only offer views this document actually has.
+                for view in self.available_views() {
+                    if view == self.view {
+                        continue;
+                    }
+                    v.push(match view {
+                        ViewMode::Table => Command::ViewTable,
+                        ViewMode::Tree => Command::ViewTree,
+                        ViewMode::Text => Command::ViewText,
+                    });
+                }
+                v.push(Command::Save);
+                v.push(Command::Quit);
+                v
+            }
+        }
     }
 
     pub fn view_mode(&self) -> ViewMode {
@@ -276,6 +325,7 @@ impl App {
 
             Command::OpenPalette => self.mode = Mode::Command { buf: String::new() },
             Command::Help => self.show_help = !self.show_help,
+            Command::ToggleHints => self.show_hints = !self.show_hints,
         }
     }
 

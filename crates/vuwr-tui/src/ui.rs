@@ -11,13 +11,27 @@ use crate::app::{App, Mode, ViewMode, escape};
 use vuwr_core::Command;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(frame.area());
+    let hints = if app.show_hints {
+        app.hints()
+    } else {
+        Vec::new()
+    };
+    let hint_rows = if hints.is_empty() { 0 } else { 1 };
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+        Constraint::Length(hint_rows),
+    ])
+    .split(frame.area());
     match app.view_mode() {
         ViewMode::Table => render_table(frame, app, chunks[0]),
         ViewMode::Tree => render_tree(frame, app, chunks[0]),
         ViewMode::Text => render_text(frame, app, chunks[0]),
     }
     render_status(frame, app, chunks[1]);
+    if hint_rows == 1 {
+        render_hints(frame, &hints, chunks[2]);
+    }
     if app.show_help {
         render_help(frame, frame.area());
     }
@@ -158,6 +172,31 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let table = Table::new(rows, constraints).column_spacing(1);
     frame.render_widget(table, area);
+}
+
+/// The hint bar, nano-style: the keys worth knowing, spelled out along the
+/// bottom. Built from the same keymap the help overlay uses, so it cannot
+/// advertise a binding that does not exist.
+fn render_hints(frame: &mut Frame, hints: &[Command], area: Rect) {
+    let mut spans: Vec<Span> = Vec::new();
+    for cmd in hints {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        // The key reversed like nano's, then the label.
+        spans.push(Span::styled(
+            format!(" {} ", first_key(crate::keymap::keys_for(*cmd))),
+            Style::default().reversed(),
+        ));
+        spans.push(Span::raw(format!(" {}", cmd.short_label())));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// `keys_for` may list several bindings ("i  Enter"); the hint bar shows
+/// only the first, which is the one to teach.
+fn first_key(keys: &str) -> &str {
+    keys.split_whitespace().next().unwrap_or(keys)
 }
 
 /// The view indicator: every view this document supports, with the current

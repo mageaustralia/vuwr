@@ -71,6 +71,7 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         (KeyCode::Char('q'), false) => Command::Quit,
         (KeyCode::Char(':'), false) => Command::OpenPalette,
         (KeyCode::Char('?'), false) => Command::Help,
+        (KeyCode::Char('H'), false) => Command::ToggleHints,
 
         _ => return Resolved::None,
     };
@@ -110,6 +111,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::SaveAndQuit => ":wq",
         Command::OpenPalette => ":",
         Command::Help => "?",
+        Command::ToggleHints => "H",
     }
 }
 

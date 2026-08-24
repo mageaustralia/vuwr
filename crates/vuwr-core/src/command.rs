@@ -50,6 +50,8 @@ pub enum Command {
     // --- Interface ---
     OpenPalette,
     Help,
+    /// Show or hide the hint bar.
+    ToggleHints,
 }
 
 impl Command {
@@ -83,6 +85,7 @@ impl Command {
         Command::SaveAndQuit,
         Command::OpenPalette,
         Command::Help,
+        Command::ToggleHints,
     ];
 
     /// The stable name used by the `:` palette and by help.
@@ -116,6 +119,7 @@ impl Command {
             Command::SaveAndQuit => "write-quit",
             Command::OpenPalette => "palette",
             Command::Help => "help",
+            Command::ToggleHints => "toggle-hints",
         }
     }
 
@@ -150,6 +154,43 @@ impl Command {
             Command::SaveAndQuit => "write the file and quit",
             Command::OpenPalette => "open the command line",
             Command::Help => "show this help",
+            Command::ToggleHints => "show or hide the hint bar",
+        }
+    }
+
+    /// A one- or two-word label for the hint bar, where the full
+    /// description would not fit.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Command::MoveLeft => "left",
+            Command::MoveRight => "right",
+            Command::MoveUp => "up",
+            Command::MoveDown => "down",
+            Command::PageDown => "page",
+            Command::PageUp => "back",
+            Command::HalfPageDown => "half down",
+            Command::HalfPageUp => "half up",
+            Command::GoTop => "top",
+            Command::GoBottom => "end",
+            Command::GoRowStart => "row start",
+            Command::GoRowEnd => "row end",
+            Command::CycleView => "cycle view",
+            Command::ViewTable => "table",
+            Command::ViewTree => "tree",
+            Command::ViewText => "text",
+            Command::DrillDown => "open",
+            Command::DrillUp => "back",
+            Command::EditCell => "edit",
+            Command::ReplaceCell => "replace",
+            Command::Undo => "undo",
+            Command::Redo => "redo",
+            Command::Save => "write",
+            Command::Quit => "quit",
+            Command::ForceQuit => "discard",
+            Command::SaveAndQuit => "write+quit",
+            Command::OpenPalette => "command",
+            Command::Help => "help",
+            Command::ToggleHints => "hints",
         }
     }
 
@@ -197,7 +238,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 28, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 29, "update ALL when adding a command");
     }
 
     #[test]
