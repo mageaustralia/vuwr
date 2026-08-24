@@ -223,8 +223,8 @@ interpreter is fine for the ~50 rows on screen, not for eagerly computing
 `csvlens` (MIT) solves the same viewing problem well. Adopted as ideas, not
 code, to keep provenance clean:
 
-- **stdin** — `… | vuwr`. The current TTY check tests stdout, so
-  `vuwr f.csv | head` wrongly tries to launch the GUI.
+- **stdin** — `… | vuwr`. Piped output writes the document through and
+  exits, as a pager does.
 - **Shell composability** — `m`/`M` to mark rows, `Ctrl-e` to print marked
   rows and exit, `--echo-column` plus Enter to print a cell and exit,
   `--prompt` for the status bar. This makes the viewer an interactive
