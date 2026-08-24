@@ -38,6 +38,12 @@ pub enum EditOp {
         path: crate::node::NodePath,
         value: crate::node::Node,
     },
+    /// Replace the entire document by re-parsing these bytes. Its own
+    /// inverse: applying it returns an op holding the previous source.
+    /// Used by text view, where the source itself is what is edited.
+    ReplaceSource {
+        bytes: Vec<u8>,
+    },
     /// Swap a column to a new position. Requires a rectangular sheet so the
     /// inverse (`MoveColumn` with the arguments swapped) is exact.
     MoveColumn {
@@ -70,6 +76,8 @@ impl CsvDoc {
         match op {
             // Tree ops address JSON/XML nodes; a CSV sheet has no paths.
             EditOp::SetNode { .. } => Err(Error::EditNotSupported { format: "CSV" }),
+            // Handled by Document::apply_inner before reaching a format.
+            EditOp::ReplaceSource { .. } => Err(Error::EditNotSupported { format: "CSV" }),
             EditOp::SetCell { row, column, value } => {
                 let len = self.height();
                 let r = self

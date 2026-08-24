@@ -393,11 +393,6 @@ fn text_view_pages_the_source_and_is_read_only() {
     assert_eq!(lines, 3, "three source lines");
     assert_eq!(app.table_cell(0, 0).as_deref(), Some("name,age"));
 
-    // Editing keys must not open an editor here.
-    app.handle_key(key(KeyCode::Char('i')));
-    assert!(!app.dirty);
-    assert!(app.status.contains("not editable"), "{}", app.status);
-
     let out = render(&mut app, 40, 6);
     assert!(out.contains("Alice,30"), "raw source renders:\n{out}");
     assert!(
@@ -639,4 +634,161 @@ fn hint_bar_never_advertises_a_binding_that_does_not_exist() {
             );
         }
     }
+}
+
+/// `:wq!` is muscle memory from vim. It writes and quits like `:wq` — the
+/// `!` does not mean "quit even if the write failed", which would discard
+/// the edits the command was asked to save.
+#[test]
+fn wq_bang_writes_and_quits() {
+    let dir = std::env::temp_dir().join("vuwr-wq-bang");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t.csv");
+    std::fs::write(&path, "a\n1\n").unwrap();
+
+    let doc = Document::parse(b"a\n1\n", FormatHint::Csv).unwrap();
+    let mut app = App::new(path.clone(), doc);
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('c')));
+    app.handle_key(key(KeyCode::Char('9')));
+    app.handle_key(key(KeyCode::Enter));
+
+    for c in ":wq!".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+
+    assert!(app.quit, "should quit: {}", app.status);
+    assert!(!app.dirty);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\n9\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A write that cannot succeed must not quit, `!` or no `!` — otherwise
+/// the bang silently throws away the edits.
+#[test]
+fn wq_bang_does_not_quit_when_the_write_fails() {
+    let doc = Document::parse(b"a\n1\n", FormatHint::Csv).unwrap();
+    // A directory that does not exist: the write fails, nothing is lost.
+    let mut app = App::new(PathBuf::from("/nonexistent-dir-vuwr/t.csv"), doc);
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('c')));
+    app.handle_key(key(KeyCode::Char('9')));
+    app.handle_key(key(KeyCode::Enter));
+
+    for c in ":wq!".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+
+    assert!(!app.quit, "a failed write must keep the editor open");
+    assert!(app.dirty, "the edit is still unsaved");
+    assert!(app.status.contains("save failed"), "{}", app.status);
+}
+
+// --- Editing in text (pager) view ---
+
+#[test]
+fn text_view_edits_the_source_line() {
+    let mut app = app("name,age\nAlice,30\nBob,25\n");
+    app.handle_key(key(KeyCode::Char('3'))); // text view
+    app.grid.move_to(1, 0, 3, 1);
+
+    app.handle_key(key(KeyCode::Char('c')));
+    for c in "Alicia,31".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+
+    assert!(app.dirty, "{}", app.status);
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "name,age\nAlicia,31\nBob,25\n"
+    );
+    assert_eq!(app.table_cell(1, 0).as_deref(), Some("Alicia,31"));
+}
+
+/// A source edit that makes the document unparseable is refused, and the
+/// document is left exactly as it was.
+#[test]
+fn text_view_refuses_an_edit_that_breaks_the_document() {
+    let doc = Document::parse(b"{\n  \"a\": 1\n}", FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 3, 1);
+
+    app.handle_key(key(KeyCode::Char('c')));
+    for c in "  \"a\": ,,,".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+
+    assert!(!app.dirty, "a rejected edit must not mark the file dirty");
+    assert!(app.status.contains("not applied"), "{}", app.status);
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "{\n  \"a\": 1\n}"
+    );
+}
+
+/// Splicing must not rewrite line endings: a CRLF file stays CRLF, and a
+/// file with no final newline does not gain one.
+#[test]
+fn text_edits_preserve_line_endings() {
+    let doc = Document::parse(b"a,b\r\n1,2\r\n", FormatHint::Csv).unwrap();
+    let mut app = App::new(PathBuf::from("t.csv"), doc);
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('c')));
+    for c in "9,9".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "a,b\r\n9,9\r\n"
+    );
+
+    let doc = Document::parse(b"a,b\n1,2", FormatHint::Csv).unwrap();
+    let mut app = App::new(PathBuf::from("t.csv"), doc);
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('c')));
+    for c in "8,8".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(String::from_utf8(app.doc.serialize()).unwrap(), "a,b\n8,8");
+}
+
+#[test]
+fn text_edits_undo() {
+    let mut app = app("a\n1\n");
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('c')));
+    app.handle_key(key(KeyCode::Char('7')));
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(String::from_utf8(app.doc.serialize()).unwrap(), "a\n7\n");
+
+    app.handle_key(key(KeyCode::Char('u')));
+    assert_eq!(String::from_utf8(app.doc.serialize()).unwrap(), "a\n1\n");
+}
+
+/// An edit made in text view is visible in table view, and vice versa —
+/// they are two views of one document, not two documents.
+#[test]
+fn text_and_table_views_stay_in_step() {
+    let mut app = app("a,b\n1,2\n");
+    app.handle_key(key(KeyCode::Char('3')));
+    app.grid.move_to(1, 0, 2, 1);
+    app.handle_key(key(KeyCode::Char('c')));
+    for c in "5,6".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+
+    app.handle_key(key(KeyCode::Char('1'))); // back to table
+    assert_eq!(app.table_cell(1, 0).as_deref(), Some("5"));
+    assert_eq!(app.table_cell(1, 1).as_deref(), Some("6"));
 }

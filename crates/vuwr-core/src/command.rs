@@ -199,10 +199,14 @@ impl Command {
     pub fn from_name(input: &str) -> Option<Command> {
         let name = input.trim();
         match name {
-            "w" => return Some(Command::Save),
+            "w" | "w!" => return Some(Command::Save),
             "q" => return Some(Command::Quit),
             "q!" => return Some(Command::ForceQuit),
-            "wq" | "x" => return Some(Command::SaveAndQuit),
+            // `!` is accepted because it is muscle memory, but it does not
+            // mean "quit even if the write failed" -- that would discard
+            // the very edits the command was asked to save. A failed write
+            // keeps you in the editor, as vim does.
+            "wq" | "wq!" | "x" | "x!" => return Some(Command::SaveAndQuit),
             "h" | "?" => return Some(Command::Help),
             _ => {}
         }
@@ -243,6 +247,14 @@ mod tests {
 
     #[test]
     fn vi_aliases_resolve() {
+        for alias in ["wq", "wq!", "x", "x!"] {
+            assert_eq!(
+                Command::from_name(alias),
+                Some(Command::SaveAndQuit),
+                ":{alias}"
+            );
+        }
+        assert_eq!(Command::from_name("w!"), Some(Command::Save));
         assert_eq!(Command::from_name("w"), Some(Command::Save));
         assert_eq!(Command::from_name("wq"), Some(Command::SaveAndQuit));
         assert_eq!(Command::from_name(" q! "), Some(Command::ForceQuit));

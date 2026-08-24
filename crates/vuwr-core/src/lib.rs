@@ -141,6 +141,9 @@ pub struct Document {
     kind: Kind,
     undo: Vec<EditOp>,
     redo: Vec<EditOp>,
+    /// How this document was parsed, so edited source can be re-parsed
+    /// the same way rather than re-sniffed into a different format.
+    hint: FormatHint,
     /// The source began with a UTF-8 BOM. Stripped before parsing so it
     /// cannot leak into the first key or cell, and re-emitted on save so
     /// the round-trip stays byte-exact.
@@ -184,6 +187,7 @@ impl Document {
             kind,
             undo: Vec::new(),
             redo: Vec::new(),
+            hint,
             bom,
         })
     }
@@ -241,6 +245,14 @@ impl Document {
     }
 
     fn apply_inner(&mut self, op: EditOp) -> Result<EditOp, Error> {
+        // Applies to every format: the op carries a whole document.
+        if let EditOp::ReplaceSource { bytes } = op {
+            let previous = self.serialize();
+            let replacement = Document::parse(&bytes, self.hint)?;
+            self.kind = replacement.kind;
+            self.bom = replacement.bom;
+            return Ok(EditOp::ReplaceSource { bytes: previous });
+        }
         match &mut self.kind {
             Kind::Csv(doc) => doc.apply(op),
             Kind::Json(doc) => match op {
@@ -278,6 +290,20 @@ impl Document {
             Kind::Xml(doc) if self.xml_table_eligible() => Some(doc),
             _ => None,
         }
+    }
+
+    /// Replace the whole document by re-parsing `bytes`, recording undo.
+    ///
+    /// This is how text view commits an edit: the source is the thing
+    /// being edited, so the document is rebuilt from it. A parse failure
+    /// changes nothing and reports why.
+    pub fn replace_source(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        let inverse = self.apply_inner(EditOp::ReplaceSource {
+            bytes: bytes.to_vec(),
+        })?;
+        self.undo.push(inverse);
+        self.redo.clear();
+        Ok(())
     }
 
     /// Write one cell through the table view, recording undo.

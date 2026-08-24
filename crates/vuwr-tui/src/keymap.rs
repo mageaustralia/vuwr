@@ -108,7 +108,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::Save => ":w",
         Command::Quit => "q  :q",
         Command::ForceQuit => ":q!",
-        Command::SaveAndQuit => ":wq",
+        Command::SaveAndQuit => ":wq  :wq!  :x",
         Command::OpenPalette => ":",
         Command::Help => "?",
         Command::ToggleHints => "H",

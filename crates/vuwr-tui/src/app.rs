@@ -60,6 +60,11 @@ pub struct App {
     pub show_hints: bool,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
+    /// The exact bytes those lines came from, and each line's byte span
+    /// within them. An edit splices into these, so CRLF endings and a
+    /// missing final newline survive untouched.
+    text_bytes: Vec<u8>,
+    text_spans: Vec<(usize, usize)>,
 }
 
 impl App {
@@ -91,6 +96,8 @@ impl App {
             show_help: false,
             show_hints: true,
             text_lines: Vec::new(),
+            text_bytes: Vec::new(),
+            text_spans: Vec::new(),
         };
         if app.view == ViewMode::Tree {
             app.rebuild_tree();
@@ -174,6 +181,7 @@ impl App {
                         v.push(Command::DrillUp);
                     }
                     ViewMode::Text => {
+                        v.push(Command::EditCell);
                         v.push(Command::PageDown);
                         v.push(Command::PageUp);
                     }
@@ -292,7 +300,13 @@ impl App {
             }
 
             Command::EditCell | Command::ReplaceCell => {
-                if self.view != ViewMode::Table || self.doc.sheet().is_none() {
+                let editable = match self.view {
+                    ViewMode::Table => self.doc.sheet().is_some(),
+                    // Text view edits the source line itself.
+                    ViewMode::Text => true,
+                    ViewMode::Tree => false,
+                };
+                if !editable {
                     self.status = "this view is not editable".into();
                 } else if cmd == Command::ReplaceCell {
                     self.mode = Mode::Edit { buf: String::new() };
@@ -381,11 +395,56 @@ impl App {
     /// Text view shows the document exactly as it would be written out, so
     /// what you page through is what `:w` produces.
     fn rebuild_text(&mut self) {
-        let bytes = self.doc.serialize();
-        self.text_lines = String::from_utf8_lossy(&bytes)
-            .lines()
-            .map(|l| l.to_string())
+        self.text_bytes = self.doc.serialize();
+        self.text_spans.clear();
+        self.text_lines.clear();
+
+        let mut start = 0usize;
+        let mut i = 0usize;
+        while i < self.text_bytes.len() {
+            if self.text_bytes[i] == b'\n' {
+                // Exclude a CR so the line reads correctly, but leave it in
+                // the source: splicing must not convert CRLF to LF.
+                let mut end = i;
+                if end > start && self.text_bytes[end - 1] == b'\r' {
+                    end -= 1;
+                }
+                self.text_spans.push((start, end));
+                start = i + 1;
+            }
+            i += 1;
+        }
+        if start < self.text_bytes.len() {
+            self.text_spans.push((start, self.text_bytes.len()));
+        }
+
+        self.text_lines = self
+            .text_spans
+            .iter()
+            .map(|&(a, b)| String::from_utf8_lossy(&self.text_bytes[a..b]).into_owned())
             .collect();
+    }
+
+    /// Commit an edited source line: splice it into the original bytes and
+    /// re-parse. A line that makes the document invalid is refused with the
+    /// parse error, leaving the file as it was.
+    fn commit_text_line(&mut self, line: usize, value: &str) {
+        let Some(&(start, end)) = self.text_spans.get(line) else {
+            return;
+        };
+        let mut bytes = Vec::with_capacity(self.text_bytes.len() + value.len());
+        bytes.extend_from_slice(&self.text_bytes[..start]);
+        bytes.extend_from_slice(value.as_bytes());
+        bytes.extend_from_slice(&self.text_bytes[end..]);
+
+        match self.doc.replace_source(&bytes) {
+            Ok(()) => {
+                self.dirty = true;
+                self.rebuild_text();
+                self.clamp_cursor();
+            }
+            Err(e) => self.status = format!("not applied: {e}"),
+        }
     }
 
     /// Size JSON/XML table columns to their contents, the way CSV columns
@@ -488,9 +547,7 @@ impl App {
                 .sheet()
                 .and_then(|s| s.cell(r, c))
                 .unwrap_or_default(),
-            // Text view is a pager: read-only by design, so there is
-            // nothing to seed an edit buffer from.
-            ViewMode::Text => String::new(),
+            ViewMode::Text => self.text_lines.get(r).cloned().unwrap_or_default(),
             ViewMode::Tree => {
                 let node = if self.doc.is_json() {
                     self.current_json_node()
@@ -526,6 +583,10 @@ impl App {
                 let (row, column) = self.grid.cursor;
                 let value = std::mem::take(buf);
                 self.mode = Mode::Normal;
+                if self.view == ViewMode::Text {
+                    self.commit_text_line(row, &value);
+                    return;
+                }
                 match self.doc.set_cell(row, column, &value) {
                     Ok(()) => {
                         self.dirty = true;
