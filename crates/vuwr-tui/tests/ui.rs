@@ -198,12 +198,16 @@ fn json_table_view_for_array_of_objects() {
     assert!(out.contains("a"), "should show header: {out}");
 }
 
+/// A document with no row shape has no table view, so Tab skips straight
+/// to text. It used to stay in tree with a status message, which left the
+/// user with nowhere to go.
 #[test]
-fn json_table_not_available_for_non_array() {
+fn json_table_skipped_for_non_array() {
     let mut a = json_app("{\"a\":1}");
     a.handle_key(key(KeyCode::Tab));
-    assert_eq!(a.view_mode(), ViewMode::Tree); // stays tree
-    assert!(a.status.contains("not available"));
+    assert_eq!(a.view_mode(), ViewMode::Text);
+    a.handle_key(key(KeyCode::Tab));
+    assert_eq!(a.view_mode(), ViewMode::Tree);
 }
 
 #[test]
@@ -331,4 +335,127 @@ fn i_appends_to_the_existing_value_and_c_replaces_it() {
     app.handle_key(key(KeyCode::Char('Z')));
     app.handle_key(key(KeyCode::Enter));
     assert_eq!(app.table_cell(1, 0).as_deref(), Some("Z"));
+}
+
+// --- Command layer, text pager, help ---
+
+#[test]
+fn colon_commands_go_through_the_same_vocabulary_as_keys() {
+    let mut by_name_app = app("a\n1\n");
+    // `:go-bottom` and `G` must do the same thing.
+    for c in ":go-bottom".chars() {
+        by_name_app.handle_key(key(KeyCode::Char(c)));
+    }
+    by_name_app.handle_key(key(KeyCode::Enter));
+    let by_name = by_name_app.grid.cursor;
+
+    let mut app2 = app("a\n1\n");
+    app2.handle_key(key(KeyCode::Char('G')));
+    assert_eq!(by_name, app2.grid.cursor);
+}
+
+#[test]
+fn unknown_colon_command_reports_rather_than_silently_doing_nothing() {
+    let mut app = app("a\n1\n");
+    for c in ":nonsense".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter));
+    assert!(app.status.contains("unknown command"), "{}", app.status);
+}
+
+#[test]
+fn pager_keys_scroll_a_screen() {
+    let mut rows = String::from("n\n");
+    for i in 0..100 {
+        rows.push_str(&format!("{i}\n"));
+    }
+    let mut app = app(&rows);
+    app.set_viewport_rows(10);
+
+    app.handle_key(key(KeyCode::Char(' ')));
+    assert_eq!(app.grid.cursor.0, 10, "space pages down");
+
+    app.handle_key(key(KeyCode::Char('d')));
+    assert_eq!(app.grid.cursor.0, 15, "d is half a page");
+
+    app.handle_key(key(KeyCode::Char('b')));
+    assert_eq!(app.grid.cursor.0, 5, "b pages back");
+}
+
+#[test]
+fn text_view_pages_the_source_and_is_read_only() {
+    let mut app = app("name,age\nAlice,30\nBob,25\n");
+    app.handle_key(key(KeyCode::Tab)); // CSV: table -> text
+    assert_eq!(app.view_mode(), ViewMode::Text);
+
+    let (_, lines, _) = app.table_dims();
+    assert_eq!(lines, 3, "three source lines");
+    assert_eq!(app.table_cell(0, 0).as_deref(), Some("name,age"));
+
+    // Editing keys must not open an editor here.
+    app.handle_key(key(KeyCode::Char('i')));
+    assert!(!app.dirty);
+    assert!(app.status.contains("not editable"), "{}", app.status);
+
+    let out = render(&mut app, 40, 6);
+    assert!(out.contains("Alice,30"), "raw source renders:\n{out}");
+    assert!(
+        out.contains('1') && out.contains('2'),
+        "line numbers:\n{out}"
+    );
+}
+
+#[test]
+fn text_view_shows_what_would_be_written() {
+    let mut app = app("a,b\n1,2\n");
+    app.grid.move_to(1, 0, 2, 2);
+    app.handle_key(key(KeyCode::Char('c')));
+    app.handle_key(key(KeyCode::Char('9')));
+    app.handle_key(key(KeyCode::Enter));
+
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.view_mode(), ViewMode::Text);
+    assert_eq!(app.table_cell(1, 0).as_deref(), Some("9,2"));
+}
+
+#[test]
+fn json_cycles_tree_table_text() {
+    let doc = Document::parse(br#"[{"a":1}]"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    assert_eq!(app.view_mode(), ViewMode::Tree);
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.view_mode(), ViewMode::Table);
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.view_mode(), ViewMode::Text);
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.view_mode(), ViewMode::Tree);
+}
+
+/// A document with no row shape skips table view rather than showing a
+/// blank grid.
+#[test]
+fn non_table_shaped_json_cycles_tree_text_only() {
+    let doc = Document::parse(br#"{"a":{"b":1}}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    assert_eq!(app.view_mode(), ViewMode::Tree);
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.view_mode(), ViewMode::Text);
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(app.view_mode(), ViewMode::Tree);
+}
+
+#[test]
+fn help_overlay_toggles_and_lists_every_command() {
+    let mut app = app("a\n1\n");
+    assert!(!app.show_help);
+    app.handle_key(key(KeyCode::Char('?')));
+    assert!(app.show_help);
+
+    let out = render(&mut app, 70, 30);
+    assert!(out.contains("keys"), "help renders:\n{out}");
+    assert!(out.contains("undo"), "help lists commands:\n{out}");
+
+    app.handle_key(key(KeyCode::Char('?')));
+    assert!(!app.show_help);
 }

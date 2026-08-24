@@ -10,7 +10,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use vuwr_core::{CsvDoc, Document, GridState, Node};
+use vuwr_core::{Command, CsvDoc, Document, GridState, Node};
+
+use crate::keymap::Resolved;
 
 pub enum Mode {
     Normal,
@@ -29,6 +31,8 @@ pub enum Mode {
 pub enum ViewMode {
     Table,
     Tree,
+    /// Raw source, paged like `less`. Read-only.
+    Text,
 }
 
 pub struct App {
@@ -48,6 +52,10 @@ pub struct App {
     pub tree_keys: Vec<String>,
     /// For tree view: summary strings for each visible row.
     pub tree_summaries: Vec<String>,
+    /// Help overlay visibility, toggled by `?`.
+    pub show_help: bool,
+    /// Rendered lines for text view, rebuilt when the document changes.
+    text_lines: Vec<String>,
 }
 
 impl App {
@@ -76,6 +84,8 @@ impl App {
             viewport_rows: 10,
             tree_keys,
             tree_summaries,
+            show_help: false,
+            text_lines: Vec::new(),
         };
         if app.view == ViewMode::Tree {
             app.rebuild_tree();
@@ -98,6 +108,7 @@ impl App {
                 None => (Vec::new(), 0, 0),
             },
             ViewMode::Tree => (self.tree_keys.clone(), self.tree_summaries.len(), 1),
+            ViewMode::Text => (Vec::new(), self.text_lines.len(), 1),
         }
     }
 
@@ -106,6 +117,7 @@ impl App {
         match self.view {
             ViewMode::Table => self.doc.sheet()?.cell(row, col).map(|v| escape(&v)),
             ViewMode::Tree => self.tree_summaries.get(row).cloned(),
+            ViewMode::Text => self.text_lines.get(row).cloned(),
         }
     }
 
@@ -153,136 +165,145 @@ impl App {
     fn normal_key(&mut self, key: KeyEvent) {
         let was_pending_g = self.pending_g;
         self.pending_g = false;
-        match key.code {
-            KeyCode::Char('q') => self.try_quit(),
-            KeyCode::Char(':') => self.mode = Mode::Command { buf: String::new() },
-            KeyCode::Tab if self.can_cycle_view() => self.cycle_view(),
-            // `c` replaces the cell, `i`/Enter edit what is already there.
-            // Without a replace key the only way to clear a long value was
-            // to hold Backspace.
-            KeyCode::Char('c') if self.view == ViewMode::Table => {
-                if self.doc.sheet().is_some() {
+        match crate::keymap::resolve(key, was_pending_g) {
+            Resolved::Run(cmd) => self.execute(cmd),
+            Resolved::PendingG => self.pending_g = true,
+            Resolved::None => {}
+        }
+    }
+
+    /// Run one command. The single entry point for every action, whatever
+    /// triggered it — a key, the `:` line, or (later) a GUI menu item.
+    pub fn execute(&mut self, cmd: Command) {
+        let (rows, cols) = self.grid_dims();
+        let page = self.viewport_rows as isize;
+        match cmd {
+            Command::MoveLeft => self.grid.move_by(0, -1, rows, cols),
+            Command::MoveRight => self.grid.move_by(0, 1, rows, cols),
+            Command::MoveUp => self.grid.move_by(-1, 0, rows, cols),
+            Command::MoveDown => self.grid.move_by(1, 0, rows, cols),
+            Command::PageDown => self.grid.move_by(page, 0, rows, cols),
+            Command::PageUp => self.grid.move_by(-page, 0, rows, cols),
+            Command::HalfPageDown => self.grid.move_by(page / 2, 0, rows, cols),
+            Command::HalfPageUp => self.grid.move_by(-(page / 2), 0, rows, cols),
+            Command::GoTop => self.grid.move_to(0, self.grid.cursor.1, rows, cols),
+            Command::GoBottom => self
+                .grid
+                .move_to(usize::MAX, self.grid.cursor.1, rows, cols),
+            Command::GoRowStart => self.grid.move_to(self.grid.cursor.0, 0, rows, cols),
+            Command::GoRowEnd => self
+                .grid
+                .move_to(self.grid.cursor.0, usize::MAX, rows, cols),
+
+            Command::CycleView => self.cycle_view(),
+            Command::DrillDown => match self.view {
+                ViewMode::Tree => self.tree_drill(),
+                // Enter doubles as "edit" in a table, where there is
+                // nothing to descend into.
+                ViewMode::Table => self.execute(Command::EditCell),
+                ViewMode::Text => {}
+            },
+            Command::DrillUp => {
+                if self.view == ViewMode::Tree {
+                    self.grid.drill_up();
+                    self.rebuild_tree();
+                }
+            }
+
+            Command::EditCell | Command::ReplaceCell => {
+                if self.view != ViewMode::Table || self.doc.sheet().is_none() {
+                    self.status = "this view is not editable".into();
+                } else if cmd == Command::ReplaceCell {
                     self.mode = Mode::Edit { buf: String::new() };
                 } else {
-                    self.status = "this view is not editable".into();
+                    self.start_edit();
                 }
             }
-            KeyCode::Char('i') | KeyCode::Enter if self.view == ViewMode::Table => {
-                // Anything with a table view is editable: CSV cells, JSON
-                // values, XML attributes and element text all go through
-                // the same Sheet::set_cell.
-                if self.doc.sheet().is_some() {
-                    self.start_edit()
-                } else {
-                    self.status = "this view is not editable".into();
-                }
-            }
-            KeyCode::Enter if self.view == ViewMode::Tree => self.tree_drill(),
-            KeyCode::Esc if self.view == ViewMode::Tree => {
-                self.grid.drill_up();
-                self.rebuild_tree();
-            }
-            KeyCode::Char('u') => {
+            Command::Undo => {
                 if self.doc.undo() {
                     self.dirty = true;
-                    self.clamp_cursor();
+                    self.after_edit();
                 }
             }
-            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Command::Redo => {
                 if self.doc.redo() {
                     self.dirty = true;
-                    self.clamp_cursor();
+                    self.after_edit();
                 }
             }
-            KeyCode::Char('g') if was_pending_g => {
-                let (rows, cols) = self.grid_dims();
-                self.grid.move_to(0, self.grid.cursor.1, rows, cols)
+
+            Command::Save => self.save(),
+            Command::Quit => self.try_quit(),
+            Command::ForceQuit => self.quit = true,
+            Command::SaveAndQuit => {
+                self.save();
+                if !self.dirty {
+                    self.quit = true;
+                }
             }
-            KeyCode::Char('g') => self.pending_g = true,
-            KeyCode::Char('G') => {
-                let (rows, cols) = self.grid_dims();
-                self.grid
-                    .move_to(usize::MAX, self.grid.cursor.1, rows, cols)
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                let (rows, cols) = self.grid_dims();
-                self.grid.move_by(0, -1, rows, cols)
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let (rows, cols) = self.grid_dims();
-                self.grid.move_by(1, 0, rows, cols)
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                let (rows, cols) = self.grid_dims();
-                self.grid.move_by(-1, 0, rows, cols)
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                let (rows, cols) = self.grid_dims();
-                self.grid.move_by(0, 1, rows, cols)
-            }
-            KeyCode::PageDown => {
-                let (rows, cols) = self.grid_dims();
-                self.grid
-                    .move_by(self.viewport_rows as isize, 0, rows, cols)
-            }
-            KeyCode::PageUp => {
-                let (rows, cols) = self.grid_dims();
-                self.grid
-                    .move_by(-(self.viewport_rows as isize), 0, rows, cols)
-            }
-            KeyCode::Home => {
-                let (rows, cols) = self.grid_dims();
-                self.grid.move_to(self.grid.cursor.0, 0, rows, cols)
-            }
-            KeyCode::End => {
-                let (rows, cols) = self.grid_dims();
-                self.grid
-                    .move_to(self.grid.cursor.0, usize::MAX, rows, cols)
-            }
-            _ => {}
+
+            Command::OpenPalette => self.mode = Mode::Command { buf: String::new() },
+            Command::Help => self.show_help = !self.show_help,
+        }
+    }
+
+    /// Refresh derived state after the document changed.
+    fn after_edit(&mut self) {
+        self.clamp_cursor();
+        if self.view == ViewMode::Table && !self.doc.is_csv() {
+            self.rebuild_table_widths();
+        } else if self.view == ViewMode::Tree {
+            self.rebuild_tree();
         }
     }
 
     /// (rows, cols) of the current grid, adapting to view mode.
     fn grid_dims(&self) -> (usize, usize) {
         match self.view {
-            ViewMode::Table => {
-                if let Some(csv) = self.doc.as_csv() {
-                    (csv.height(), csv.width())
-                } else {
-                    (0, 0)
-                }
-            }
+            ViewMode::Table => self.doc.sheet().map(|s| s.dims()).unwrap_or((0, 0)),
             ViewMode::Tree => (self.tree_summaries.len(), self.tree_keys.len().max(1)),
+            ViewMode::Text => (self.text_lines.len(), 1),
         }
     }
 
+    /// Cycle to the next view this document supports.
+    ///
+    /// CSV alternates table and text. JSON and XML go tree → table → text,
+    /// skipping table when the document is not row-shaped.
     fn cycle_view(&mut self) {
-        if !self.doc.is_json() && !self.doc.is_xml() {
-            return;
-        }
-        self.view = match self.view {
-            ViewMode::Tree => {
-                let eligible = if self.doc.is_json() {
-                    self.doc.json_table_eligible()
-                } else {
-                    self.doc.xml_table_eligible()
-                };
-                if eligible {
-                    self.rebuild_table_widths();
-                    ViewMode::Table
-                } else {
-                    self.status = "table view not available (repeated structure required)".into();
-                    ViewMode::Tree
-                }
-            }
-            ViewMode::Table => {
-                self.rebuild_tree();
-                ViewMode::Tree
-            }
+        let next = match self.view {
+            ViewMode::Tree if self.table_eligible() => ViewMode::Table,
+            ViewMode::Tree => ViewMode::Text,
+            ViewMode::Table => ViewMode::Text,
+            ViewMode::Text if self.doc.is_csv() => ViewMode::Table,
+            ViewMode::Text => ViewMode::Tree,
         };
+        self.set_view(next);
+    }
+
+    fn table_eligible(&self) -> bool {
+        self.doc.sheet().is_some()
+    }
+
+    fn set_view(&mut self, view: ViewMode) {
+        self.view = view;
+        match view {
+            ViewMode::Table => self.rebuild_table_widths(),
+            ViewMode::Tree => self.rebuild_tree(),
+            ViewMode::Text => self.rebuild_text(),
+        }
         self.grid.cursor = (0, 0);
         self.grid.offset = (0, 0);
+    }
+
+    /// Text view shows the document exactly as it would be written out, so
+    /// what you page through is what `:w` produces.
+    fn rebuild_text(&mut self) {
+        let bytes = self.doc.serialize();
+        self.text_lines = String::from_utf8_lossy(&bytes)
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
     }
 
     /// Size JSON/XML table columns to their contents, the way CSV columns
@@ -385,6 +406,9 @@ impl App {
                 .sheet()
                 .and_then(|s| s.cell(r, c))
                 .unwrap_or_default(),
+            // Text view is a pager: read-only by design, so there is
+            // nothing to seed an edit buffer from.
+            ViewMode::Text => String::new(),
             ViewMode::Tree => {
                 let node = if self.doc.is_json() {
                     self.current_json_node()
@@ -467,17 +491,9 @@ impl App {
     }
 
     fn run_command(&mut self, cmd: &str) {
-        match cmd.trim() {
-            "w" => self.save(),
-            "q" => self.try_quit(),
-            "q!" => self.quit = true,
-            "wq" => {
-                self.save();
-                if !self.dirty {
-                    self.quit = true;
-                }
-            }
-            other => self.status = format!("unknown command :{other}"),
+        match Command::from_name(cmd) {
+            Some(c) => self.execute(c),
+            None => self.status = format!("unknown command :{}", cmd.trim()),
         }
     }
 

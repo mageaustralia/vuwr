@@ -6,6 +6,7 @@
 //! (`rayon`), `std::time::Instant` (use `web-time`), or `memmap2`. CI checks
 //! this crate against the wasm target on every push.
 
+mod command;
 mod csv;
 pub mod json;
 pub mod node;
@@ -14,6 +15,7 @@ mod sheet;
 mod view;
 mod xml;
 
+pub use command::Command;
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
 pub use json::JsonDoc;
 pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};

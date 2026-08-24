@@ -2,6 +2,7 @@
 //! a browser.
 
 mod app;
+pub mod keymap;
 pub mod ui;
 
 pub use app::{App, ViewMode};

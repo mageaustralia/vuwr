@@ -5,17 +5,55 @@
 //! Tree view: two columns (key + summary), cursor row is highlighted.
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Cell as TCell, Paragraph, Row as TRow, Table};
+use ratatui::widgets::{Block, Cell as TCell, Clear, Paragraph, Row as TRow, Table};
 
 use crate::app::{App, Mode, ViewMode, escape};
+use vuwr_core::Command;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(frame.area());
     match app.view_mode() {
         ViewMode::Table => render_table(frame, app, chunks[0]),
         ViewMode::Tree => render_tree(frame, app, chunks[0]),
+        ViewMode::Text => render_text(frame, app, chunks[0]),
     }
     render_status(frame, app, chunks[1]);
+    if app.show_help {
+        render_help(frame, frame.area());
+    }
+}
+
+/// The help overlay, built from `Command::ALL` paired with the keymap —
+/// never hand-written, so a new command cannot be missing from it.
+fn render_help(frame: &mut Frame, area: Rect) {
+    let rows: Vec<TRow> = Command::ALL
+        .iter()
+        .map(|c| {
+            TRow::new(vec![
+                TCell::from(crate::keymap::keys_for(*c)).style(Style::default().bold()),
+                TCell::from(c.description()),
+            ])
+        })
+        .collect();
+
+    let width = 56.min(area.width.saturating_sub(4));
+    let height = (Command::ALL.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let popup = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    frame.render_widget(Clear, popup);
+    let table = Table::new(rows, [Constraint::Length(20), Constraint::Min(10)]).block(
+        Block::bordered()
+            .title(" keys — ? to close ")
+            .border_style(Style::default().dim()),
+    );
+    frame.render_widget(table, popup);
 }
 
 fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -122,6 +160,35 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(table, area);
 }
 
+/// Text view: the raw source, paged like `less`, with a line-number
+/// gutter and the cursor line highlighted.
+fn render_text(frame: &mut Frame, app: &mut App, area: Rect) {
+    app.set_viewport_rows(area.height as usize);
+    app.grid.ensure_visible(area.height as usize);
+
+    let (_, total, _) = app.table_dims();
+    let offset = app.grid.offset.0;
+    let cursor = app.grid.cursor.0;
+    let gutter = total.to_string().len().max(2);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for n in offset..total.min(offset + area.height as usize) {
+        let text = app.table_cell(n, 0).unwrap_or_default();
+        let mut style = Style::default();
+        if n == cursor {
+            style = style.reversed();
+        }
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{:>gutter$} ", n + 1, gutter = gutter),
+                Style::default().dim(),
+            ),
+            Span::styled(text, style),
+        ]));
+    }
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
 fn span_width(widths: &[usize], from: usize, to: usize) -> usize {
     widths[from..=to].iter().sum::<usize>() + (to - from)
 }
@@ -138,6 +205,21 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
             };
             let view_str = format!("{:?}", app.view_mode()).to_lowercase();
             match app.view_mode() {
+                ViewMode::Text => {
+                    let (_, lines, _) = app.table_dims();
+                    let pct = ((app.grid.cursor.0 + 1) * 100)
+                        .checked_div(lines)
+                        .unwrap_or(100);
+                    format!(
+                        " {}{} [text]  line {}/{}  {}%  {}",
+                        app.path().display(),
+                        dirty,
+                        app.grid.cursor.0 + 1,
+                        lines,
+                        pct,
+                        app.status
+                    )
+                }
                 ViewMode::Table => {
                     let (r, c) = app.grid.cursor;
                     let (_, row_count, col_count) = app.table_dims();
