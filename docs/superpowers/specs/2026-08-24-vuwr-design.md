@@ -329,7 +329,7 @@ CI matrix: native build + test, `wasm32-unknown-unknown` check of `vuwr-core`,
 | **2** | **`vuwr-tui` table mode: navigate, edit cell, save — first usable tool** |
 | 3 | JSON: loader, tree view, drill-down, table-when-shape-fits |
 | 4 | XML: loader with comment and attribute-order preservation |
-| 5 | Text mode, live lint, `vuwr --check` |
+| 5 | Text mode, `vuwr --check` | done |
 | 6 | `vuwr-gui`: egui frontend, native |
 | 7 | wasm build |
 
