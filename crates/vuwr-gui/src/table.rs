@@ -11,12 +11,6 @@ use vuwr_core::{PathSeg, RowKind, Session, ValueKind};
 /// what a page-down means.
 const PAGE_ROWS: usize = 25;
 
-/// Longest cell text laid out.
-///
-/// A description can be thousands of characters and the column is forty
-/// wide; shaping the rest costs real time and shows nothing.
-const CELL_LIMIT: usize = 120;
-
 pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     let mut edit = false;
     let (headers, rows, cols) = session.table_dims();
@@ -28,25 +22,44 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     let cursor = session.grid.cursor;
     let separate_header = session.has_separate_header();
     let frozen = session.grid.frozen_cols.min(cols);
+    let font = egui::FontId::monospace(12.0);
+    // Monospace, so one glyph's advance is every glyph's. Measured by
+    // laying out a digit, since the font cache is read-only here.
+    let char_width = ui
+        .painter()
+        .layout_no_wrap("0".to_owned(), font.clone(), Color32::PLACEHOLDER)
+        .size()
+        .x
+        .max(6.0);
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
     let search = session.search.clone();
+    let widths: Vec<usize> = (0..cols).map(|c| column_chars(session, c)).collect();
 
-    // A header outside the scroll area, so it stays put.
+    // A header outside the scroll area, so it stays put while the rows
+    // move under it.
     if separate_header {
         ui.horizontal(|ui| {
-            ui.add_space(14.0);
-            for h in headers.iter().take(cols) {
-                ui.add_sized(
-                    [column_width(session, h.len()), row_height],
-                    egui::Label::new(RichText::new(h).strong().monospace()),
+            ui.add_space(GUTTER);
+            for (c, name) in headers.iter().take(cols).enumerate() {
+                // Indexed by column, not by the header's own length —
+                // which is what the width was being taken from, so no
+                // column lined up with its heading.
+                cell(
+                    ui,
+                    name,
+                    widths[c] as f32 * char_width,
+                    row_height,
+                    &font,
+                    ui.visuals().strong_text_color(),
+                    false,
                 );
             }
         });
         ui.separator();
     }
 
-    // Only the rows on screen are drawn. Building all 2,277 of them every
-    // frame — 52,000 widgets — is what made a feed feel like a hang.
+    // Only the rows on screen are drawn: building all of them every frame
+    // is what made a feed feel like a hang.
     let visible = ((ui.available_height() / row_height) as usize).max(1);
     session.set_viewport_rows(visible);
 
@@ -54,31 +67,44 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         .id_salt("sheet")
         .show_rows(ui, row_height, rows, |ui, range| {
             ui.vertical(|ui| {
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 for r in range {
                     let source = session.grid.source_row(r);
                     let marked = session.grid.marks.contains(&source);
                     ui.horizontal(|ui| {
-                        ui.label(if marked { "*" } else { " " });
-                        for c in 0..cols {
-                            let text =
-                                truncate(&session.table_cell(r, c).unwrap_or_default(), CELL_LIMIT);
-                            let mut rich = RichText::new(&text).monospace();
-                            // Row 0 is the header for CSV, which carries it
-                            // in the data rather than separately.
-                            if r == 0 && !separate_header {
-                                rich = rich.strong();
-                            }
+                        ui.allocate_exact_size(
+                            egui::vec2(GUTTER, row_height),
+                            egui::Sense::hover(),
+                        );
+                        if marked {
+                            let dot = ui.min_rect();
+                            ui.painter().circle_filled(
+                                dot.left_center() + egui::vec2(-GUTTER / 2.0, 0.0),
+                                3.0,
+                                Color32::from_rgb(220, 160, 60),
+                            );
+                        }
+                        for (c, chars) in widths.iter().enumerate() {
+                            let raw = session.table_cell(r, c).unwrap_or_default();
+                            // Cut to what the column can show: a
+                            // description is thousands of characters, and
+                            // laying the rest out costs time to draw
+                            // nothing.
+                            let text = truncate(&raw, chars + 1);
+                            let mut colour = ui.visuals().text_color();
                             if c < frozen {
-                                rich = rich.color(Color32::from_rgb(150, 190, 255));
+                                colour = Color32::from_rgb(90, 140, 220);
                             }
-                            if search.as_ref().is_some_and(|s| s.matches(&text)) {
-                                rich = rich.underline();
+                            if search.as_ref().is_some_and(|s| s.matches(&raw)) {
+                                colour = Color32::from_rgb(200, 120, 40);
                             }
-                            let width = column_width(session, c);
-                            let response = ui.add_sized(
-                                [width, row_height],
-                                egui::Button::selectable((r, c) == cursor, rich),
+                            let response = cell(
+                                ui,
+                                &text,
+                                *chars as f32 * char_width,
+                                row_height,
+                                &font,
+                                colour,
+                                (r, c) == cursor,
                             );
                             if response.clicked() {
                                 session.grid.cursor = (r, c);
@@ -95,15 +121,52 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     edit
 }
 
-/// How wide to draw a column, from the width the session computed.
-fn column_width(session: &Session, col: usize) -> f32 {
-    let chars = session
+/// Width of the mark gutter.
+const GUTTER: f32 = 14.0;
+
+/// How many characters wide a column is, from what the session measured.
+fn column_chars(session: &Session, col: usize) -> usize {
+    session
         .widths()
         .get(col)
         .copied()
         .unwrap_or(12)
-        .clamp(3, 40);
-    chars as f32 * 8.0 + 8.0
+        .clamp(3, 40)
+}
+
+/// One cell: fixed width, text left-aligned and clipped to it.
+///
+/// Drawn rather than built from a label so the text starts at the left
+/// edge and cannot spill into the next column — a centred cell made the
+/// columns look ragged, and an unclipped one ran over its neighbour.
+fn cell(
+    ui: &mut egui::Ui,
+    text: &str,
+    width: f32,
+    height: f32,
+    font: &egui::FontId,
+    colour: Color32,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width + 6.0, height), egui::Sense::click());
+    if selected {
+        ui.painter()
+            .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
+    }
+    let colour = if selected {
+        ui.visuals().strong_text_color()
+    } else {
+        colour
+    };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), colour);
+    let y = rect.center().y - galley.size().y / 2.0;
+    ui.painter()
+        .with_clip_rect(rect.intersect(ui.clip_rect()))
+        .galley(egui::pos2(rect.left() + 3.0, y), galley, colour);
+    response
 }
 
 /// Cut a value down to what a cell can show, marking that there is more.
