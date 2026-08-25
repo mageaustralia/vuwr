@@ -338,7 +338,7 @@ fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) -> 
     ui.painter().rect_stroke(
         rect,
         2.0,
-        egui::Stroke::new(1.5, visuals.selection.stroke.color),
+        egui::Stroke::new(1.5_f32, visuals.selection.stroke.color),
         egui::StrokeKind::Inside,
     );
     let job = caret_text(session);

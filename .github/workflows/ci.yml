@@ -59,7 +59,7 @@ jobs:
   # License allowlist (MIT/Apache-2.0/Unlicense/BSD/…): a copyleft dependency
   # fails here rather than surfacing in a legal review years later.
   deny:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
