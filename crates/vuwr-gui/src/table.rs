@@ -11,8 +11,13 @@ use vuwr_core::{PathSeg, RowKind, Session, ValueKind};
 /// what a page-down means.
 const PAGE_ROWS: usize = 25;
 
+/// Longest cell text laid out.
+///
+/// A description can be thousands of characters and the column is forty
+/// wide; shaping the rest costs real time and shows nothing.
+const CELL_LIMIT: usize = 120;
+
 pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
-    session.set_viewport_rows(PAGE_ROWS);
     let mut edit = false;
     let (headers, rows, cols) = session.table_dims();
     if rows == 0 || cols == 0 {
@@ -23,64 +28,90 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     let cursor = session.grid.cursor;
     let separate_header = session.has_separate_header();
     let frozen = session.grid.frozen_cols.min(cols);
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
+    let search = session.search.clone();
 
-    egui::ScrollArea::both().show(ui, |ui| {
-        egui::Grid::new("sheet")
-            .striped(true)
-            .num_columns(cols + 1)
-            .show(ui, |ui| {
-                if separate_header {
-                    ui.label("");
-                    for h in headers.iter().take(cols) {
-                        ui.label(RichText::new(h).strong());
-                    }
-                    ui.end_row();
-                }
+    // A header outside the scroll area, so it stays put.
+    if separate_header {
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            for h in headers.iter().take(cols) {
+                ui.add_sized(
+                    [column_width(session, h.len()), row_height],
+                    egui::Label::new(RichText::new(h).strong().monospace()),
+                );
+            }
+        });
+        ui.separator();
+    }
 
-                for r in 0..rows {
+    // Only the rows on screen are drawn. Building all 2,277 of them every
+    // frame — 52,000 widgets — is what made a feed feel like a hang.
+    let visible = ((ui.available_height() / row_height) as usize).max(1);
+    session.set_viewport_rows(visible);
+
+    egui::ScrollArea::both()
+        .id_salt("sheet")
+        .show_rows(ui, row_height, rows, |ui, range| {
+            ui.vertical(|ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                for r in range {
                     let source = session.grid.source_row(r);
                     let marked = session.grid.marks.contains(&source);
-                    ui.label(if marked { "*" } else { " " });
-
-                    for c in 0..cols {
-                        let text = session.table_cell(r, c).unwrap_or_default();
-                        let mut rich = RichText::new(&text).monospace();
-                        // Row 0 is the header for CSV, which carries it in
-                        // the data rather than separately.
-                        if r == 0 && !separate_header {
-                            rich = rich.strong();
+                    ui.horizontal(|ui| {
+                        ui.label(if marked { "*" } else { " " });
+                        for c in 0..cols {
+                            let text =
+                                truncate(&session.table_cell(r, c).unwrap_or_default(), CELL_LIMIT);
+                            let mut rich = RichText::new(&text).monospace();
+                            // Row 0 is the header for CSV, which carries it
+                            // in the data rather than separately.
+                            if r == 0 && !separate_header {
+                                rich = rich.strong();
+                            }
+                            if c < frozen {
+                                rich = rich.color(Color32::from_rgb(150, 190, 255));
+                            }
+                            if search.as_ref().is_some_and(|s| s.matches(&text)) {
+                                rich = rich.underline();
+                            }
+                            let width = column_width(session, c);
+                            let response = ui.add_sized(
+                                [width, row_height],
+                                egui::Button::selectable((r, c) == cursor, rich),
+                            );
+                            if response.clicked() {
+                                session.grid.cursor = (r, c);
+                            }
+                            if response.double_clicked() {
+                                session.grid.cursor = (r, c);
+                                edit = true;
+                            }
                         }
-                        if c < frozen {
-                            rich = rich.color(Color32::from_rgb(150, 190, 255));
-                        }
-                        if session.search.as_ref().is_some_and(|s| s.matches(&text)) {
-                            rich = rich.underline();
-                        }
-                        let selected = (r, c) == cursor;
-                        let response = ui.selectable_label(selected, rich);
-                        if response.clicked() {
-                            session.grid.cursor = (r, c);
-                        }
-                        if response.double_clicked() {
-                            session.grid.cursor = (r, c);
-                            edit = true;
-                        }
-                    }
-                    ui.end_row();
+                    });
                 }
             });
-    });
+        });
     edit
 }
 
-/// A small filled circle marking a repeated key. Painted for the same
-/// reason as the triangle: the fonts have no dot glyph.
-fn duplicate_dot(ui: &mut egui::Ui) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(DISCLOSURE, DISCLOSURE), egui::Sense::hover());
-    ui.painter()
-        .circle_filled(rect.center(), 3.5, Color32::from_rgb(220, 80, 80));
-    response
+/// How wide to draw a column, from the width the session computed.
+fn column_width(session: &Session, col: usize) -> f32 {
+    let chars = session
+        .widths()
+        .get(col)
+        .copied()
+        .unwrap_or(12)
+        .clamp(3, 40);
+    chars as f32 * 8.0 + 8.0
+}
+
+/// Cut a value down to what a cell can show, marking that there is more.
+fn truncate(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    text.chars().take(limit).collect::<String>() + "…"
 }
 
 /// The text being typed, with a caret drawn where it actually is.
@@ -114,6 +145,16 @@ pub fn caret_text(session: &Session) -> egui::text::LayoutJob {
     );
     job.append(&rest, 0.0, TextFormat::simple(font, Color32::GRAY));
     job
+}
+
+/// A small filled circle marking a repeated key. Painted for the same
+/// reason as the triangle: the fonts have no dot glyph.
+fn duplicate_dot(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(DISCLOSURE, DISCLOSURE), egui::Sense::hover());
+    ui.painter()
+        .circle_filled(rect.center(), 3.5, Color32::from_rgb(220, 80, 80));
+    response
 }
 
 /// Width of the disclosure control, so leaves line up with containers.

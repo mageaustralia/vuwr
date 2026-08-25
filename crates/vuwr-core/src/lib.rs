@@ -612,7 +612,7 @@ impl Document {
     /// (eligible for table view).
     pub fn json_table_eligible(&self) -> bool {
         match &self.kind {
-            Kind::Json(doc) => is_array_of_objects(doc.root()),
+            Kind::Json(doc) => doc.is_table_shaped(),
             _ => false,
         }
     }
@@ -621,39 +621,11 @@ impl Document {
     /// elements with the same tag name (eligible for table view).
     pub fn xml_table_eligible(&self) -> bool {
         match &self.kind {
-            Kind::Xml(doc) => is_repeated_siblings(doc),
+            // The shape only exists when the rows repeat, and it is
+            // cached — asking it is O(1), where re-deriving it walked
+            // every row on every cell lookup.
+            Kind::Xml(doc) => doc.row_count() > 0,
             _ => false,
         }
     }
-}
-
-/// Check if a node is an array whose every element is an object with
-/// the same keys (table-shaped).
-fn is_array_of_objects(node: &Node) -> bool {
-    match node {
-        Node::Array(arr) if !arr.items.is_empty() => {
-            let keys = match &arr.items[0] {
-                Node::Map(m) => m.entries.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
-                _ => return false,
-            };
-            arr.items.iter().all(|item| match item {
-                Node::Map(m) => {
-                    m.entries.len() == keys.len()
-                        && m.entries.iter().zip(keys.iter()).all(|(a, b)| &a.0 == b)
-                }
-                _ => false,
-            })
-        }
-        _ => false,
-    }
-}
-
-/// True when the document element has two or more element children that
-/// all share a tag — the shape that maps onto rows.
-///
-/// Whitespace `Text` and `Comment` children are ignored: a pretty-printed
-/// file has text between every element, which used to make it ineligible.
-fn is_repeated_siblings(doc: &XmlDoc) -> bool {
-    let rows = doc.row_elements();
-    !rows.is_empty() && rows.iter().all(|e| e.tag == rows[0].tag)
 }

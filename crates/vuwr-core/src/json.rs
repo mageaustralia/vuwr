@@ -71,6 +71,12 @@ fn is_scalar(node: &Node) -> bool {
 pub struct JsonDoc {
     root: Node,
     indent: IndentStyle,
+    /// Whether the root is a table-shaped array, worked out once.
+    ///
+    /// Deciding it means checking every element's keys, and a cell lookup
+    /// asks — so re-deriving it made drawing quadratic in the row count.
+    /// Cleared by [`JsonDoc::root_mut`].
+    table_shaped: std::cell::Cell<Option<bool>>,
 }
 
 impl JsonDoc {
@@ -78,7 +84,11 @@ impl JsonDoc {
         let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let indent = sniff_indent(text);
         let (node, _rest) = parse_value(text, text.trim_start())?;
-        Ok(JsonDoc { root: node, indent })
+        Ok(JsonDoc {
+            root: node,
+            indent,
+            table_shaped: std::cell::Cell::new(None),
+        })
     }
 
     pub fn root(&self) -> &Node {
@@ -86,7 +96,34 @@ impl JsonDoc {
     }
 
     pub fn root_mut(&mut self) -> &mut Node {
+        // An edit can add or remove a key, which changes the shape.
+        self.table_shaped.set(None);
         &mut self.root
+    }
+
+    /// True when the root is an array of objects sharing their keys.
+    pub fn is_table_shaped(&self) -> bool {
+        if let Some(known) = self.table_shaped.get() {
+            return known;
+        }
+        let shaped = match &self.root {
+            Node::Array(a) if !a.items.is_empty() => {
+                let keys: Vec<&String> = match &a.items[0] {
+                    Node::Map(m) => m.entries.iter().map(|(k, _)| k).collect(),
+                    _ => return false,
+                };
+                a.items.iter().all(|item| match item {
+                    Node::Map(m) => {
+                        m.entries.len() == keys.len()
+                            && m.entries.iter().zip(keys.iter()).all(|(a, b)| &a.0 == *b)
+                    }
+                    _ => false,
+                })
+            }
+            _ => false,
+        };
+        self.table_shaped.set(Some(shaped));
+        shaped
     }
 
     pub fn indent(&self) -> IndentStyle {

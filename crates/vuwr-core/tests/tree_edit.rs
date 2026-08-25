@@ -769,3 +769,41 @@ fn the_decoded_toggle_is_refused_for_other_formats() {
     assert!(!s.decoded_text);
     assert!(s.status.contains("only XML"), "{}", s.status);
 }
+
+/// Diagnostics are cached because finding them serialises the document,
+/// and the bar that shows them asks every frame. The cache must not
+/// outlive a change.
+#[test]
+fn diagnostics_refresh_after_an_edit() {
+    let mut s = session("{\n  \"a\": 1,\n  \"b\": 2\n}");
+    assert!(s.diagnostics().is_empty(), "clean to begin with");
+
+    // Rename `b` to `a`, creating a duplicate.
+    s.grid.cursor = (1, 0);
+    s.execute(Command::RenameKey);
+    for _ in 0.."b".len() {
+        s.input_backspace();
+    }
+    s.input_char('a');
+    s.input_submit();
+
+    let found = s.diagnostics();
+    assert_eq!(found.len(), 1, "the new duplicate is reported: {found:?}");
+    assert!(found[0].message.contains("duplicate key 'a'"));
+}
+
+#[test]
+fn diagnostics_clear_again_on_undo() {
+    let mut s = session("{\n  \"a\": 1,\n  \"b\": 2\n}");
+    s.grid.cursor = (1, 0);
+    s.execute(Command::RenameKey);
+    for _ in 0.."b".len() {
+        s.input_backspace();
+    }
+    s.input_char('a');
+    s.input_submit();
+    assert_eq!(s.diagnostics().len(), 1);
+
+    s.execute(Command::Undo);
+    assert!(s.diagnostics().is_empty(), "undo puts the document back");
+}

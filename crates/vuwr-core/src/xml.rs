@@ -136,11 +136,32 @@ impl XmlDoc {
         }
     }
 
-    /// The table's shape, computed once and cached.
-    fn shape(&self) -> Option<TableShape> {
-        if let Some(shape) = self.shape.borrow().as_ref() {
-            return Some(shape.clone());
+    /// Run `f` against the cached shape, without copying it.
+    ///
+    /// Returning a clone copied one `usize` per row — 2,277 of them — on
+    /// every cell lookup, which is most of what made a feed crawl.
+    fn with_shape<R>(&self, f: impl FnOnce(&TableShape) -> R) -> Option<R> {
+        self.ensure_shape();
+        self.shape.borrow().as_ref().map(f)
+    }
+
+    /// How many rows the table has, without building a list of them.
+    pub fn row_count(&self) -> usize {
+        self.with_shape(|s| s.row_positions.len()).unwrap_or(0)
+    }
+
+    /// Work the shape out if it is not already known.
+    fn ensure_shape(&self) {
+        if self.shape.borrow().is_some() {
+            return;
         }
+        if let Some(shape) = self.compute_shape() {
+            self.shape.replace(Some(shape));
+        }
+    }
+
+    /// The table's shape, computed once and cached.
+    fn compute_shape(&self) -> Option<TableShape> {
         let parent_path = self.table_parent_path()?;
         let Some(Node::Element(parent)) = self.root().get_at(&parent_path) else {
             return None;
@@ -176,20 +197,19 @@ impl XmlDoc {
             }
         }
 
-        let shape = TableShape {
+        Some(TableShape {
             parent: parent_path,
             headers,
             row_positions,
-        };
-        self.shape.replace(Some(shape.clone()));
-        Some(shape)
+        })
     }
 
     /// The element for one row, without re-scanning the others.
     fn row_at(&self, row: usize) -> Option<&Element> {
-        let shape = self.shape()?;
-        let position = *shape.row_positions.get(row)?;
-        match self.root().get_at(&shape.parent) {
+        let (parent, position) =
+            self.with_shape(|s| (s.parent.clone(), s.row_positions.get(row).copied()))?;
+        let position = position?;
+        match self.root().get_at(&parent) {
             Some(Node::Element(parent)) => match parent.children.get(position) {
                 Some(Node::Element(e)) => Some(e),
                 _ => None,
@@ -205,17 +225,16 @@ impl XmlDoc {
     /// with no `g:sale_price` would otherwise shift every later value one
     /// column left, silently filing gtins under brands.
     pub fn table_headers(&self) -> Vec<String> {
-        self.shape().map(|s| s.headers).unwrap_or_default()
+        self.with_shape(|s| s.headers.clone()).unwrap_or_default()
     }
 
     /// The value at `(row, col)` under [`XmlDoc::table_headers`], found by
     /// name rather than position, so a missing field leaves a gap instead
     /// of shifting the row.
     pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
-        let shape = self.shape()?;
-        let name = shape.headers.get(col)?;
+        let name = self.with_shape(|s| s.headers.get(col).cloned())??;
         let elem = self.row_at(row)?;
-        Some(field_of(elem, name).unwrap_or_default())
+        Some(field_of(elem, &name).unwrap_or_default())
     }
 
     /// True when the cell's text lives in a CDATA section.
@@ -223,10 +242,7 @@ impl XmlDoc {
     /// Content there is already literal, so encoding it on the way in
     /// would double the escaping.
     pub fn cell_is_cdata(&self, row: usize, col: usize) -> bool {
-        let Some(shape) = self.shape() else {
-            return false;
-        };
-        let Some(name) = shape.headers.get(col) else {
+        let Some(Some(name)) = self.with_shape(|s| s.headers.get(col).cloned()) else {
             return false;
         };
         let Some(elem) = self.row_at(row) else {
@@ -234,16 +250,15 @@ impl XmlDoc {
         };
         element_children(elem)
             .into_iter()
-            .find(|c| c.tag == *name)
+            .find(|c| c.tag == name)
             .is_some_and(|c| c.children.iter().any(|k| matches!(k, Node::CData(_))))
     }
 
     /// The path addressing the cell at `(row, col)`: an attribute of the
     /// row element, or the text of one of its child elements.
     pub fn cell_path(&self, row: usize, col: usize) -> Option<crate::node::NodePath> {
-        let shape = self.shape()?;
-        let name = shape.headers.get(col)?.clone();
-        let mut prefix = shape.parent.clone();
+        let name = self.with_shape(|s| s.headers.get(col).cloned())??;
+        let mut prefix = self.with_shape(|s| s.parent.clone())?;
         let elem = self.row_at(row)?;
 
         if elem.attributes.iter().any(|(n, _, _, _)| *n == name) {

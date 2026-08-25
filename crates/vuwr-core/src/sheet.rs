@@ -116,7 +116,10 @@ impl Sheet for XmlDoc {
     }
 
     fn dims(&self) -> (usize, usize) {
-        (self.row_elements().len(), self.table_headers().len())
+        // Counted from the cached shape: building a list of every row
+        // here cost a walk of the document on every call, and this is
+        // asked several times a frame.
+        (self.row_count(), self.table_headers().len())
     }
 
     fn cell(&self, row: usize, col: usize) -> Option<String> {

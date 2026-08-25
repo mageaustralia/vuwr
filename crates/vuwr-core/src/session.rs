@@ -188,6 +188,13 @@ pub struct Session {
     /// spreadsheet's formula bar does. A table column is far narrower
     /// than a description, and truncation hides most of the file.
     pub show_detail: bool,
+    /// Diagnostics, worked out once per change.
+    ///
+    /// Finding them means serialising the whole document — seven
+    /// megabytes for a feed — and the bar that shows them asks every
+    /// frame, which is not a thing to do sixty times a second.
+    diagnostics: std::cell::RefCell<Option<Vec<crate::Diagnostic>>>,
+
     /// Show text view with entity references decoded.
     ///
     /// Off by default: text view is the source, and the source is what it
@@ -235,6 +242,7 @@ impl Session {
             text_scroll: 0.0,
             show_detail: false,
             decoded_text: false,
+            diagnostics: std::cell::RefCell::new(None),
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -516,13 +524,13 @@ impl Session {
             Command::Paste => return Effect::Paste,
             Command::Undo => {
                 if self.doc.undo() {
-                    self.dirty = true;
+                    self.mark_changed();
                     self.after_edit();
                 }
             }
             Command::Redo => {
                 if self.doc.redo() {
-                    self.dirty = true;
+                    self.mark_changed();
                     self.after_edit();
                 }
             }
@@ -647,7 +655,7 @@ impl Session {
     fn relayout(&mut self, style: crate::Layout) {
         match self.doc.reformat(style) {
             Ok(()) => {
-                self.dirty = true;
+                self.mark_changed();
                 self.after_edit();
                 if self.view == ViewMode::Text {
                     self.rebuild_text();
@@ -697,7 +705,7 @@ impl Session {
                 let row = self.grid.source_row(row);
                 match self.doc.set_cell(row, column, text) {
                     Ok(()) => {
-                        self.dirty = true;
+                        self.mark_changed();
                         self.after_edit();
                         self.status = "pasted".into();
                     }
@@ -852,7 +860,7 @@ impl Session {
                 let written = self.encode_for_cell(text);
                 match self.doc.set_cell(row, column, &written) {
                     Ok(()) => {
-                        self.dirty = true;
+                        self.mark_changed();
                         self.after_edit();
                     }
                     Err(e) => self.status = e.to_string(),
@@ -902,7 +910,22 @@ impl Session {
     /// Cheap enough to call per frame for ordinary files; a frontend that
     /// opens something enormous should cache it.
     pub fn diagnostics(&self) -> Vec<crate::Diagnostic> {
-        self.doc.diagnostics()
+        if let Some(found) = self.diagnostics.borrow().as_ref() {
+            return found.clone();
+        }
+        let found = self.doc.diagnostics();
+        self.diagnostics.replace(Some(found.clone()));
+        found
+    }
+
+    /// Record that the document changed.
+    ///
+    /// Everything derived from it is dropped here rather than at each
+    /// call site: a path that forgot left the diagnostics bar reporting a
+    /// problem that had been fixed.
+    fn mark_changed(&mut self) {
+        self.dirty = true;
+        self.diagnostics.replace(None);
     }
 
     /// Jump to a byte offset in the document's text.
@@ -1113,7 +1136,7 @@ impl Session {
         let value = self.encode_for_cell(&value);
         match self.doc.set_cell(row, column, &value) {
             Ok(()) => {
-                self.dirty = true;
+                self.mark_changed();
                 self.after_edit();
             }
             Err(e) => self.status = e.to_string(),
@@ -1131,7 +1154,7 @@ impl Session {
         };
         match self.doc.rename_node(&parent, index, name) {
             Ok(()) => {
-                self.dirty = true;
+                self.mark_changed();
                 self.rebuild_tree();
             }
             Err(e) => self.status = e.to_string(),
@@ -1171,7 +1194,7 @@ impl Session {
         };
         match self.doc.set_node(&path, replacement) {
             Ok(()) => {
-                self.dirty = true;
+                self.mark_changed();
                 self.rebuild_tree();
             }
             Err(e) => self.status = e.to_string(),
@@ -1277,7 +1300,7 @@ impl Session {
         };
         match self.doc.remove_node(&parent, index) {
             Ok(()) => {
-                self.dirty = true;
+                self.mark_changed();
                 self.rebuild_tree();
                 self.clamp_cursor();
                 self.status = "removed".into();
@@ -1309,7 +1332,7 @@ impl Session {
         };
         match self.doc.insert_node(&parent, index + 1, key, value) {
             Ok(()) => {
-                self.dirty = true;
+                self.mark_changed();
                 self.rebuild_tree();
                 self.status = "duplicated".into();
             }
@@ -1330,7 +1353,7 @@ impl Session {
         };
         match self.doc.insert_node(&parent, index + 1, key, value) {
             Ok(()) => {
-                self.dirty = true;
+                self.mark_changed();
                 self.rebuild_tree();
                 let (rows, cols) = self.grid_dims();
                 self.grid.move_by(1, 0, rows, cols);
@@ -1662,7 +1685,7 @@ impl Session {
 
         match self.doc.replace_source(&bytes) {
             Ok(()) => {
-                self.dirty = true;
+                self.mark_changed();
                 self.rebuild_text();
                 self.clamp_cursor();
             }

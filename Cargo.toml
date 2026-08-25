@@ -16,3 +16,10 @@ license = "MIT OR Apache-2.0"
 [profile.release]
 strip = true
 lto = true
+
+# Release speed with symbols, for `sample` and friends: the release binary
+# is stripped, so a profile of it is all `???`.
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = 1
