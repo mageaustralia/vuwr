@@ -30,7 +30,6 @@ const FACES: [(&str, &[u8]); 5] = [
 
 /// Install them, returning the names adopted — which tests read to check
 /// the bundle actually arrived.
-
 pub fn install(ctx: &egui::Context) -> Vec<String> {
     let mut definitions = egui::FontDefinitions::default();
     let mut adopted = Vec::new();
