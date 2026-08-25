@@ -595,6 +595,24 @@ impl eframe::App for VuwrApp {
                     self.inspector_panel(ui, ctx);
                 });
         }
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.entry().is_some() && !s.is_editing_inline())
+        {
+            egui::TopBottomPanel::top("prompt")
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::surface_sunk())
+                        .inner_margin(egui::Margin::symmetric(14, 8)),
+                )
+                .show_separator_line(false)
+                .show(ctx, |ui| {
+                    self.prompt_bar(ui);
+                    edge_bottom(ui);
+                });
+        }
+
         // Two rows, deliberately: position and document state on one,
         // the keys on another, so the hints read as a legend rather than
         // as more state.
@@ -867,19 +885,15 @@ impl VuwrApp {
             return;
         };
         ui.horizontal(|ui| {
-            // An open prompt takes the line, as in the TUI.
-            if let Some((sigil, buf)) = session.entry() {
-                // An inline edit is drawn where the value is, so repeating
-                // it here is noise — and a paragraph grew the panel until
-                // it swallowed the window. A `:` or `/` prompt has nowhere
-                // else to live, so that one is still shown.
-                if session.is_editing_inline() {
-                    ui.label("editing — Enter to commit, Esc to cancel");
-                } else {
-                    let single: String = buf.chars().take(120).filter(|c| *c != '\n').collect();
-                    let ellipsis = if buf.chars().count() > 120 { "…" } else { "" };
-                    ui.monospace(format!("{sigil}{single}{ellipsis}▏"));
-                }
+            // An inline edit is drawn where the value is; a prompt has
+            // its own bar under the toolbar. Either way the status line
+            // stays what it is — where you are, and what the document is.
+            if session.is_editing_inline() {
+                ui.label(
+                    egui::RichText::new("editing — Enter to commit, Esc to cancel")
+                        .text_style(theme::meta())
+                        .color(theme::edit_ring()),
+                );
                 return;
             }
             ui.spacing_mut().item_spacing.x = 14.0;
@@ -919,6 +933,67 @@ impl VuwrApp {
     /// The selected value in full, wrapped and selectable — a
     /// spreadsheet's formula bar. A table column is far narrower than a
     /// description, so most of the file is otherwise truncated away.
+    /// Find, filter, or a `:` command — in a bar under the toolbar.
+    ///
+    /// The terminal puts this on the bottom line because that is where a
+    /// terminal's prompt lives. A window has somewhere better: next to
+    /// the thing being searched, where a browser's find bar is, and where
+    /// the eye already is after clicking Find.
+    fn prompt_bar(&mut self, ui: &mut egui::Ui) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let Some((sigil, _)) = session.entry() else {
+            return;
+        };
+        let what = match sigil {
+            '/' => "Find",
+            '&' => "Filter rows",
+            _ => "Command",
+        };
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(
+                egui::RichText::new(what)
+                    .text_style(theme::micro())
+                    .color(theme::text_muted()),
+            );
+            egui::Frame::new()
+                .fill(theme::surface())
+                .stroke(egui::Stroke::new(1.0_f32, theme::accent_border()))
+                .corner_radius(egui::CornerRadius::same(7))
+                .inner_margin(egui::Margin::symmetric(10, 4))
+                .show(ui, |ui| {
+                    ui.set_min_width(320.0);
+                    ui.label(
+                        egui::RichText::new(sigil.to_string())
+                            .monospace()
+                            .color(theme::accent_text()),
+                    );
+                    let response = ui.label(table::caret_text(session));
+                    let left = response.rect.left();
+                    table::draw_caret(
+                        ui,
+                        left + table::caret_offset(ui, session),
+                        response.rect.top(),
+                        response.rect.height(),
+                    );
+                });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new("Esc cancels")
+                        .text_style(theme::meta())
+                        .color(theme::text_dim()),
+                );
+                ui.label(
+                    egui::RichText::new("Enter applies")
+                        .text_style(theme::meta())
+                        .color(theme::text_muted()),
+                );
+            });
+        });
+    }
+
     /// The whole record under the cursor, read downwards.
     ///
     /// A feed row is twenty-three columns wide and the window shows five,

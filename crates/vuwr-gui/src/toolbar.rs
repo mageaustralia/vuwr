@@ -59,12 +59,13 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Toolbar {
             theme::divider(ui);
         }
 
-        // Layout. Not CSV, whose shape is its content, and not while a
-        // table is on screen: re-indenting the source changes nothing you
-        // can see from there. A control that does nothing where it is
-        // shown is worse than one that is not shown.
+        // Layout. Not CSV, whose shape is its content, and only in the
+        // text view: re-indenting changes the source, and the source is
+        // what that view shows. Pressing it from the tree or the table
+        // would change the file with nothing on screen to show for it.
+        // The keys and `:format` still work from anywhere.
         let can_format = (session.doc.is_json() || session.doc.is_xml())
-            && session.view_mode() != ViewMode::Table;
+            && session.view_mode() == ViewMode::Text;
         if can_format {
             if button(ui, "Format", "Re-indent: one value per line (Ctrl+I)").clicked() {
                 clicked = Some(Command::FormatPretty);
