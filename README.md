@@ -18,7 +18,11 @@ file meant a text editor plus `jq` or `xmllint`.
 - **Saves without reformatting.** Key order, indentation, quoting style,
   line endings, XML comments and attribute order all survive, so editing
   one cell gives you a one-line `git diff`.
-- Search, filter, marks, frozen columns
+- Search, filter, marks, frozen columns, resizable columns, and a
+  **Columns** list for putting the ones you are not reading away
+- An **inspector** beside the table: the whole record read downwards, for
+  when a row is twenty-three columns wide and the window shows five
+- Light and dark, under View → Appearance
 - Validates: `vuwr --check` replaces `jq empty` and `xmllint --noout`, and
   covers CSV too. It also reports what a parser lets through — a trailing
   comma (which vuwr itself reads, so the file can be opened and fixed),
