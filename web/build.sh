@@ -22,8 +22,26 @@ wasm-bindgen --target web --no-typescript \
   target/wasm32-unknown-unknown/release/vuwr_web.wasm
 
 if command -v wasm-opt >/dev/null; then
-  wasm-opt -Oz web/dist/vuwr_bg.wasm -o web/dist/vuwr_bg.wasm
-  echo "optimised with wasm-opt"
+  # wasm-bindgen emits a module using proposals binaryen will not accept
+  # unless told to — without these it stops at "error validating input".
+  # Written to a temporary file and moved only on success, so a failure
+  # cannot leave a half-written module behind.
+  if wasm-opt -Oz \
+      --enable-bulk-memory \
+      --enable-mutable-globals \
+      --enable-nontrapping-float-to-int \
+      --enable-reference-types \
+      --enable-sign-ext \
+      --enable-simd \
+      --enable-multivalue \
+      web/dist/vuwr_bg.wasm -o web/dist/vuwr_bg.opt.wasm
+  then
+    mv web/dist/vuwr_bg.opt.wasm web/dist/vuwr_bg.wasm
+    echo "optimised with wasm-opt"
+  else
+    rm -f web/dist/vuwr_bg.opt.wasm
+    echo "wasm-opt failed; shipping the unoptimised module" >&2
+  fi
 fi
 
 # The id index.html stamps both files with: the module's own content, so

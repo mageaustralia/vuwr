@@ -485,6 +485,8 @@ pub(crate) const VIEW_ORDER: [ViewMode; 3] = [ViewMode::Table, ViewMode::Tree, V
 /// labels are not pressed against each other: they were, and a shortcut
 /// touching its label reads as one run of characters.
 const MENU_WIDTH: f32 = 230.0;
+/// How far the shortcut column stays clear of the menu's right edge.
+const MENU_INSET: f32 = 12.0;
 
 /// The inspector's width, and the width of its key column.
 const INSPECTOR_WIDTH: f32 = 356.0;
