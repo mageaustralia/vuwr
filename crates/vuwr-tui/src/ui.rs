@@ -458,6 +458,7 @@ fn render_text(frame: &mut Frame, app: &mut App, area: Rect) {
     let gutter = total.to_string().len().max(2);
 
     let editing = app.is_editing_inline();
+    let grammar = app.grammar();
     let mut lines: Vec<Line> = Vec::new();
     for n in offset..total.min(offset + area.height as usize) {
         let gutter_span = Span::styled(
@@ -474,14 +475,68 @@ fn render_text(frame: &mut Frame, app: &mut App, area: Rect) {
             continue;
         }
 
+        // Coloured by grammar, as the window's text view is: the same
+        // `highlight` from core, so tags, strings and comments are the
+        // same things in both. The terminal has fewer colours to spend,
+        // so structure takes the accent and content stays bright.
         let text = app.table_cell(n, 0).unwrap_or_default();
-        let mut style = Style::default();
-        if n == cursor {
-            style = style.reversed();
+        let mut spans = vec![gutter_span];
+        for span in highlighted(&text, grammar) {
+            spans.push(if n == cursor {
+                span.style(Style::default().bg(palette::row_selected()))
+            } else {
+                span
+            });
         }
-        lines.push(Line::from(vec![gutter_span, Span::styled(text, style)]));
+        lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// One line of source, split into coloured spans.
+fn highlighted(line: &str, grammar: vuwr_core::Grammar) -> Vec<Span<'static>> {
+    let spans = vuwr_core::highlight(line, grammar);
+    if spans.is_empty() {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(palette::text()),
+        )];
+    }
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    for span in spans {
+        if span.start > at {
+            out.push(Span::styled(
+                line[at..span.start].to_string(),
+                Style::default().fg(token_color(vuwr_core::Token::Plain)),
+            ));
+        }
+        out.push(Span::styled(
+            line[span.start..span.end].to_string(),
+            Style::default().fg(token_color(span.token)),
+        ));
+        at = span.end;
+    }
+    if at < line.len() {
+        out.push(Span::styled(
+            line[at..].to_string(),
+            Style::default().fg(token_color(vuwr_core::Token::Plain)),
+        ));
+    }
+    out
+}
+
+/// A token's colour, drawn from the same five the rest of the terminal
+/// uses: structure in the accent, content bright, punctuation receding.
+fn token_color(token: vuwr_core::Token) -> Color {
+    use vuwr_core::Token as T;
+    match token {
+        T::Key | T::Tag | T::Keyword => palette::accent(),
+        T::Comment => palette::faint(),
+        T::Escape => palette::warn(),
+        T::Punctuation => palette::dim(),
+        T::Str | T::Number | T::Plain => palette::text(),
+    }
 }
 
 /// The text being typed, split around the caret so the caret sits where

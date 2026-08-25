@@ -464,6 +464,11 @@ impl Session {
                     }
                     ViewMode::Text => {
                         v.push(Command::EditCell);
+                        // Only where there is a layout to change: CSV's
+                        // shape is its content.
+                        if self.doc.is_json() || self.doc.is_xml() {
+                            v.push(Command::FormatPretty);
+                        }
                         v.push(Command::PageDown);
                         v.push(Command::PageUp);
                     }

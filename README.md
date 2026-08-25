@@ -48,6 +48,10 @@ text view with the value under the cursor marked out:
 
 ![vuwr in the terminal, on an XML feed](docs/media/tui-tree.gif)
 
+The same file as source, coloured by grammar and re-indented in place:
+
+![vuwr's text view in the terminal](docs/media/tui-text.gif)
+
 The window build — the identical core and views, compiled to WebAssembly
 and running in a browser tab:
 
