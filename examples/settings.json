@@ -1,0 +1,11 @@
+{
+  "service": "feed-builder",
+  "version": 3,
+  "schedule": { "cron": "0 */4 * * *", "timezone": "Australia/Melbourne" },
+  "outputs": [
+    { "name": "google", "format": "xml", "compress": true, "fields": ["id", "title", "price"] },
+    { "name": "internal", "format": "csv", "compress": false, "fields": ["sku", "on_hand"] }
+  ],
+  "retries": { "attempts": 3, "backoff_seconds": 30 },
+  "notify": null
+}

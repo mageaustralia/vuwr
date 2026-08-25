@@ -22,6 +22,28 @@ file meant a text editor plus `jq` or `xmllint`.
 - Validates: `vuwr --check` replaces `jq empty` and `xmllint --noout`, and
   covers CSV too
 
+
+## See it
+
+The terminal UI on a sheet — moving, resizing a column, sorting,
+filtering, editing a cell in place:
+
+![vuwr in the terminal, on a CSV](docs/media/tui-table.gif)
+
+The same binary on XML: the tree, the table it makes of a feed, and the
+text view with the value under the cursor marked out:
+
+![vuwr in the terminal, on an XML feed](docs/media/tui-tree.gif)
+
+The window build — the identical core and views, compiled to WebAssembly
+and running in a browser tab:
+
+![vuwr in a browser tab](docs/media/web.gif)
+
+Try it without installing anything: **[the hosted build](https://REPLACE_PAGES_URL/?sample)**
+(`?sample=csv` and `?sample=json` open the other two). Files are read in
+the tab; nothing is uploaded.
+
 ## Install
 
 ```sh
@@ -54,12 +76,45 @@ matter in the current view.
 | `&` / `r` | filter rows / clear the filter |
 | `m` `M` `Ctrl-E` | mark, clear marks, print marked rows and exit |
 | `f` | freeze columns left of the cursor |
+| `<` `>` `=` | narrow, widen, re-fit the column (or drag its edge) |
 | `:w` `:q` `:wq` | write, quit, write and quit |
+
+## Sample files
+
+`examples/` holds one of each format — a product feed, a stock sheet and a
+config file — so there is something to open on a fresh clone:
+
+```sh
+vuwr examples/products.xml
+vuwr --gui examples/stock.csv
+```
 
 ## In the browser
 
 See [`web/README.md`](web/README.md). The same core and GUI compiled to
-WebAssembly; files are read in the tab and nothing is uploaded.
+WebAssembly; files are read in the tab and nothing is uploaded. Every push
+to `main` deploys it to GitHub Pages.
+
+## Using the core as a library
+
+`vuwr-core` is the whole application minus the drawing, and it is usable
+on its own. It performs no I/O — bytes in, bytes out — has one dependency
+(`regex`), forbids `unsafe`, and is checked against
+`wasm32-unknown-unknown` on every push, so it runs anywhere Rust does.
+
+```rust
+use vuwr_core::{Document, FormatHint};
+
+let mut doc = Document::parse(bytes, FormatHint::Auto)?;
+doc.set_cell(0, 2, "42")?;          // undoable
+let out = doc.serialize();           // untouched bytes stay byte-identical
+```
+
+Also worth taking on their own: `highlight()` for syntax spans,
+`scan_json()` for lint diagnostics, `natural_cmp`/`sort_rows`, and
+`decode`/`encode` for XML entities. `Session` + `Command` + `Effect` is
+the frontend-agnostic application itself — the TUI is a 132-line wrapper
+around it.
 
 ## Layout
 

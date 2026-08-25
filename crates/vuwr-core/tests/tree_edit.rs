@@ -930,3 +930,33 @@ fn the_caret_can_be_put_where_it_was_clicked() {
     s.set_entry_caret(usize::MAX);
     assert_eq!(s.entry_caret(), s.entry().unwrap().1.len(), "clamped");
 }
+
+/// A channel holds its own `<title>` beside the items. Taking every
+/// element at that level as a row made the feed one row of two columns,
+/// `title` and `item`; the rows are the tag that repeats.
+#[test]
+fn metadata_beside_the_records_is_not_a_row() {
+    let src = "<rss><channel><title>Feed</title>\
+               <item><id>1</id><name>One</name></item>\
+               <item><id>2</id><name>Two</name></item>\
+               <item><id>3</id><name>Three</name></item></channel></rss>";
+    let mut s = xml_session(src);
+    s.execute(Command::ViewTable);
+    let (headers, rows, cols) = s.table_dims();
+    assert_eq!(rows, 3, "one row per item");
+    assert_eq!(headers, vec!["id", "name"], "and no `title` column");
+    assert_eq!(cols, 2);
+    assert_eq!(s.table_cell(2, 1).as_deref(), Some("Three"));
+}
+
+/// Widening works on an XML sheet, not only on CSV.
+#[test]
+fn an_xml_column_can_be_widened() {
+    let src = "<rss><channel><item><a>1</a></item><item><a>2</a></item></channel></rss>";
+    let mut s = xml_session(src);
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    let before = s.widths()[0];
+    s.execute(Command::WidenColumn);
+    assert!(s.widths()[0] > before, "{:?} -> {:?}", before, s.widths());
+}

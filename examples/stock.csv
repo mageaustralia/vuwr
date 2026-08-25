@@ -1,0 +1,9 @@
+sku,name,warehouse,on_hand,reserved,unit_cost,updated
+SKU-1001,Trailhead 20L Daypack,Melbourne,142,18,64.20,2026-08-19
+SKU-1002,Kettle & Cup Set,Melbourne,61,4,22.10,2026-08-19
+SKU-1003,Riverbend Sleeping Mat,Sydney,0,0,96.40,2026-08-18
+SKU-1004,Ridgeline Trekking Poles,Sydney,88,12,31.75,2026-08-20
+SKU-1005,Summit 45L Pack,Brisbane,23,6,118.00,2026-08-20
+SKU-1006,Dry Bag 10L,Melbourne,410,55,6.90,2026-08-21
+SKU-1007,Headlamp 350lm,Perth,97,9,27.35,2026-08-21
+SKU-1008,Trail Gaiters,Perth,14,0,19.80,2026-08-17

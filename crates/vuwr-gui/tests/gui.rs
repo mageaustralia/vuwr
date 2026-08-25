@@ -564,3 +564,83 @@ fn tree_select_and_toggle_actions() {
     app.apply_tree_action(TreeAction::Toggle(path), &ctx);
     assert_eq!(app.session().tree_rows.len(), 3, "the object opened");
 }
+
+/// Dragging a column boundary resizes that column.
+///
+/// The handles were once drawn under an allocation made to reserve the
+/// header's space, which is hit-tested after them and swallowed every
+/// hover and drag they existed for. Nothing about the drawing looked
+/// wrong, so only driving the pointer catches it.
+#[test]
+fn dragging_a_column_boundary_resizes_it() {
+    let mut session = Session::new(doc(r#"[{"aaa":1,"bbb":2},{"aaa":3,"bbb":4}]"#));
+    session.execute(Command::ViewTable);
+    let ctx = ctx();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+
+    // One frame to lay the header out, so the boundary can be found.
+    fn frame(
+        ctx: &egui::Context,
+        session: &mut Session,
+        screen: egui::Rect,
+        events: Vec<egui::Event>,
+        pointer: Option<egui::Pos2>,
+    ) {
+        let mut input = egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        if let Some(p) = pointer {
+            input.events.insert(0, egui::Event::PointerMoved(p));
+        }
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| vuwr_gui::render_view(session, ui));
+        });
+    }
+    frame(&ctx, &mut session, screen, vec![], None);
+
+    let before = session.widths()[0];
+    let handle = ctx
+        .read_response(vuwr_gui::grip_id(0))
+        .expect("the first column has a resize handle")
+        .rect;
+    let (x, y) = (handle.center().x, handle.center().y);
+    let at = egui::pos2(x, y);
+    let down = egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    };
+    frame(&ctx, &mut session, screen, vec![down], Some(at));
+    for step in 1..=6 {
+        frame(
+            &ctx,
+            &mut session,
+            screen,
+            vec![],
+            Some(egui::pos2(x + step as f32 * 10.0, y)),
+        );
+    }
+    let end = egui::pos2(x + 60.0, y);
+    frame(
+        &ctx,
+        &mut session,
+        screen,
+        vec![egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        }],
+        Some(end),
+    );
+
+    assert!(
+        session.widths()[0] > before,
+        "the drag did not widen the column: {before} -> {:?}",
+        session.widths()
+    );
+    assert!(session.column_is_manual(0));
+}

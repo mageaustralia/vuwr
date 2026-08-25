@@ -83,6 +83,17 @@ impl XmlDoc {
     /// called `item`. So descend through single-child wrappers and take
     /// the level that actually repeats.
     pub fn table_parent_path(&self) -> Option<Vec<PathSeg>> {
+        self.table_parent().map(|(path, _)| path)
+    }
+
+    /// The rows' parent, and the tag the rows themselves carry.
+    ///
+    /// The tag matters because a level need not be uniform: a channel
+    /// holds its own `<title>` beside the items. Taking every element at
+    /// that level as a row made the feed one row wide of two columns,
+    /// `title` and `item`. The tag that repeats is the record; anything
+    /// else at that level is metadata about the collection.
+    pub fn table_parent(&self) -> Option<(Vec<PathSeg>, String)> {
         let Node::Element(root) = self.root() else {
             return None;
         };
@@ -90,26 +101,37 @@ impl XmlDoc {
         let mut current = root;
         // The deepest level seen that could be a table, in case nothing
         // below it repeats: a one-record feed is still a table.
-        let mut fallback = None;
+        let mut fallback: Option<(Vec<PathSeg>, String)> = None;
 
         loop {
             let kids = element_children(current);
-            let uniform = !kids.is_empty() && kids.iter().all(|k| k.tag == kids[0].tag);
+            let Some(first) = kids.first() else {
+                return fallback;
+            };
+            let mut counts: std::collections::BTreeMap<&str, usize> =
+                std::collections::BTreeMap::new();
+            for k in &kids {
+                *counts.entry(k.tag.as_str()).or_default() += 1;
+            }
+            let (tag, count) = counts
+                .iter()
+                .max_by_key(|(_, n)| **n)
+                .map(|(t, n)| ((*t).to_string(), *n))
+                .unwrap_or_default();
             // Something that repeats is the table, and the shallowest such
             // level wins.
-            if uniform && kids.len() > 1 {
-                return Some(path);
+            if count > 1 {
+                return Some((path, tag));
             }
-            // One uniform child that carries fields of its own is a table
-            // of one row — but keep looking deeper first, in case the real
+            // A lone child that carries fields of its own is a table of
+            // one row — but keep looking deeper first, in case the real
             // repetition is further down. The shallowest candidate is
             // kept, so `<rows><row><name>…` gives rows of `row`, not of
             // `name`.
-            if uniform
-                && fallback.is_none()
-                && (!element_children(kids[0]).is_empty() || !kids[0].attributes.is_empty())
+            if fallback.is_none()
+                && (!element_children(first).is_empty() || !first.attributes.is_empty())
             {
-                fallback = Some(path.clone());
+                fallback = Some((path.clone(), first.tag.clone()));
             }
             // Only a lone child is a wrapper; several different tags are
             // the record itself, and there is nowhere further to go.
@@ -117,7 +139,7 @@ impl XmlDoc {
                 return fallback;
             }
             path.push(PathSeg::Index(0));
-            current = kids[0];
+            current = first;
         }
     }
 
@@ -162,15 +184,17 @@ impl XmlDoc {
 
     /// The table's shape, computed once and cached.
     fn compute_shape(&self) -> Option<TableShape> {
-        let parent_path = self.table_parent_path()?;
+        let (parent_path, row_tag) = self.table_parent()?;
         let Some(Node::Element(parent)) = self.root().get_at(&parent_path) else {
             return None;
         };
+        // Only the elements that are records: a `<title>` sitting beside
+        // the items describes the collection, not one row of it.
         let row_positions: Vec<usize> = parent
             .children
             .iter()
             .enumerate()
-            .filter(|(_, c)| matches!(c, Node::Element(_)))
+            .filter(|(_, c)| matches!(c, Node::Element(e) if e.tag == row_tag))
             .map(|(i, _)| i)
             .collect();
 

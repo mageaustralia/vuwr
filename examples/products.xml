@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
+  <channel>
+    <title>Sample product feed</title>
+    <item>
+      <g:id>SKU-1001</g:id>
+      <title><![CDATA[Trailhead 20L Daypack]]></title>
+      <description><![CDATA[<p>A 20 litre pack for day walks.</p>
+<ul>
+<li>Ripstop nylon, 420 denier</li>
+<li>Padded laptop sleeve fits 14&quot;</li>
+<li>Weighs 640&#160;g empty</li>
+</ul>
+<p><strong>Colours:</strong> slate, moss, clay</p>]]></description>
+      <link>https://example.com/products/trailhead-20l</link>
+      <g:price>129.00 AUD</g:price>
+      <g:availability>in stock</g:availability>
+      <g:brand>Trailhead</g:brand>
+    </item>
+    <item>
+      <g:id>SKU-1002</g:id>
+      <title><![CDATA[Kettle &amp; Cup Set]]></title>
+      <description><![CDATA[<p>Anodised aluminium kettle with two nesting cups.</p>
+<ul>
+<li>800&#160;ml capacity</li>
+<li>Folding handle</li>
+</ul>]]></description>
+      <link>https://example.com/products/kettle-cup-set</link>
+      <g:price>54.50 AUD</g:price>
+      <g:availability>in stock</g:availability>
+      <g:brand>Fieldware</g:brand>
+    </item>
+    <item>
+      <g:id>SKU-1003</g:id>
+      <title><![CDATA[Riverbend Sleeping Mat]]></title>
+      <description><![CDATA[<p>Self-inflating mat, 5&#160;cm thick.</p>
+<p>Packs to 25 &#215; 12&#160;cm.</p>]]></description>
+      <link>https://example.com/products/riverbend-mat</link>
+      <g:price>189.95 AUD</g:price>
+      <g:availability>out of stock</g:availability>
+      <g:brand>Riverbend</g:brand>
+    </item>
+  </channel>
+</rss>

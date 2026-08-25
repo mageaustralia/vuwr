@@ -98,7 +98,10 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 other => grip = other,
             }
         }
-        ui.allocate_rect(header_rect, egui::Sense::hover());
+        // Reserve the space without putting a widget over it: an
+        // allocation here is hit-tested after the handles and swallows
+        // every hover and drag they were drawn for.
+        ui.advance_cursor_after_rect(header_rect);
         ui.separator();
     }
 
@@ -207,6 +210,11 @@ fn column_chars(session: &Session, col: usize) -> usize {
         .clamp(3, Session::MAX_COLUMN)
 }
 
+/// The id of a column's resize handle.
+pub fn grip_id(col: usize) -> egui::Id {
+    egui::Id::new(("vuwr-column-grip", col))
+}
+
 /// Width of the strip you grab to resize a column.
 const GRIP: f32 = 5.0;
 
@@ -221,8 +229,10 @@ const RULER: f32 = 9.0;
 /// `set_column_width`, which the `<`/`>` keys and the palette also reach —
 /// so a resize means the same thing however it was asked for.
 fn resize_grip(ui: &mut egui::Ui, col: usize, chars: usize, char_width: f32, height: f32) -> Grip {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(GRIP, height), egui::Sense::click_and_drag());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(GRIP, height), egui::Sense::hover());
+    // A stable id, so the handle keeps its drag across frames and a test
+    // can find where it ended up.
+    let response = ui.interact(rect, grip_id(col), egui::Sense::click_and_drag());
     // Always drawn, so you can see there is something to grab — an
     // invisible handle is one nobody finds.
     let live = response.hovered() || response.dragged();
