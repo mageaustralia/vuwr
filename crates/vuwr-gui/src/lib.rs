@@ -9,6 +9,7 @@ mod files;
 mod fonts;
 mod input;
 mod table;
+mod theme;
 mod toolbar;
 
 use std::path::PathBuf;
@@ -85,6 +86,7 @@ impl VuwrApp {
         doc: Option<Document>,
     ) -> VuwrApp {
         fonts::install(ctx);
+        theme::install(ctx);
         match doc {
             Some(doc) => VuwrApp::new(path, doc),
             None => VuwrApp::empty(),
@@ -387,24 +389,6 @@ impl VuwrApp {
 
     /// The file's name, not its path: a long temp path crowded the menu
     /// bar out. The full path is still available as a tooltip.
-    fn title(&self) -> String {
-        let name = match (&self.path, self.session.is_some()) {
-            (Some(p), _) => p
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| p.display().to_string()),
-            // Loaded but nameless: piped in, or dropped without a path.
-            (None, true) => "(piped)".to_string(),
-            // Nothing loaded at all, which is where the browser starts.
-            (None, false) => String::new(),
-        };
-        if self.session.as_ref().is_some_and(|s| s.dirty) {
-            format!("{name} *")
-        } else {
-            name
-        }
-    }
-
     fn full_path(&self) -> String {
         match (&self.path, self.session.is_some()) {
             (Some(p), _) => p.display().to_string(),
@@ -414,28 +398,113 @@ impl VuwrApp {
     }
 }
 
+/// The title row's height. Six pixels shorter where there is no window
+/// to decorate, which is the web.
+#[cfg(target_arch = "wasm32")]
+const TITLE_HEIGHT: f32 = 34.0;
+#[cfg(not(target_arch = "wasm32"))]
+const TITLE_HEIGHT: f32 = 40.0;
+
+/// A 1px rule along the bottom of the panel being drawn.
+///
+/// Panels draw their own separators as a shadow-ish line in the wrong
+/// colour; these are the design's own dividers.
+fn edge_bottom(ui: &egui::Ui) {
+    let rect = ui.max_rect();
+    ui.painter().hline(
+        ui.clip_rect().x_range(),
+        rect.bottom().round() + 0.5,
+        egui::Stroke::new(1.0_f32, theme::BORDER),
+    );
+}
+
+/// What the document is, for the right-hand end of the status line.
+fn format_label(session: &Session) -> String {
+    if session.doc.is_json() {
+        "JSON".into()
+    } else if session.doc.is_xml() {
+        "XML".into()
+    } else {
+        "CSV".into()
+    }
+}
+
+/// A borderless action for the title row, where an outline would compete
+/// with Save.
+fn quiet_action(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
+    let colour = if enabled {
+        theme::TEXT_CONTROL
+    } else {
+        theme::TEXT_DISABLED
+    };
+    let button = egui::Button::new(egui::RichText::new(label).color(colour))
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::NONE);
+    ui.add_enabled(enabled, button)
+}
+
 impl eframe::App for VuwrApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_file_dialogs(ctx);
         input::handle(self, ctx);
 
-        egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu_bar(ui, ctx));
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            if let Some(cmd) = toolbar::toolbar(self, ui) {
-                self.run(cmd, ctx);
-            }
-        });
+        // The title row. On a decorated window it sits under the OS bar
+        // rather than replacing it, which is the design's own web variant:
+        // filename, unsaved dot, menus and Save, no traffic lights.
+        egui::TopBottomPanel::top("menu")
+            .exact_height(TITLE_HEIGHT)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::SURFACE_CHROME)
+                    .inner_margin(egui::Margin::symmetric(14, 0)),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                self.menu_bar(ui, ctx);
+                edge_bottom(ui);
+            });
+        egui::TopBottomPanel::top("toolbar")
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::SURFACE_SUNK)
+                    .inner_margin(egui::Margin::symmetric(14, 9)),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                let cmd = toolbar::toolbar(self, ui);
+                edge_bottom(ui);
+                if let Some(cmd) = cmd {
+                    self.run(cmd, ctx);
+                }
+            });
         if self.session.as_ref().is_some_and(|s| s.show_detail) {
             egui::TopBottomPanel::bottom("detail")
                 .resizable(true)
                 .default_height(140.0)
                 .show(ctx, |ui| self.detail_pane(ui));
         }
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            self.diagnostics_bar(ui, ctx);
-            self.status_bar(ui);
-            self.hint_bar(ui);
-        });
+        // Two rows, deliberately: position and document state on one,
+        // the keys on another, so the hints read as a legend rather than
+        // as more state.
+        egui::TopBottomPanel::bottom("status")
+            .frame(egui::Frame::new().fill(theme::SURFACE_HEADER))
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                self.diagnostics_bar(ui, ctx);
+                egui::Frame::new()
+                    .fill(theme::SURFACE_HEADER)
+                    .inner_margin(egui::Margin::symmetric(14, 7))
+                    .show(ui, |ui| {
+                        self.status_bar(ui);
+                    });
+                egui::Frame::new()
+                    .fill(theme::SURFACE_HINT)
+                    .inner_margin(egui::Margin::symmetric(14, 7))
+                    .show(ui, |ui| {
+                        self.hint_bar(ui);
+                    });
+            });
         let tree_action = egui::CentralPanel::default()
             .show(ctx, |ui| match self.session.as_mut() {
                 Some(session) => render_view(session, ui),
@@ -539,9 +608,90 @@ impl VuwrApp {
                 }
             });
 
-            ui.separator();
-            ui.label(self.title()).on_hover_text(self.full_path());
+            // Centre: what is open, whether it is saved, and where it
+            // came from. The dot only appears when there are changes, so
+            // amber always means something.
+            let dirty = self.session.as_ref().is_some_and(|s| s.dirty);
+            let name = self.file_name();
+            let path = self.parent_path();
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if theme::primary(ui, "Save", "⌘S").clicked() {
+                    self.run(Command::Save, ctx);
+                }
+                theme::divider(ui);
+                let can_redo = self.session.as_ref().is_some_and(|s| s.doc.can_redo());
+                let can_undo = self.session.as_ref().is_some_and(|s| s.doc.can_undo());
+                if quiet_action(ui, "Redo", can_redo).clicked() {
+                    self.run(Command::Redo, ctx);
+                }
+                if quiet_action(ui, "Undo", can_undo).clicked() {
+                    self.run(Command::Undo, ctx);
+                }
+
+                // Centred by taking the middle of what is left.
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let width = ui.available_width();
+                    ui.add_space((width / 2.0 - 90.0).max(0.0));
+                    ui.label(
+                        egui::RichText::new(name)
+                            .monospace()
+                            .color(theme::TEXT_BODY),
+                    )
+                    .on_hover_text(self.full_path());
+                    if dirty {
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
+                        ui.painter().circle_filled(dot.center(), 2.5, theme::WARN);
+                        ui.label(
+                            egui::RichText::new("unsaved")
+                                .text_style(theme::meta())
+                                .color(theme::WARN),
+                        );
+                    }
+                    if !path.is_empty() {
+                        ui.label(
+                            egui::RichText::new(path)
+                                .text_style(theme::meta())
+                                .color(theme::TEXT_DIM),
+                        );
+                    }
+                });
+            });
         });
+    }
+
+    /// The file's own name, without the unsaved marker: the dot says that.
+    fn file_name(&self) -> String {
+        match (&self.path, self.session.is_some()) {
+            (Some(p), _) => p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.display().to_string()),
+            (None, true) => "(piped)".to_string(),
+            (None, false) => String::new(),
+        }
+    }
+
+    /// The directory the file came from, shown beside the name. Empty on
+    /// the web, where there is no path.
+    fn parent_path(&self) -> String {
+        let Some(path) = self.path.as_ref() else {
+            return String::new();
+        };
+        let Some(parent) = path.parent() else {
+            return String::new();
+        };
+        let shown = parent.display().to_string();
+        if shown.is_empty() {
+            return String::new();
+        }
+        match std::env::var("HOME") {
+            Ok(home) if !home.is_empty() && shown.starts_with(&home) => {
+                shown.replacen(&home, "~", 1)
+            }
+            _ => shown,
+        }
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -565,11 +715,37 @@ impl VuwrApp {
                 }
                 return;
             }
-            ui.monospace(session.position_label());
-            if !session.status.is_empty() {
-                ui.separator();
-                ui.label(&session.status);
+            ui.spacing_mut().item_spacing.x = 14.0;
+            ui.label(
+                egui::RichText::new(session.position_label())
+                    .text_style(theme::meta())
+                    .color(theme::TEXT_BODY),
+            );
+            if let Some(n) = session.visible_count() {
+                ui.label(
+                    egui::RichText::new(format!("filtered {n}"))
+                        .text_style(theme::meta())
+                        .color(theme::ACCENT_TEXT),
+                );
             }
+            // The right-hand end is what the document is, not where you
+            // are in it: encoding, format, and whatever just happened.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                for label in [format_label(session), "UTF-8".to_string()] {
+                    ui.label(
+                        egui::RichText::new(label)
+                            .text_style(theme::meta())
+                            .color(theme::TEXT_MUTED),
+                    );
+                }
+                if !session.status.is_empty() {
+                    ui.label(
+                        egui::RichText::new(&session.status)
+                            .text_style(theme::meta())
+                            .color(theme::TEXT_MUTED),
+                    );
+                }
+            });
         });
     }
 
@@ -583,7 +759,11 @@ impl VuwrApp {
         let label = session.detail_label();
         let text = session.detail_text();
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(&label).strong().monospace());
+            ui.label(
+                egui::RichText::new(&label)
+                    .text_style(theme::heading())
+                    .color(theme::TEXT),
+            );
             ui.label(
                 egui::RichText::new(format!(
                     "{} characters",
@@ -627,17 +807,29 @@ impl VuwrApp {
 
         let shown = self.diagnostic_index.min(diagnostics.len() - 1);
         let d = &diagnostics[shown];
-        let (bg, fg) = (egui::Color32::from_rgb(200, 60, 55), egui::Color32::WHITE);
+        let fg = theme::WARN_TEXT;
 
         egui::Frame::new()
-            .fill(bg)
-            .inner_margin(6.0)
+            .fill(theme::WARN_TINT)
+            .stroke(egui::Stroke::new(1.0_f32, theme::WARN_BORDER))
+            .inner_margin(egui::Margin::symmetric(14, 8))
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new("!").color(fg).strong().monospace());
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let count = diagnostics.len();
+                    ui.label(
+                        egui::RichText::new(if count == 1 {
+                            "1 ISSUE".to_string()
+                        } else {
+                            format!("{count} ISSUES")
+                        })
+                        .text_style(theme::micro())
+                        .strong()
+                        .color(fg),
+                    );
                     ui.label(
                         egui::RichText::new(format!(
-                            "line {}, column {}: {}",
+                            "line {} · col {} — {}",
                             d.line, d.column, d.message
                         ))
                         .color(fg),
@@ -687,15 +879,23 @@ impl VuwrApp {
             return;
         }
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
             for cmd in hints {
+                theme::keycap(ui, input::keys_for(cmd));
                 ui.label(
-                    egui::RichText::new(input::keys_for(cmd))
-                        .monospace()
-                        .strong(),
+                    egui::RichText::new(cmd.short_label())
+                        .text_style(theme::meta())
+                        .color(theme::TEXT_MUTED),
                 );
-                ui.label(egui::RichText::new(cmd.short_label()).weak());
-                ui.add_space(10.0);
+                ui.add_space(12.0);
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new("? all shortcuts")
+                        .text_style(theme::meta())
+                        .color(theme::TEXT_DIM),
+                );
+            });
         });
     }
 

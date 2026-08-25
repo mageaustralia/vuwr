@@ -294,6 +294,17 @@ impl Document {
     }
 
     /// Returns `false` when there is nothing to undo.
+    /// Whether there is anything to undo, so a frontend can grey the
+    /// control rather than offering an action that does nothing.
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// Whether there is anything to redo.
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
     pub fn undo(&mut self) -> bool {
         let Some(op) = self.undo.pop() else {
             return false;

@@ -7,6 +7,8 @@
 use eframe::egui::{self, Color32, RichText};
 use vuwr_core::{PathSeg, RowKind, Session, ValueKind};
 
+use crate::theme;
+
 /// Rows drawn per screen. egui scrolls the whole grid, so this only sets
 /// what a page-down means.
 const PAGE_ROWS: usize = 25;
@@ -31,10 +33,16 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         .size()
         .x
         .max(6.0);
-    let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
+    // Fixed, and not derived from the font: virtualisation has to know a
+    // row's height without laying it out.
+    let row_height = theme::ROW_HEIGHT;
     let search = session.search.clone();
     let editing = session.is_editing_inline();
     let widths: Vec<usize> = (0..cols).map(|c| column_chars(session, c)).collect();
+    // Numbers read down the column, not across the row, so they are set
+    // against the right edge. Nothing is coerced — this is only where the
+    // glyphs sit.
+    let numeric: Vec<bool> = (0..cols).map(|c| session.column_is_numeric(c)).collect();
 
     // The header sits outside the scroll area so it stays put while the
     // rows move under it — but it has to follow the *horizontal* scroll,
@@ -52,7 +60,11 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         // but the keyboard. The strip is drawn either way: with the names
         // in it when they are separate, and as a bare ruler of handles
         // when they are not.
-        let head_height = if separate_header { row_height } else { RULER };
+        let head_height = if separate_header {
+            theme::HEADER_HEIGHT
+        } else {
+            RULER
+        };
         let outer = ui.available_rect_before_wrap();
         let header_rect =
             egui::Rect::from_min_size(outer.min, egui::vec2(outer.width(), head_height));
@@ -64,16 +76,23 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 ))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        if !separate_header {
-            // Faintly filled, so a bare strip of handles reads as
-            // something to grab rather than as a gap.
-            ui.painter()
-                .rect_filled(header_rect, 0.0, ui.visuals().faint_bg_color);
-        }
+        ui.painter()
+            .rect_filled(header_rect, 0.0, theme::SURFACE_HEADER);
+        ui.painter().hline(
+            header_rect.x_range(),
+            header_rect.bottom() - 0.5,
+            egui::Stroke::new(1.0_f32, theme::BORDER),
+        );
         header.set_clip_rect(header_rect.intersect(ui.clip_rect()));
         header.spacing_mut().item_spacing.x = 0.0;
         header.add_space(GUTTER);
-        let head_colour = header.visuals().strong_text_color();
+        let head_colour = theme::TEXT_MUTED;
+        let head_font = header
+            .style()
+            .text_styles
+            .get(&theme::micro())
+            .cloned()
+            .unwrap_or_else(|| font.clone());
         let empty = String::new();
         for (c, chars) in widths.iter().enumerate().take(cols) {
             // Indexed by column, not by the header's own length — which
@@ -89,7 +108,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 name,
                 *chars as f32 * char_width,
                 head_height,
-                &font,
+                &head_font,
                 head_colour,
                 false,
             );
@@ -123,20 +142,44 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 for r in range {
                     let source = session.grid.source_row(r);
                     let marked = session.grid.marks.contains(&source);
+                    let on_row = r == cursor.0;
                     ui.horizontal(|ui| {
+                        let strip = egui::Rect::from_min_size(
+                            ui.cursor().min,
+                            egui::vec2(ui.available_width(), row_height),
+                        );
+                        if on_row {
+                            ui.painter().rect_filled(strip, 0.0, theme::ROW_SELECTED);
+                        }
+                        // A marker down the left edge: accent for where
+                        // you are, amber for a row you flagged.
+                        let marker = if on_row {
+                            Some(theme::ACCENT)
+                        } else if marked {
+                            Some(theme::WARN)
+                        } else {
+                            None
+                        };
+                        if let Some(colour) = marker {
+                            ui.painter().rect_filled(
+                                egui::Rect::from_min_size(
+                                    strip.min,
+                                    egui::vec2(theme::ROW_MARKER, row_height),
+                                ),
+                                0.0,
+                                colour,
+                            );
+                        }
+                        ui.painter().hline(
+                            strip.x_range(),
+                            strip.bottom() - 0.5,
+                            egui::Stroke::new(1.0_f32, theme::BORDER_FAINT),
+                        );
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.allocate_exact_size(
                             egui::vec2(GUTTER, row_height),
                             egui::Sense::hover(),
                         );
-                        if marked {
-                            let dot = ui.min_rect();
-                            ui.painter().circle_filled(
-                                dot.left_center() + egui::vec2(-GUTTER / 2.0, 0.0),
-                                3.0,
-                                Color32::from_rgb(220, 160, 60),
-                            );
-                        }
                         for (c, chars) in widths.iter().enumerate() {
                             // Editing happens in the cell, drawn as a
                             // field, so it is obvious which value you are
@@ -158,14 +201,16 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                             // laying the rest out costs time to draw
                             // nothing.
                             let text = truncate(&raw, chars + 1);
-                            let mut colour = ui.visuals().text_color();
-                            if c < frozen {
-                                colour = Color32::from_rgb(90, 140, 220);
+                            let mut colour = theme::TEXT_BODY;
+                            // The first column is an identifier: the
+                            // accent marks it, as it marks a path.
+                            if c == 0 || c < frozen {
+                                colour = theme::ACCENT_TEXT;
                             }
                             if search.as_ref().is_some_and(|s| s.matches(&raw)) {
-                                colour = Color32::from_rgb(200, 120, 40);
+                                colour = theme::WARN_TEXT;
                             }
-                            let response = cell(
+                            let response = cell_aligned(
                                 ui,
                                 &text,
                                 *chars as f32 * char_width + GRIP,
@@ -173,8 +218,8 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                                 &font,
                                 colour,
                                 (r, c) == cursor,
+                                numeric[c],
                             );
-                            rule(ui, response.rect);
                             if response.clicked() {
                                 session.grid.cursor = (r, c);
                             }
@@ -288,42 +333,49 @@ fn cell(
     colour: Color32,
     selected: bool,
 ) -> egui::Response {
+    cell_aligned(ui, text, width, height, font, colour, selected, false)
+}
+
+/// The same, with the text set against the right edge when the column
+/// holds numbers.
+#[allow(clippy::too_many_arguments)]
+fn cell_aligned(
+    ui: &mut egui::Ui,
+    text: &str,
+    width: f32,
+    height: f32,
+    font: &egui::FontId,
+    colour: Color32,
+    selected: bool,
+    right: bool,
+) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width + PAD * 2.0, height), egui::Sense::click());
+    // The row already carries the selection; the cell adds only a
+    // slightly stronger tint, so the cursor reads without the row turning
+    // into a block of colour.
     if selected {
-        ui.painter()
-            .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
+        ui.painter().rect_filled(rect, 3.0, theme::ACCENT_TINT);
     }
-    let colour = if selected {
-        ui.visuals().strong_text_color()
-    } else {
-        colour
-    };
+    let colour = if selected { theme::ACCENT_TEXT } else { colour };
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font.clone(), colour);
     let y = rect.center().y - galley.size().y / 2.0;
+    let x = if right {
+        (rect.right() - PAD - galley.size().x).max(rect.left() + PAD)
+    } else {
+        rect.left() + PAD
+    };
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .galley(egui::pos2(rect.left() + PAD, y), galley, colour);
+        .galley(egui::pos2(x, y), galley, colour);
     response
 }
 
 /// Whitespace either side of a cell's text, so columns are not jammed
-/// against each other.
-const PAD: f32 = 6.0;
-
-/// The line down a column's right edge, matching the header's grip.
-fn rule(ui: &egui::Ui, rect: egui::Rect) {
-    ui.painter().rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(rect.right() - GRIP / 2.0 - 0.5, rect.top()),
-            egui::vec2(1.0, rect.height()),
-        ),
-        0.0,
-        ui.visuals().widgets.noninteractive.bg_stroke.color,
-    );
-}
+/// against each other. The design's 10px cell padding.
+const PAD: f32 = theme::CELL_PAD_X;
 
 /// The cell being typed into, drawn as an input field.
 ///
@@ -332,13 +384,14 @@ fn rule(ui: &egui::Ui, rect: egui::Rect) {
 /// filled background and a focus ring, which is what a field looks like.
 fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
-    let visuals = ui.visuals();
-    ui.painter()
-        .rect_filled(rect, 2.0, visuals.extreme_bg_color);
+    ui.painter().rect_filled(rect, 5.0, theme::SURFACE);
+    // Two pixels of the edit colour: a cell being typed into is not the
+    // same thing as a cell that is merely selected, and blue would say it
+    // was.
     ui.painter().rect_stroke(
         rect,
-        2.0,
-        egui::Stroke::new(1.5_f32, visuals.selection.stroke.color),
+        5.0,
+        egui::Stroke::new(2.0_f32, theme::EDIT_RING),
         egui::StrokeKind::Inside,
     );
     let job = caret_text(session);
@@ -346,7 +399,7 @@ fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) -> 
     let y = rect.center().y - galley.size().y / 2.0;
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .galley(egui::pos2(rect.left() + PAD, y), galley, Color32::GRAY);
+        .galley(egui::pos2(rect.left() + PAD, y), galley, theme::TEXT_BODY);
     response
 }
 
@@ -411,7 +464,11 @@ pub fn caret_text(session: &Session) -> egui::text::LayoutJob {
     let (before, after) = buf.split_at(caret);
     let font = egui::FontId::monospace(13.0);
 
-    job.append(before, 0.0, TextFormat::simple(font.clone(), Color32::GRAY));
+    job.append(
+        before,
+        0.0,
+        TextFormat::simple(font.clone(), theme::TEXT_BODY),
+    );
     let mut chars = after.chars();
     let under = chars.next();
     let rest: String = chars.collect();
@@ -420,12 +477,12 @@ pub fn caret_text(session: &Session) -> egui::text::LayoutJob {
         0.0,
         TextFormat {
             font_id: font.clone(),
-            color: Color32::BLACK,
-            background: Color32::from_rgb(255, 210, 90),
+            color: theme::ON_ACCENT,
+            background: theme::EDIT_RING,
             ..Default::default()
         },
     );
-    job.append(&rest, 0.0, TextFormat::simple(font, Color32::GRAY));
+    job.append(&rest, 0.0, TextFormat::simple(font, theme::TEXT_BODY));
     job
 }
 

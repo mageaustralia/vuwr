@@ -3,6 +3,7 @@
 
 mod app;
 pub mod keymap;
+pub mod palette;
 pub mod ui;
 
 pub use app::App;

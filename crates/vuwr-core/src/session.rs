@@ -431,6 +431,42 @@ impl Session {
         self.status = format!("column {} is {next} wide", col + 1);
     }
 
+    /// True when a column reads as numbers.
+    ///
+    /// Sampled rather than proven: a frontend uses it to right-align the
+    /// column and nothing else, so a stray non-numeric row costs nothing.
+    /// No value is coerced — the text is still the text.
+    pub fn column_is_numeric(&self, col: usize) -> bool {
+        let Some(sheet) = self.doc.sheet() else {
+            return false;
+        };
+        // CSV keeps its headings in row 0, and a heading is never a
+        // number: sampling it would say every column is text.
+        let first = usize::from(sheet.header_is_first_row());
+        let rows = sheet.dims().0.min(40 + first);
+        let mut seen = 0usize;
+        for r in first..rows {
+            let Some(value) = sheet.cell(r, col) else {
+                continue;
+            };
+            let text = value.trim();
+            if text.is_empty() {
+                continue;
+            }
+            // Thousands separators and a trailing unit are still numbers
+            // to a reader; anything else is not.
+            let head: String = text
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',' || *c == '-')
+                .collect();
+            if head.is_empty() || !head.chars().any(|c| c.is_ascii_digit()) {
+                return false;
+            }
+            seen += 1;
+        }
+        seen > 0
+    }
+
     /// Rendered width of each column (table mode only).
     pub fn widths(&self) -> &[usize] {
         &self.widths
@@ -1666,6 +1702,12 @@ impl Session {
     /// True when a filter is hiding rows.
     pub fn is_filtered(&self) -> bool {
         self.filter.is_some()
+    }
+
+    /// How many rows a filter is letting through, or `None` when nothing
+    /// is filtered. A control that says it is on should say what it did.
+    pub fn visible_count(&self) -> Option<usize> {
+        self.grid.visible.as_ref().map(|rows| rows.len())
     }
 
     /// Sort by the cursor's column, flipping direction if it is already

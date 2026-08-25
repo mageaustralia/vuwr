@@ -301,6 +301,10 @@ fn save_answers_to_both_vocabularies() {
 // paragraph of escaped HTML, and saving would have replaced the element
 // with a bare string, losing the tag.
 
+fn csv_session(src: &str) -> Session {
+    Session::new(Document::parse(src.as_bytes(), FormatHint::Csv).unwrap())
+}
+
 fn xml_session(src: &str) -> Session {
     Session::new(Document::parse(src.as_bytes(), FormatHint::Xml).unwrap())
 }
@@ -980,4 +984,29 @@ fn an_xml_column_can_be_widened() {
     let before = s.widths()[0];
     s.execute(Command::WidenColumn);
     assert!(s.widths()[0] > before, "{:?} -> {:?}", before, s.widths());
+}
+
+/// Numeric columns are set against the right edge, so the digits line up.
+/// CSV keeps its headings in row 0, and sampling those said every column
+/// was text.
+#[test]
+fn a_numeric_column_is_recognised_past_the_heading_row() {
+    let mut s = csv_session("sku,qty,price\nA-1,142,64.20\nB-2,61,22.10\n");
+    s.execute(Command::ViewTable);
+    assert!(!s.column_is_numeric(0), "sku is text");
+    assert!(s.column_is_numeric(1), "qty is numeric");
+    assert!(s.column_is_numeric(2), "price is numeric");
+}
+
+/// A unit or a thousands separator does not stop it reading as a number,
+/// but a word does.
+#[test]
+fn numeric_detection_allows_units_and_rejects_words() {
+    let mut s = csv_session("a,b\n1,299.00 AUD\n2,\"1,099.00 AUD\"\n");
+    s.execute(Command::ViewTable);
+    assert!(s.column_is_numeric(1));
+
+    let mut s = csv_session("a,b\n1,in stock\n2,out of stock\n");
+    s.execute(Command::ViewTable);
+    assert!(!s.column_is_numeric(1));
 }

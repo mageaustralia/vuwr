@@ -10,6 +10,7 @@ use ratatui::widgets::{
 };
 
 use crate::app::App;
+use crate::palette;
 use vuwr_core::Command;
 use vuwr_core::{Mode, ViewMode, escape};
 
@@ -309,12 +310,15 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         // A repeated key is legal and almost always a bug, so it is marked
         // rather than left to be noticed.
         if row.duplicate {
-            spans.push(Span::styled("! ", Style::default().fg(Color::Red).bold()));
+            spans.push(Span::styled(
+                "! ",
+                Style::default().fg(palette::bad()).bold(),
+            ));
         }
 
         spans.push(Span::styled(
             escape(&row.label),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(palette::accent()),
         ));
         spans.push(Span::raw(": "));
         // The value being typed is drawn in place of the value, rather
@@ -332,7 +336,7 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         // Reversing the whole row while typing would hide the caret,
         // which is drawn reversed itself.
         if r == cursor_row && !editing {
-            line = line.style(Style::default().reversed());
+            line = line.style(Style::default().bg(palette::row_selected()));
         }
         lines.push(line);
     }
@@ -368,9 +372,12 @@ fn render_hints(frame: &mut Frame, hints: &[Command], area: Rect) {
         // The key reversed like nano's, then the label.
         spans.push(Span::styled(
             format!(" {} ", first_key(crate::keymap::keys_for(*cmd))),
-            Style::default().reversed(),
+            Style::default().reversed().bold(),
         ));
-        spans.push(Span::raw(format!(" {}", cmd.short_label())));
+        spans.push(Span::styled(
+            format!(" {}", cmd.short_label()),
+            Style::default().fg(palette::faint()),
+        ));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -381,9 +388,40 @@ fn first_key(keys: &str) -> &str {
     keys.split_whitespace().next().unwrap_or(keys)
 }
 
+/// The view indicator as styled spans: the current view bright and
+/// bracketed, the others in the accent — the terminal's version of the
+/// window's segmented control.
+fn view_spans(app: &App) -> Vec<Span<'static>> {
+    let current = app.view_mode();
+    let mut spans = Vec::new();
+    for view in app.available_views() {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        let name = match view {
+            ViewMode::Table => "table",
+            ViewMode::Tree => "tree",
+            ViewMode::Text => "text",
+        };
+        if view == current {
+            spans.push(Span::styled(
+                format!("[{name}]"),
+                Style::default().fg(palette::text()).bold(),
+            ));
+        } else {
+            spans.push(Span::styled(
+                name.to_string(),
+                Style::default().fg(palette::accent()),
+            ));
+        }
+    }
+    spans
+}
+
 /// The view indicator: every view this document supports, with the current
 /// one in brackets — `tree [table] text`. Cycling with Tab alone gave no
 /// clue that the other views existed.
+#[allow(dead_code)]
 fn view_indicator(app: &App) -> String {
     let current = app.view_mode();
     app.available_views()
@@ -475,66 +513,17 @@ fn span_width(widths: &[usize], from: usize, to: usize) -> usize {
 }
 
 fn render_status(frame: &mut Frame, app: &App, area: Rect) {
+    // A prompt or an edit takes the line: there is nowhere else for what
+    // is being typed to go.
     let line = match &app.mode {
-        Mode::Normal => {
-            let dirty = if app.dirty { " [+]" } else { "" };
-            let depth = app.grid.depth();
-            let depth_str = if depth > 0 {
-                format!(" depth:{depth}")
-            } else {
-                String::new()
-            };
-            let view_str = view_indicator(app);
-            match app.view_mode() {
-                ViewMode::Text => {
-                    let (_, lines, _) = app.table_dims();
-                    let pct = ((app.grid.cursor.0 + 1) * 100)
-                        .checked_div(lines)
-                        .unwrap_or(100);
-                    format!(
-                        " {}{}  {}  line {}/{}  {}%  {}",
-                        app.path().display(),
-                        dirty,
-                        view_str,
-                        app.grid.cursor.0 + 1,
-                        lines,
-                        pct,
-                        app.status
-                    )
-                }
-                ViewMode::Table => {
-                    let (r, c) = app.grid.cursor;
-                    let (_, row_count, col_count) = app.table_dims();
-                    format!(
-                        " {}{}  {}  row {}/{} col {}/{}  {}",
-                        app.path().display(),
-                        dirty,
-                        view_str,
-                        r + 1,
-                        row_count,
-                        c + 1,
-                        col_count,
-                        app.status
-                    )
-                }
-                ViewMode::Tree => {
-                    let (r, _) = app.grid.cursor;
-                    format!(
-                        " {}{}  {}{}  {}/{}  {}",
-                        app.path().display(),
-                        dirty,
-                        view_str,
-                        depth_str,
-                        r + 1,
-                        app.tree_rows.len(),
-                        app.status
-                    )
-                }
-            }
-        }
-        Mode::Prompt { kind, buf } => format!(" {}{buf}▏", kind.sigil()),
-        // An inline edit is visible where it is happening, so the status
-        // line reports position instead of repeating the text.
+        Mode::Prompt { kind, buf } => Line::from(Span::styled(
+            format!(" {}{buf}▏", kind.sigil()),
+            Style::default().fg(palette::text()),
+        )),
+        Mode::Command { buf } => Line::from(Span::styled(
+            format!(" :{buf}▏"),
+            Style::default().fg(palette::text()),
+        )),
         Mode::Edit { .. } => {
             let (r, c) = app.grid.cursor;
             let what = if app.is_renaming() {
@@ -542,13 +531,95 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 "editing"
             };
-            format!(
-                " ({},{}) {what} — Enter to commit, Esc to cancel",
-                r + 1,
-                c + 1
-            )
+            Line::from(vec![
+                Span::styled(
+                    format!(" ({},{}) ", r + 1, c + 1),
+                    Style::default().fg(palette::dim()),
+                ),
+                Span::styled(
+                    what.to_string(),
+                    Style::default().fg(palette::edit_ring()).bold(),
+                ),
+                Span::styled(
+                    " — Enter to commit, Esc to cancel".to_string(),
+                    Style::default().fg(palette::faint()),
+                ),
+            ])
         }
-        Mode::Command { buf } => format!(" :{buf}▏"),
+        Mode::Normal => normal_status(app, area.width),
     };
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// Where you are, then what the document is — the same split the window
+/// makes, with the right-hand end holding state rather than position.
+fn normal_status(app: &App, width: u16) -> Line<'static> {
+    let mut left: Vec<Span> = vec![Span::raw(" ")];
+    left.extend(view_spans(app));
+    left.push(Span::raw("  "));
+
+    let (r, c) = app.grid.cursor;
+    let (_, row_count, col_count) = app.table_dims();
+    let (primary, secondary) = match app.view_mode() {
+        ViewMode::Text => (
+            format!("line {}/{}", r + 1, row_count),
+            format!("{}%", ((r + 1) * 100).checked_div(row_count).unwrap_or(100)),
+        ),
+        ViewMode::Table => (
+            format!("row {}/{}", r + 1, row_count),
+            format!("col {}/{}", c + 1, col_count),
+        ),
+        ViewMode::Tree => (
+            format!("row {}/{}", r + 1, app.tree_rows.len()),
+            match app.grid.depth() {
+                0 => String::new(),
+                d => format!("depth {d}"),
+            },
+        ),
+    };
+    left.push(Span::styled(primary, Style::default().fg(palette::text())));
+    if !secondary.is_empty() {
+        left.push(Span::raw("  "));
+        left.push(Span::styled(secondary, Style::default().fg(palette::dim())));
+    }
+    if let Some(n) = app.visible_count() {
+        left.push(Span::raw("  "));
+        left.push(Span::styled(
+            format!("filtered {n}/{row_count}"),
+            Style::default().fg(palette::accent()),
+        ));
+    }
+    if !app.status.is_empty() {
+        left.push(Span::raw("  "));
+        left.push(Span::styled(
+            app.status.clone(),
+            Style::default().fg(palette::faint()),
+        ));
+    }
+
+    // The right-hand end: the file, and whether it is saved. Amber only
+    // when there is something unsaved, so it always means something.
+    let mut right: Vec<Span> = Vec::new();
+    if app.dirty {
+        right.push(Span::styled(
+            "● unsaved".to_string(),
+            Style::default().fg(palette::warn()),
+        ));
+        right.push(Span::raw("  "));
+    }
+    right.push(Span::styled(
+        app.path().display().to_string(),
+        Style::default().fg(palette::accent()),
+    ));
+    right.push(Span::raw(" "));
+
+    let used: usize = left
+        .iter()
+        .chain(right.iter())
+        .map(|s| s.content.chars().count())
+        .sum();
+    let gap = (width as usize).saturating_sub(used).max(1);
+    left.push(Span::raw(" ".repeat(gap)));
+    left.extend(right);
+    Line::from(left)
 }
