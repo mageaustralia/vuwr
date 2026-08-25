@@ -40,7 +40,7 @@ and running in a browser tab:
 
 ![vuwr in a browser tab](docs/media/web.gif)
 
-Try it without installing anything: **[the hosted build](https://REPLACE_PAGES_URL/?sample)**
+Try it without installing anything: **[the hosted build](https://mageaustralia.github.io/vuwr/?sample)**
 (`?sample=csv` and `?sample=json` open the other two). Files are read in
 the tab; nothing is uploaded.
 
