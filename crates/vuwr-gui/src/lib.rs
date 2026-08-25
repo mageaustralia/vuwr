@@ -871,6 +871,7 @@ impl VuwrApp {
         let table = session.view_mode() == ViewMode::Table;
         let cursor_col = session.grid.cursor.1;
         let mut go_to = None;
+        let mut edit_field = None;
 
         egui::Frame::new()
             .fill(theme::surface_sunk())
@@ -904,7 +905,7 @@ impl VuwrApp {
                                 .text_style(theme::micro())
                                 .color(theme::text_dim()),
                         )
-                        .on_hover_text("Close the inspector (V)");
+                        .on_hover_text("Close the inspector (V). Double-click a field to edit it.");
                     });
                 });
             });
@@ -972,6 +973,11 @@ impl VuwrApp {
                     if response.clicked() && table {
                         go_to = Some(i);
                     }
+                    // Double-click edits, as it does in the table, the
+                    // tree and the text: one gesture, one meaning.
+                    if response.double_clicked() {
+                        edit_field = Some(i);
+                    }
                     response.on_hover_text(&field.value);
                 }
             });
@@ -1003,6 +1009,12 @@ impl VuwrApp {
             && let Some(session) = self.session.as_mut()
         {
             session.grid.cursor.1 = col;
+        }
+        if let Some(col) = edit_field {
+            if table && let Some(session) = self.session.as_mut() {
+                session.grid.cursor.1 = col;
+            }
+            self.run(Command::EditCell, ctx);
         }
     }
 
