@@ -476,6 +476,16 @@ fn format_label(session: &Session) -> String {
     }
 }
 
+/// The order the views are listed in: the order their keys are in.
+/// Listing them in cycle order put `1` in the middle of the list, which
+/// reads as an error even though both were right.
+pub(crate) const VIEW_ORDER: [ViewMode; 3] = [ViewMode::Table, ViewMode::Tree, ViewMode::Text];
+
+/// How wide a menu is. Wide enough that the shortcut column and the
+/// labels are not pressed against each other: they were, and a shortcut
+/// touching its label reads as one run of characters.
+const MENU_WIDTH: f32 = 230.0;
+
 /// The inspector's width, and the width of its key column.
 const INSPECTOR_WIDTH: f32 = 356.0;
 const KEY_COLUMN: f32 = 132.0;
@@ -640,6 +650,7 @@ impl VuwrApp {
     fn menu_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
+                ui.set_min_width(MENU_WIDTH);
                 if Self::menu_item(ui, "Open…", Command::Open) {
                     self.run(Command::Open, ctx);
                     ui.close();
@@ -676,6 +687,7 @@ impl VuwrApp {
                 }
             });
             ui.menu_button("Edit", |ui| {
+                ui.set_min_width(MENU_WIDTH);
                 if Self::menu_item(ui, "Undo", Command::Undo) {
                     self.run(Command::Undo, ctx);
                     ui.close();
@@ -686,6 +698,7 @@ impl VuwrApp {
                 }
             });
             ui.menu_button("View", |ui| {
+                ui.set_min_width(MENU_WIDTH);
                 // Only the views this document actually has, exactly as
                 // the TUI's indicator does it.
                 let Some(session) = self.session.as_ref() else {
@@ -693,7 +706,8 @@ impl VuwrApp {
                     return;
                 };
                 let current = session.view_mode();
-                for view in session.available_views() {
+                let available = session.available_views();
+                for view in VIEW_ORDER.iter().copied().filter(|v| available.contains(v)) {
                     let (label, cmd) = match view {
                         ViewMode::Table => ("Table", Command::ViewTable),
                         ViewMode::Tree => ("Tree", Command::ViewTree),
@@ -718,6 +732,7 @@ impl VuwrApp {
                 }
             });
             ui.menu_button("Help", |ui| {
+                ui.set_min_width(MENU_WIDTH);
                 if Self::menu_item(ui, "Keys", Command::Help) {
                     self.run(Command::Help, ctx);
                     ui.close();

@@ -25,7 +25,14 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
         // View mode, as a segmented control: the current mode is visible
         // rather than something you deduce.
         theme::segmented(ui, |ui| {
-            for view in session.available_views() {
+            // Left to right in the order the keys are in, so the segments
+            // and `1 2 3` agree.
+            let available = session.available_views();
+            for view in crate::VIEW_ORDER
+                .iter()
+                .copied()
+                .filter(|v| available.contains(v))
+            {
                 let (label, cmd) = match view {
                     ViewMode::Text => ("Text", Command::ViewText),
                     ViewMode::Tree => ("Tree", Command::ViewTree),
