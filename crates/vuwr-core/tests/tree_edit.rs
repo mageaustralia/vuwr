@@ -698,19 +698,19 @@ fn csv_cells_are_written_verbatim() {
 // --- Decoded text view ---
 
 #[test]
-fn text_view_can_show_the_markup_rather_than_the_source() {
+fn text_view_can_show_the_source_rather_than_the_markup() {
     let mut s = xml_session("<r><d>&lt;p&gt;Hi&lt;/p&gt;</d></r>");
     s.execute(Command::ViewText);
     assert!(
-        s.table_cell(0, 0).unwrap().contains("&lt;p&gt;"),
-        "the source by default"
+        s.table_cell(0, 0).unwrap().contains("<p>Hi</p>"),
+        "decoded by default: {:?}",
+        s.table_cell(0, 0)
     );
 
     s.execute(Command::ToggleDecoded);
     assert!(
-        s.table_cell(0, 0).unwrap().contains("<p>Hi</p>"),
-        "decoded when asked: {:?}",
-        s.table_cell(0, 0)
+        s.table_cell(0, 0).unwrap().contains("&lt;p&gt;"),
+        "the source when asked"
     );
 }
 
@@ -720,7 +720,6 @@ fn decoding_the_view_does_not_change_the_file() {
     let src = "<r><d>&lt;p&gt;Hi&lt;/p&gt;</d></r>";
     let mut s = xml_session(src);
     s.execute(Command::ViewText);
-    s.execute(Command::ToggleDecoded);
     assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
 }
 
@@ -730,7 +729,6 @@ fn decoding_the_view_does_not_change_the_file() {
 fn editing_a_decoded_line_encodes_it_again() {
     let mut s = xml_session("<r><d>&lt;p&gt;old&lt;/p&gt;</d></r>");
     s.execute(Command::ViewText);
-    s.execute(Command::ToggleDecoded);
     s.grid.cursor = (0, 0);
 
     // Text view edits its line in place, which is the path a user takes.
@@ -753,20 +751,21 @@ fn editing_a_decoded_line_encodes_it_again() {
 }
 
 #[test]
-fn toggling_back_shows_the_source_again() {
+fn toggling_back_shows_the_markup_again() {
     let mut s = xml_session("<r><d>&lt;p&gt;Hi&lt;/p&gt;</d></r>");
     s.execute(Command::ViewText);
     s.execute(Command::ToggleDecoded);
     s.execute(Command::ToggleDecoded);
-    assert!(s.table_cell(0, 0).unwrap().contains("&lt;p&gt;"));
+    assert!(s.table_cell(0, 0).unwrap().contains("<p>Hi</p>"));
 }
 
 /// Only XML has entities; saying so beats a toggle that does nothing.
 #[test]
 fn the_decoded_toggle_is_refused_for_other_formats() {
     let mut s = session(r#"{"a":1}"#);
+    let before = s.decoded_text;
     s.execute(Command::ToggleDecoded);
-    assert!(!s.decoded_text);
+    assert_eq!(s.decoded_text, before, "nothing to toggle");
     assert!(s.status.contains("only XML"), "{}", s.status);
 }
 
@@ -806,4 +805,35 @@ fn diagnostics_clear_again_on_undo() {
 
     s.execute(Command::Undo);
     assert!(s.diagnostics().is_empty(), "undo puts the document back");
+}
+
+/// The table showed raw entity references while the tree beside it showed
+/// them decoded — the same value spelled two ways in one window.
+#[test]
+fn the_table_shows_decoded_text_like_the_tree() {
+    let src = "<rss><channel><item><d>&lt;p&gt;Hi&lt;/p&gt;</d></item>\
+               <item><d>&lt;p&gt;There&lt;/p&gt;</d></item></channel></rss>";
+    let mut s = xml_session(src);
+    s.execute(Command::ViewTable);
+    assert_eq!(s.table_cell(0, 0).as_deref(), Some("<p>Hi</p>"));
+
+    s.execute(Command::ToggleDecoded);
+    assert_eq!(s.table_cell(0, 0).as_deref(), Some("&lt;p&gt;Hi&lt;/p&gt;"));
+}
+
+/// Editing in the cell starts from what the cell shows. It used to start
+/// from the raw text while the commit encoded what came back, so `&lt;`
+/// became `&amp;lt;` on the way out.
+#[test]
+fn editing_a_table_cell_does_not_double_encode_it() {
+    let src = "<rss><channel><item><d>&lt;p&gt;Hi&lt;/p&gt;</d></item>\
+               <item><d>x</d></item></channel></rss>";
+    let mut s = xml_session(src);
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    s.execute(Command::EditCell);
+    s.input_submit();
+    let out = String::from_utf8(s.doc.serialize()).unwrap();
+    assert!(out.contains("&lt;p&gt;Hi&lt;/p&gt;"), "{out}");
+    assert!(!out.contains("&amp;lt;"), "double-encoded: {out}");
 }

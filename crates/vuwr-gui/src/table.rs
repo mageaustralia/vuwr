@@ -36,32 +36,51 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     let editing = session.is_editing_inline();
     let widths: Vec<usize> = (0..cols).map(|c| column_chars(session, c)).collect();
 
-    // A header outside the scroll area, so it stays put while the rows
-    // move under it.
+    // The header sits outside the scroll area so it stays put while the
+    // rows move under it — but it has to follow the *horizontal* scroll,
+    // or scrolling right leaves every heading over the wrong column. The
+    // offset is a frame behind, as with the text view's gutter, which is
+    // imperceptible and far simpler than linking the two.
+    let offset_id = egui::Id::new("sheet-offset-x");
+    let offset_x = ui
+        .ctx()
+        .data(|d| d.get_temp::<f32>(offset_id).unwrap_or(0.0));
     let mut grip = Grip::None;
     if separate_header {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.add_space(GUTTER);
-            for (c, name) in headers.iter().take(cols).enumerate() {
-                // Indexed by column, not by the header's own length —
-                // which is what the width was being taken from, so no
-                // column lined up with its heading.
-                cell(
-                    ui,
-                    name,
-                    widths[c] as f32 * char_width,
-                    row_height,
-                    &font,
-                    ui.visuals().strong_text_color(),
-                    false,
-                );
-                match resize_grip(ui, c, widths[c], char_width, row_height) {
-                    Grip::None => {}
-                    other => grip = other,
-                }
+        let outer = ui.available_rect_before_wrap();
+        let header_rect =
+            egui::Rect::from_min_size(outer.min, egui::vec2(outer.width(), row_height));
+        let mut header = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_size(
+                    header_rect.min - egui::vec2(offset_x, 0.0),
+                    egui::vec2(header_rect.width() + offset_x, row_height),
+                ))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        header.set_clip_rect(header_rect.intersect(ui.clip_rect()));
+        header.spacing_mut().item_spacing.x = 0.0;
+        header.add_space(GUTTER);
+        let head_colour = header.visuals().strong_text_color();
+        for (c, name) in headers.iter().take(cols).enumerate() {
+            // Indexed by column, not by the header's own length — which
+            // is what the width was being taken from, so no column lined
+            // up with its heading.
+            cell(
+                &mut header,
+                name,
+                widths[c] as f32 * char_width,
+                row_height,
+                &font,
+                head_colour,
+                false,
+            );
+            match resize_grip(&mut header, c, widths[c], char_width, row_height) {
+                Grip::None => {}
+                other => grip = other,
             }
-        });
+        }
+        ui.allocate_rect(header_rect, egui::Sense::hover());
         ui.separator();
     }
 
@@ -75,7 +94,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     // window they sit somewhere in the middle of the screen — or, with
     // content narrower than the pane, appear to be missing.
     ui.style_mut().spacing.scroll.floating = false;
-    egui::ScrollArea::both()
+    let scrolled = egui::ScrollArea::both()
         .id_salt("sheet")
         .auto_shrink([false; 2])
         .show_rows(ui, row_height, rows, |ui, range| {
@@ -105,7 +124,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                                 edit_field(
                                     ui,
                                     session,
-                                    *chars as f32 * char_width + GRIP,
+                                    *chars as f32 * char_width + GRIP + PAD * 2.0,
                                     row_height,
                                 );
                                 continue;
@@ -132,6 +151,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                                 colour,
                                 (r, c) == cursor,
                             );
+                            rule(ui, response.rect);
                             if response.clicked() {
                                 session.grid.cursor = (r, c);
                             }
@@ -144,6 +164,8 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 }
             });
         });
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(offset_id, scrolled.state.offset.x));
     match grip {
         Grip::None => {}
         Grip::Width(col, chars) => session.set_column_width(col, chars),
@@ -177,17 +199,25 @@ const GRIP: f32 = 5.0;
 fn resize_grip(ui: &mut egui::Ui, col: usize, chars: usize, char_width: f32, height: f32) -> Grip {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(GRIP, height), egui::Sense::click_and_drag());
-    if response.hovered() || response.dragged() {
+    // Always drawn, so you can see there is something to grab — an
+    // invisible handle is one nobody finds.
+    let live = response.hovered() || response.dragged();
+    if live {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-        ui.painter().rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(rect.center().x - 1.0, rect.top()),
-                egui::vec2(2.0, rect.height()),
-            ),
-            0.0,
-            ui.visuals().selection.bg_fill,
-        );
     }
+    let (colour, thickness) = if live {
+        (ui.visuals().selection.bg_fill, 2.0)
+    } else {
+        (ui.visuals().widgets.noninteractive.bg_stroke.color, 1.0)
+    };
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(rect.center().x - thickness / 2.0, rect.top()),
+            egui::vec2(thickness, rect.height()),
+        ),
+        0.0,
+        colour,
+    );
     // Double-click on the boundary fits the column to its contents, the
     // way a spreadsheet does.
     if response.double_clicked() {
@@ -225,7 +255,7 @@ fn cell(
     selected: bool,
 ) -> egui::Response {
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width + 6.0, height), egui::Sense::click());
+        ui.allocate_exact_size(egui::vec2(width + PAD * 2.0, height), egui::Sense::click());
     if selected {
         ui.painter()
             .rect_filled(rect, 2.0, ui.visuals().selection.bg_fill);
@@ -241,8 +271,24 @@ fn cell(
     let y = rect.center().y - galley.size().y / 2.0;
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .galley(egui::pos2(rect.left() + 3.0, y), galley, colour);
+        .galley(egui::pos2(rect.left() + PAD, y), galley, colour);
     response
+}
+
+/// Whitespace either side of a cell's text, so columns are not jammed
+/// against each other.
+const PAD: f32 = 6.0;
+
+/// The line down a column's right edge, matching the header's grip.
+fn rule(ui: &egui::Ui, rect: egui::Rect) {
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(rect.right() - GRIP / 2.0 - 0.5, rect.top()),
+            egui::vec2(1.0, rect.height()),
+        ),
+        0.0,
+        ui.visuals().widgets.noninteractive.bg_stroke.color,
+    );
 }
 
 /// The cell being typed into, drawn as an input field.

@@ -247,7 +247,9 @@ impl Session {
             renaming: false,
             text_scroll: 0.0,
             show_detail: false,
-            decoded_text: false,
+            // On by default: escaped markup is unreadable, and every
+            // other view already showed it decoded.
+            decoded_text: true,
             manual_widths: std::collections::BTreeMap::new(),
             diagnostics: std::cell::RefCell::new(None),
             text_lines: Vec::new(),
@@ -289,7 +291,7 @@ impl Session {
                 .doc
                 .sheet()?
                 .cell(self.grid.source_row(row), col)
-                .map(|v| escape(&v)),
+                .map(|v| escape(&self.for_display(&v))),
             ViewMode::Tree => self.tree_rows.get(row).map(|r| r.summary.clone()),
             ViewMode::Text => self.text_lines.get(row).cloned(),
         }
@@ -687,6 +689,7 @@ impl Session {
                 }
                 self.decoded_text = !self.decoded_text;
                 self.rebuild_text();
+                self.rebuild_table_widths();
                 self.status = if self.decoded_text {
                     "showing decoded text".into()
                 } else {
@@ -816,6 +819,21 @@ impl Session {
             ViewMode::Text => usize::MAX,
         };
         text.chars().count() > visible
+    }
+
+    /// A stored value as it should be read.
+    ///
+    /// XML text carries entity references, and `&lt;p&gt;` is not what
+    /// anybody is trying to read. The tree has always shown these decoded
+    /// and the editor has always opened on decoded text; this is the same
+    /// rule for the table. JSON strings have no entities, and decoding one
+    /// would eat a literal `&amp;`.
+    fn for_display(&self, value: &str) -> String {
+        if self.doc.is_xml() && self.decoded_text {
+            crate::decode(value)
+        } else {
+            value.to_string()
+        }
     }
 
     /// Prepare a value typed in a table cell for writing.
@@ -1813,10 +1831,14 @@ impl Session {
     fn start_edit(&mut self) {
         let (r, c) = self.grid.cursor;
         let buf = match self.view {
+            // Decoded, because `encode_for_cell` encodes what comes back:
+            // starting from the raw text would turn `&lt;` into `&amp;lt;`
+            // on the way out.
             ViewMode::Table => self
                 .doc
                 .sheet()
                 .and_then(|s| s.cell(self.grid.source_row(r), c))
+                .map(|v| self.for_display(&v))
                 .unwrap_or_default(),
             ViewMode::Text => self.text_lines.get(r).cloned().unwrap_or_default(),
             // The row carries a path, so the value comes from the
