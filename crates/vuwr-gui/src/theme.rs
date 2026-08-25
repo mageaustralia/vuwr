@@ -232,7 +232,14 @@ pub fn install(ctx: &egui::Context) {
     s.spacing.button_padding = egui::vec2(9.0, 4.0);
     s.spacing.interact_size.y = CONTROL_HEIGHT;
     s.spacing.scroll.bar_width = 8.0;
-    s.spacing.menu_margin = egui::Margin::symmetric(6, 6);
+    // More room on the right than the left: a menu item's shortcut is
+    // right-aligned, and against the edge it reads as falling off it.
+    s.spacing.menu_margin = egui::Margin {
+        left: 6,
+        right: 14,
+        top: 6,
+        bottom: 6,
+    };
 
     let v = &mut s.visuals;
     v.panel_fill = surface();
