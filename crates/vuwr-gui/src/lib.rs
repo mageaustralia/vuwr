@@ -1308,43 +1308,43 @@ impl VuwrApp {
             .map(|s| s.position_label())
             .unwrap_or_default();
 
+        // A definite size, decided from the screen rather than from the
+        // content. An auto-sizing window measures its content, and the
+        // content — a text area told to fill the space it is given —
+        // measures the window; each frame the margins made the answer a
+        // little larger, and the window walked off the bottom of the
+        // screen. Nothing here asks how much room there is.
+        let screen = ctx.content_rect().size();
+        let size = egui::vec2(
+            880.0_f32.min(screen.x * 0.9),
+            600.0_f32.min(screen.y * 0.85),
+        );
+        // The body is what is left after the title row, the position
+        // line and the row of buttons.
+        let body = size.y - 78.0;
+
         egui::Window::new("Edit value")
             .open(&mut open)
-            .resizable(true)
             .collapsible(false)
-            // Room to read a paragraph without scrolling: the point of
-            // this window is that the value did not fit anywhere smaller.
-            .default_size([860.0, 560.0])
-            .min_width(420.0)
-            // Bounded, because the content asks for the space it is given
-            // and is then given the space it asked for: without a ceiling
-            // the window crept wider and taller every frame until Save was
-            // off the bottom of the screen.
-            .max_size(ctx.content_rect().size() * 0.92)
+            .resizable(false)
+            .fixed_size(size)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.label(egui::RichText::new(&where_from).weak().small());
                 ui.add_space(6.0);
 
-                // The editor fills the window, leaving a strip for the
-                // buttons, so resizing it gives you more text rather than
-                // more grey.
-                let footer = 34.0;
-                let height = (ui.available_height() - footer).max(120.0);
-                let width = ui.available_width();
                 egui::ScrollArea::vertical()
-                    .max_height(height)
+                    .max_height(body)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_max_width(width);
                         ui.add_sized(
-                            [width, height],
+                            [size.x - 8.0, body],
                             egui::TextEdit::multiline(&mut text)
                                 .font(egui::TextStyle::Monospace)
                                 // Wrapped, not scrolled sideways: prose is
-                                // what lands here. An infinite desired
-                                // width is what made the window grow.
+                                // what lands here.
                                 .lock_focus(true)
-                                .desired_width(width),
+                                .desired_width(size.x - 8.0),
                         );
                     });
 
