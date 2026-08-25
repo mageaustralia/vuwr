@@ -46,36 +46,54 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         .ctx()
         .data(|d| d.get_temp::<f32>(offset_id).unwrap_or(0.0));
     let mut grip = Grip::None;
-    if separate_header {
+    {
+        // CSV carries its header as its first row, so there is no heading
+        // strip to grab — which left those columns with no way to resize
+        // but the keyboard. The strip is drawn either way: with the names
+        // in it when they are separate, and as a bare ruler of handles
+        // when they are not.
+        let head_height = if separate_header { row_height } else { RULER };
         let outer = ui.available_rect_before_wrap();
         let header_rect =
-            egui::Rect::from_min_size(outer.min, egui::vec2(outer.width(), row_height));
+            egui::Rect::from_min_size(outer.min, egui::vec2(outer.width(), head_height));
         let mut header = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(egui::Rect::from_min_size(
                     header_rect.min - egui::vec2(offset_x, 0.0),
-                    egui::vec2(header_rect.width() + offset_x, row_height),
+                    egui::vec2(header_rect.width() + offset_x, head_height),
                 ))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
+        if !separate_header {
+            // Faintly filled, so a bare strip of handles reads as
+            // something to grab rather than as a gap.
+            ui.painter()
+                .rect_filled(header_rect, 0.0, ui.visuals().faint_bg_color);
+        }
         header.set_clip_rect(header_rect.intersect(ui.clip_rect()));
         header.spacing_mut().item_spacing.x = 0.0;
         header.add_space(GUTTER);
         let head_colour = header.visuals().strong_text_color();
-        for (c, name) in headers.iter().take(cols).enumerate() {
+        let empty = String::new();
+        for (c, chars) in widths.iter().enumerate().take(cols) {
             // Indexed by column, not by the header's own length — which
             // is what the width was being taken from, so no column lined
             // up with its heading.
+            let name = if separate_header {
+                headers.get(c).unwrap_or(&empty)
+            } else {
+                &empty
+            };
             cell(
                 &mut header,
                 name,
-                widths[c] as f32 * char_width,
-                row_height,
+                *chars as f32 * char_width,
+                head_height,
                 &font,
                 head_colour,
                 false,
             );
-            match resize_grip(&mut header, c, widths[c], char_width, row_height) {
+            match resize_grip(&mut header, c, *chars, char_width, head_height) {
                 Grip::None => {}
                 other => grip = other,
             }
@@ -191,6 +209,10 @@ fn column_chars(session: &Session, col: usize) -> usize {
 
 /// Width of the strip you grab to resize a column.
 const GRIP: f32 = 5.0;
+
+/// Height of the bare handle strip drawn for a sheet whose header is its
+/// own first row.
+const RULER: f32 = 9.0;
 
 /// The draggable boundary on a column's right edge.
 ///
