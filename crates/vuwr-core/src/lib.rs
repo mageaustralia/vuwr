@@ -31,7 +31,8 @@ pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};
 pub use ops::EditOp;
 pub use search::Search;
 pub use session::{
-    Effect, Mode, NewNode, PromptKind, Session, SortSpec, ViewMode, escape, path_label,
+    Effect, Field, FieldKind, Inspector, Mode, NewNode, PromptKind, Session, SortSpec, ViewMode,
+    escape, path_label,
 };
 pub use sheet::Sheet;
 pub use sort::{SortDirection, SortKind, natural_cmp, sort_rows};

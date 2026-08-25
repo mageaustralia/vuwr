@@ -26,4 +26,9 @@ if command -v wasm-opt >/dev/null; then
   echo "optimised with wasm-opt"
 fi
 
-echo "built web/dist ($(du -h web/dist/vuwr_bg.wasm | cut -f1))"
+# The id index.html stamps both files with: the module's own content, so
+# a browser keeps them until they actually change and never pairs a new
+# one with an old one.
+shasum -a 256 web/dist/vuwr_bg.wasm | cut -c1-12 > web/dist/build.txt
+
+echo "built web/dist ($(du -h web/dist/vuwr_bg.wasm | cut -f1), build $(cat web/dist/build.txt))"

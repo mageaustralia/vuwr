@@ -1042,3 +1042,41 @@ fn a_date_column_is_not_numeric() {
     s.execute(Command::ViewTable);
     assert!(!s.column_is_numeric(1));
 }
+
+/// The inspector reads a row downwards, which is the only way to see a
+/// feed's twenty-third column in a window that shows five.
+#[test]
+fn the_inspector_reads_the_row_under_the_cursor() {
+    let src = "<rss><channel>\
+               <item><g:id>A-1</g:id><title>Trailhead Daypack</title><link>https://example.com/a</link><g:price>129.00</g:price></item>\
+               <item><g:id>B-2</g:id><title>Kettle Set</title><link>https://example.com/b</link><g:price>54.50</g:price></item>\
+               </channel></rss>";
+    let mut s = xml_session(src);
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (1, 0);
+
+    let it = s.inspector();
+    assert_eq!(it.meta, "Row 2 of 2");
+    assert_eq!(it.title, "Kettle Set", "named by a field with a name in it");
+    let keys: Vec<&str> = it.fields.iter().map(|f| f.key.as_str()).collect();
+    assert_eq!(keys, vec!["g:id", "title", "link", "g:price"]);
+    assert_eq!(it.fields[1].value, "Kettle Set");
+
+    // Kinds are for colour only — nothing is coerced by looking at it.
+    use vuwr_core::FieldKind;
+    assert_eq!(it.fields[2].kind, FieldKind::Url);
+    assert_eq!(it.fields[3].kind, FieldKind::Number);
+    assert_eq!(it.fields[0].kind, FieldKind::Text);
+}
+
+/// Outside a table there is no record, so it falls back to the one value
+/// the cursor is on rather than showing nothing.
+#[test]
+fn the_inspector_falls_back_to_the_value_under_the_cursor() {
+    let mut s = session(r#"{"a":1,"b":2}"#);
+    s.execute(Command::ViewTree);
+    s.grid.cursor = (1, 0);
+    let it = s.inspector();
+    assert_eq!(it.fields.len(), 1);
+    assert_eq!(it.fields[0].key, "b");
+}

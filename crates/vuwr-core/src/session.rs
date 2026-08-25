@@ -914,6 +914,73 @@ impl Session {
         }
     }
 
+    /// The whole record under the cursor, for the inspector.
+    ///
+    /// A feed row is twenty-three columns wide and a window shows five, so
+    /// the fields you actually want are usually the ones off the right
+    /// edge. This is the same row read downwards, where all of it fits.
+    ///
+    /// Outside table view there is no record to read, so it degrades to
+    /// the one value the cursor is on — which is what the detail pane
+    /// showed before it.
+    pub fn inspector(&self) -> Inspector {
+        if self.view != ViewMode::Table {
+            let label = self.detail_label();
+            let value = self.detail_text().unwrap_or_default();
+            return Inspector {
+                meta: match self.view {
+                    ViewMode::Text => format!(
+                        "Line {} of {}",
+                        self.grid.cursor.0 + 1,
+                        self.text_lines.len()
+                    ),
+                    _ => format!("Row {} of {}", self.grid.cursor.0 + 1, self.tree_rows.len()),
+                },
+                title: label.clone(),
+                fields: vec![Field {
+                    key: label,
+                    value,
+                    kind: FieldKind::Text,
+                }],
+            };
+        }
+
+        let (headers, rows, cols) = self.table_dims();
+        let row = self.grid.cursor.0;
+        let fields: Vec<Field> = (0..cols)
+            .map(|c| {
+                let value = self.table_cell(row, c).unwrap_or_default();
+                let kind = if value.starts_with("http://") || value.starts_with("https://") {
+                    FieldKind::Url
+                } else if self.column_is_numeric(c) {
+                    FieldKind::Number
+                } else {
+                    FieldKind::Text
+                };
+                Field {
+                    key: headers.get(c).cloned().unwrap_or_default(),
+                    value,
+                    kind,
+                }
+            })
+            .collect();
+
+        // Whatever reads as this record's name: the first field with room
+        // for one, which in a feed is the title rather than the id.
+        let title = fields
+            .iter()
+            .find(|f| f.value.chars().count() > 8 && !matches!(f.kind, FieldKind::Url))
+            .or_else(|| fields.first())
+            .map(|f| f.value.clone())
+            .unwrap_or_default();
+
+        Inspector {
+            meta: format!("Row {} of {}", row + 1, rows),
+            title,
+            fields,
+        }
+    }
+
     /// What the detail pane should call the thing it is showing.
     pub fn detail_label(&self) -> String {
         match self.view {
@@ -2094,6 +2161,33 @@ fn compute_widths(doc: &CsvDoc) -> Vec<usize> {
         }
     }
     widths
+}
+
+/// The record under the cursor, read downwards.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Inspector {
+    /// Where this record sits — `Row 4 of 2,298`.
+    pub meta: String,
+    /// What the record is called, for the heading.
+    pub title: String,
+    pub fields: Vec<Field>,
+}
+
+/// One field of a record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    pub key: String,
+    pub value: String,
+    pub kind: FieldKind,
+}
+
+/// What a field's value is, for colour only. Nothing is coerced: this
+/// says how to draw the text, never what the text means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    Text,
+    Number,
+    Url,
 }
 
 /// Where the value under the cursor begins and ends, as lines and as

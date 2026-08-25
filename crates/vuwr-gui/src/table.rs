@@ -506,6 +506,28 @@ const DISCLOSURE: f32 = 14.0;
 /// Height of a tree row.
 const TREE_ROW: f32 = 26.0;
 
+/// The width of one monospace character in the given font.
+fn char_px(ui: &egui::Ui, font: &egui::FontId) -> f32 {
+    ui.painter()
+        .layout_no_wrap("0".to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+        .size()
+        .x
+        .max(1.0)
+}
+
+/// Roughly how wide the widest line is, so the scroll area knows how far
+/// sideways there is to go. Measured in characters against the longest
+/// line rather than by laying every line out, which at 84,000 lines is
+/// the difference between a frame and a freeze.
+fn longest_line(session: &Session, lines: usize) -> f32 {
+    let widest = (0..lines.min(2000))
+        .filter_map(|n| session.table_cell(n, 0))
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0);
+    widest as f32 * 7.2
+}
+
 /// The open/closed triangle.
 ///
 /// Painted rather than typed: egui's bundled fonts have no triangle glyph,
@@ -784,136 +806,138 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
     let digits = lines.to_string().len().max(2) as f32;
     let gutter_width = (digits * 8.0 + 24.0).max(56.0);
 
-    ui.horizontal_top(|ui| {
-        // The gutter is its own surface, as the column headers are: a
-        // column of numbers on the same ground as the file reads as part
-        // of it.
-        let gutter_rect = egui::Rect::from_min_size(
-            ui.cursor().min,
-            egui::vec2(gutter_width, ui.available_height()),
-        );
-        ui.painter()
-            .rect_filled(gutter_rect, 0.0, theme::surface_header());
-        ui.painter().vline(
-            gutter_rect.right() - 0.5,
-            gutter_rect.y_range(),
-            egui::Stroke::new(1.0_f32, theme::border()),
-        );
-        let gutter = egui::ScrollArea::vertical()
-            .id_salt("text-gutter")
-            .vertical_scroll_offset(session.text_scroll)
-            .show_rows(ui, row_height, lines, |ui, range| {
-                // Explicitly vertical: this sits inside a horizontal
-                // layout, and without it every row lands on one line.
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.set_width(gutter_width);
-                    for n in range {
-                        // The line you are on names itself in the accent,
-                        // so the eye can find its way back after reading
-                        // across.
-                        let colour = if n == cursor_row {
-                            theme::accent_text()
-                        } else {
-                            theme::text_disabled()
-                        };
-                        // Right-aligned by padding the number rather than
-                        // by a layout: a nested layout per line takes the
-                        // whole column's height, and only the first number
-                        // was drawn.
-                        ui.label(
-                            RichText::new(format!("{:>1$}  ", n + 1, digits as usize))
-                                .text_style(theme::micro())
-                                .color(colour),
-                        );
-                    }
-                });
-            });
-        let _ = gutter;
+    // One scroll area, not two. A gutter that scrolls itself has to be
+    // kept in step with the text beside it, and any disagreement about how
+    // tall a row is shows up as numbers drifting from their lines or as a
+    // band of nothing at the end of the file. Here there is one list, one
+    // row height, and the numbers are painted against the viewport's left
+    // edge so they stay put while the text scrolls sideways.
+    let scrolled = egui::ScrollArea::both()
+        .id_salt("text")
+        .auto_shrink([false; 2])
+        .show_viewport(ui, |ui, viewport| {
+            let width = ui
+                .available_width()
+                .max(longest_line(session, lines) + gutter_width);
+            let (content, _) = ui.allocate_exact_size(
+                egui::vec2(width, lines as f32 * row_height),
+                egui::Sense::hover(),
+            );
 
-        let content = egui::ScrollArea::both()
-            .id_salt("text-content")
-            .auto_shrink([false; 2])
-            .show_rows(ui, row_height, lines, |ui, range| {
-                // Explicitly vertical: this sits inside a horizontal
-                // layout, and without it every line lands on one row.
-                ui.vertical(|ui| {
-                    // Lines extend rather than wrap, so the gutter stays
-                    // in step and long lines scroll sideways instead of
-                    // folding. Zero vertical spacing for the same reason:
-                    // a gap per line and the numbers drift.
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    // A selectable label is a button, and the theme gives
-                    // buttons room to be clicked: 4px of padding and a 26px
-                    // minimum. Either makes a line taller than the gutter's,
-                    // and the numbers drift a further line out with every
-                    // row. Here a line is exactly a line.
-                    ui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
-                    ui.spacing_mut().interact_size.y = row_height;
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    for n in range {
-                        let inside = block.is_some_and(|(a, b)| (a..=b).contains(&n));
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            // A CDATA section keeps its own newlines, so
-                            // its later lines start at column zero however
-                            // deep the element is. They are drawn shifted
-                            // under the tag they belong to — a rendering
-                            // offset only; the file's bytes are untouched.
-                            if inside && Some(n) != block.map(|(a, _)| a) {
-                                ui.add_space(block_indent as f32 * 7.5);
-                            }
-                            if editing && n == cursor_row {
-                                let response = ui.label(caret_text(session));
-                                place_caret(session, &response, ui, response.rect.left());
-                                return;
-                            }
-                            let line = session.table_cell(n, 0).unwrap_or_default();
-                            let response = ui.selectable_label(
-                                n == cursor_row,
-                                coloured_line(&line, grammar, dark),
-                            );
-                            // The whole value is marked, not just the line
-                            // the cursor landed on.
-                            if inside && n != cursor_row {
-                                ui.painter().rect_filled(
-                                    response.rect,
-                                    2.0,
-                                    ui.visuals().selection.bg_fill.gamma_multiply(0.20),
-                                );
-                            }
-                            // The rest of the row takes clicks too: a
-                            // label is only as wide as its text, so
-                            // clicking past the end of a short line hit
-                            // nothing and the cursor stayed put.
-                            let rest = ui.available_width().max(1.0);
-                            let (_, tail) = ui.allocate_exact_size(
-                                egui::vec2(rest, row_height),
-                                egui::Sense::click(),
-                            );
-                            if response.clicked() || tail.clicked() {
-                                session.grid.cursor = (n, 0);
-                            }
-                            if response.double_clicked() || tail.double_clicked() {
-                                session.grid.cursor = (n, 0);
-                                edit = true;
-                            }
-                        });
-                    }
-                });
-            });
-        // Feed the content's position back to the gutter. A frame behind,
-        // which is imperceptible, and far simpler than linking them.
-        session.text_scroll = content.state.offset.y;
-    });
+            let first = (viewport.min.y / row_height).floor().max(0.0) as usize;
+            let last = ((viewport.max.y / row_height).ceil() as usize + 1).min(lines);
+            let font = egui::TextStyle::Monospace.resolve(ui.style());
+            let numbers = ui
+                .style()
+                .text_styles
+                .get(&theme::micro())
+                .cloned()
+                .unwrap_or_else(|| font.clone());
+
+            for n in first..last {
+                let top = content.top() + n as f32 * row_height;
+                let inside = block.is_some_and(|(a, b)| (a..=b).contains(&n));
+                let row = egui::Rect::from_min_size(
+                    egui::pos2(content.left() + gutter_width, top),
+                    egui::vec2(width - gutter_width, row_height),
+                );
+
+                if inside {
+                    ui.painter()
+                        .rect_filled(row, 0.0, theme::accent_tint().gamma_multiply(0.6));
+                }
+                if n == cursor_row {
+                    ui.painter().rect_filled(row, 0.0, theme::row_selected());
+                }
+
+                let response = ui.interact(row, ui.id().with(("line", n)), egui::Sense::click());
+                if response.clicked() {
+                    session.grid.cursor = (n, 0);
+                }
+                if response.double_clicked() {
+                    session.grid.cursor = (n, 0);
+                    edit = true;
+                }
+
+                // A CDATA section keeps its own newlines, so its later
+                // lines start at column zero however deep the element is.
+                // They are drawn shifted under the tag they belong to — a
+                // rendering offset only; the file's bytes are untouched.
+                let indent = if inside && Some(n) != block.map(|(a, _)| a) {
+                    block_indent as f32 * char_px(ui, &font)
+                } else {
+                    0.0
+                };
+
+                if editing && n == cursor_row {
+                    let galley = ui.painter().layout_job(caret_text(session));
+                    let at = egui::pos2(row.left() + indent, top);
+                    let response =
+                        ui.interact(row, ui.id().with(("edit", n)), egui::Sense::click());
+                    let left = at.x;
+                    ui.painter().galley(at, galley, theme::text_body());
+                    place_caret(session, &response, ui, left);
+                    continue;
+                }
+
+                let line = session.table_cell(n, 0).unwrap_or_default();
+                let galley =
+                    ui.painter()
+                        .layout_job(coloured_line(&line, grammar, dark, font.clone()));
+                ui.painter().galley(
+                    egui::pos2(row.left() + indent, top),
+                    galley,
+                    theme::text_body(),
+                );
+            }
+
+            // The gutter last, so the text cannot run under it, and
+            // against the viewport rather than the content so it stays
+            // where it is while the file scrolls sideways.
+            let strip = egui::Rect::from_min_size(
+                egui::pos2(
+                    content.left() + viewport.min.x,
+                    content.top() + viewport.min.y,
+                ),
+                egui::vec2(gutter_width, viewport.height()),
+            );
+            ui.painter()
+                .rect_filled(strip, 0.0, theme::surface_header());
+            ui.painter().vline(
+                strip.right() - 0.5,
+                strip.y_range(),
+                egui::Stroke::new(1.0_f32, theme::border()),
+            );
+            for n in first..last {
+                let top = content.top() + n as f32 * row_height;
+                let colour = if n == cursor_row {
+                    theme::accent_text()
+                } else {
+                    theme::text_disabled()
+                };
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap(format!("{}", n + 1), numbers.clone(), colour);
+                ui.painter().galley(
+                    egui::pos2(strip.right() - 10.0 - galley.size().x, top),
+                    galley,
+                    colour,
+                );
+            }
+        });
+    session.text_scroll = scrolled.state.offset.y;
 
     edit
 }
 
 /// One line, coloured by grammar.
-fn coloured_line(line: &str, grammar: vuwr_core::Grammar, dark: bool) -> egui::text::LayoutJob {
+fn coloured_line(
+    line: &str,
+    grammar: vuwr_core::Grammar,
+    dark: bool,
+    font: egui::FontId,
+) -> egui::text::LayoutJob {
     use egui::text::{LayoutJob, TextFormat};
-    let font = egui::FontId::monospace(12.0);
     let mut job = LayoutJob::default();
     job.wrap.max_width = f32::INFINITY;
 

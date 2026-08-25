@@ -18,13 +18,20 @@
     <canvas id="vuwr"></canvas>
     <div id="loading">loading vuwr…</div>
     <script type="module">
-      import init, { start } from "./dist/vuwr.js";
       try {
-        // The wasm is passed explicitly so a rebuilt bundle is picked up:
-        // the browser caches `vuwr_bg.wasm` aggressively otherwise, and a
-        // stale one is indistinguishable from a code change that did not
-        // take.
-        await init({ module_or_path: `./dist/vuwr_bg.wasm?v=${Date.now()}` });
+        // Both halves are stamped with the build's own id, read from a
+        // file too small to be worth caching. Only the wasm used to be
+        // stamped, so a rebuild could pair a fresh module with a cached
+        // `vuwr.js` — which fails as `__wasm_bindgen_func_elem_… is not a
+        // function`, a mismatch that reads like a broken build. Stamping
+        // both also lets the browser keep them until they actually change.
+        const build = (
+          await (await fetch("./dist/build.txt", { cache: "no-store" })).text()
+        ).trim();
+        const { default: init, start } = await import(
+          `./dist/vuwr.js?v=${build}`
+        );
+        await init({ module_or_path: `./dist/vuwr_bg.wasm?v=${build}` });
         await start("vuwr");
         document.getElementById("loading").remove();
       } catch (e) {

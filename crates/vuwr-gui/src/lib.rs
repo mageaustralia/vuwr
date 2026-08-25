@@ -448,6 +448,41 @@ fn format_label(session: &Session) -> String {
     }
 }
 
+/// The inspector's width, and the width of its key column.
+const INSPECTOR_WIDTH: f32 = 356.0;
+const KEY_COLUMN: f32 = 132.0;
+/// Height of one field row.
+const FIELD_ROW: f32 = 22.0;
+
+/// A rule along the top of the frame being drawn.
+fn edge_top(ui: &egui::Ui) {
+    let rect = ui.max_rect();
+    ui.painter().hline(
+        ui.clip_rect().x_range(),
+        rect.top().round() - 0.5,
+        egui::Stroke::new(1.0_f32, theme::border()),
+    );
+}
+
+/// A rule down the left edge of the panel being drawn.
+fn edge_left(ui: &egui::Ui) {
+    let rect = ui.max_rect();
+    ui.painter().vline(
+        rect.left().round() - 0.5,
+        ui.clip_rect().y_range(),
+        egui::Stroke::new(1.0_f32, theme::border()),
+    );
+}
+
+/// A field's colour: what the value is, for reading, never for meaning.
+fn field_colour(kind: vuwr_core::FieldKind) -> egui::Color32 {
+    match kind {
+        vuwr_core::FieldKind::Url => theme::accent_text(),
+        vuwr_core::FieldKind::Number => theme::text_body(),
+        vuwr_core::FieldKind::Text => theme::text_body(),
+    }
+}
+
 /// A borderless action for the title row, where an outline would compete
 /// with Save.
 fn quiet_action(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
@@ -501,10 +536,16 @@ impl eframe::App for VuwrApp {
                 }
             });
         if self.session.as_ref().is_some_and(|s| s.show_detail) {
-            egui::TopBottomPanel::bottom("detail")
+            egui::SidePanel::right("inspector")
                 .resizable(true)
-                .default_height(140.0)
-                .show(ctx, |ui| self.detail_pane(ui));
+                .default_width(INSPECTOR_WIDTH)
+                .min_width(240.0)
+                .frame(egui::Frame::new().fill(theme::surface_sunk()))
+                .show_separator_line(false)
+                .show(ctx, |ui| {
+                    edge_left(ui);
+                    self.inspector_panel(ui, ctx);
+                });
         }
         // Two rows, deliberately: position and document state on one,
         // the keys on another, so the hints read as a legend rather than
@@ -810,44 +851,151 @@ impl VuwrApp {
     /// The selected value in full, wrapped and selectable — a
     /// spreadsheet's formula bar. A table column is far narrower than a
     /// description, so most of the file is otherwise truncated away.
-    fn detail_pane(&mut self, ui: &mut egui::Ui) {
+    /// The whole record under the cursor, read downwards.
+    ///
+    /// A feed row is twenty-three columns wide and the window shows five,
+    /// so the fields worth checking are usually the ones off the right
+    /// edge. Clicking a field takes the cursor to that column, so the
+    /// table and the panel are two views of one position rather than two
+    /// places to be.
+    fn inspector_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        let label = session.detail_label();
-        let text = session.detail_text();
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(&label)
-                    .text_style(theme::heading())
-                    .color(theme::text()),
-            );
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} characters",
-                    text.as_deref().map(|t| t.chars().count()).unwrap_or(0)
-                ))
-                .weak()
-                .small(),
-            );
-        });
-        ui.separator();
+        let inspector = session.inspector();
+        let table = session.view_mode() == ViewMode::Table;
+        let cursor_col = session.grid.cursor.1;
+        let mut go_to = None;
+
+        egui::Frame::new()
+            .fill(theme::surface_sunk())
+            .inner_margin(egui::Margin {
+                left: 14,
+                right: 14,
+                top: 11,
+                bottom: 10,
+            })
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 3.0;
+                        ui.label(
+                            egui::RichText::new(&inspector.meta)
+                                .text_style(theme::meta())
+                                .color(theme::text_dim()),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&inspector.title)
+                                    .text_style(theme::heading())
+                                    .color(theme::text()),
+                            )
+                            .truncate(),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        ui.label(
+                            egui::RichText::new("esc")
+                                .text_style(theme::micro())
+                                .color(theme::text_dim()),
+                        )
+                        .on_hover_text("Close the inspector (V)");
+                    });
+                });
+            });
+        edge_bottom(ui);
+
+        // The fields, keys in one column and values in another, so the
+        // eye runs down the names rather than hunting across.
+        let footer = 46.0;
+        let height = (ui.available_height() - footer).max(60.0);
         egui::ScrollArea::vertical()
+            .id_salt("inspector")
             .auto_shrink([false, false])
-            .show(ui, |ui| match text {
-                // Selectable, so it can be copied out with the mouse the
-                // way any other text can.
-                Some(text) => {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(text).monospace())
-                            .wrap()
-                            .selectable(true),
+            .max_height(height)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (i, field) in inspector.fields.iter().enumerate() {
+                    let selected = table && i == cursor_col;
+                    // Painted into an exact row: the key column has to
+                    // start at the same x on every line, or the names stop
+                    // being a column and the eye has to hunt again.
+                    let width = ui.available_width();
+                    let (row, response) =
+                        ui.allocate_exact_size(egui::vec2(width, FIELD_ROW), egui::Sense::click());
+                    if selected {
+                        ui.painter().rect_filled(row, 0.0, theme::row_selected());
+                    }
+                    let key_font = ui
+                        .style()
+                        .text_styles
+                        .get(&theme::meta())
+                        .cloned()
+                        .unwrap_or_default();
+                    let value_font = egui::TextStyle::Monospace.resolve(ui.style());
+                    let clip = row.intersect(ui.clip_rect());
+
+                    let key = ui.painter().layout(
+                        field.key.clone(),
+                        key_font,
+                        theme::text_muted(),
+                        KEY_COLUMN - 8.0,
                     );
-                }
-                None => {
-                    ui.label(egui::RichText::new("nothing selected").weak());
+                    let y = row.center().y - key.size().y / 2.0;
+                    ui.painter().with_clip_rect(clip).galley(
+                        egui::pos2(row.left(), y),
+                        key,
+                        theme::text_muted(),
+                    );
+
+                    let colour = field_colour(field.kind);
+                    let value = ui.painter().layout_no_wrap(
+                        field.value.replace('\n', " "),
+                        value_font,
+                        colour,
+                    );
+                    let y = row.center().y - value.size().y / 2.0;
+                    ui.painter().with_clip_rect(clip).galley(
+                        egui::pos2(row.left() + KEY_COLUMN, y),
+                        value,
+                        colour,
+                    );
+
+                    if response.clicked() && table {
+                        go_to = Some(i);
+                    }
+                    response.on_hover_text(&field.value);
                 }
             });
+
+        // The two things you do with a record you are looking at.
+        egui::Frame::new()
+            .fill(theme::surface_sunk())
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                edge_top(ui);
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 6.0) / 2.0;
+                    if ui
+                        .add_sized([width, 24.0], egui::Button::new("Edit field"))
+                        .clicked()
+                    {
+                        self.run(Command::EditCell, ctx);
+                    }
+                    if ui
+                        .add_sized([width, 24.0], egui::Button::new("Copy row"))
+                        .clicked()
+                    {
+                        self.run(Command::CopyRow, ctx);
+                    }
+                });
+            });
+
+        if let Some(col) = go_to
+            && let Some(session) = self.session.as_mut()
+        {
+            session.grid.cursor.1 = col;
+        }
     }
 
     /// Problems that are legal but probably wrong, with somewhere to go.
