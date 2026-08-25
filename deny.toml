@@ -1,6 +1,6 @@
 # cargo-deny configuration. The license allowlist is the point: anything
-# copyleft (GPL/AGPL/…) fails CI the day it is added. See the Licensing
-# section of docs/superpowers/specs/2026-08-24-vuwr-design.md.
+# copyleft (GPL/AGPL/…) fails CI the day it is added: vuwr ships as a
+# single binary, so a licence that reaches in reaches everything.
 
 # Note: r-efi is reachable through getrandom and is offered as
 # "MIT OR Apache-2.0 OR LGPL-2.1-or-later". We take it under MIT; the LGPL

@@ -127,8 +127,9 @@ crates/vuwr-web/    the browser entry point
 ```
 
 `vuwr-core` decides all behaviour; the frontends only map input and draw.
-That is deliberate — the design and its reasoning are in
-[`docs/superpowers/specs/2026-08-24-vuwr-design.md`](docs/superpowers/specs/2026-08-24-vuwr-design.md).
+That is deliberate: it is what lets the same views run in a terminal, a
+window and a browser tab, and what keeps the two frontends from drifting
+apart in behaviour.
 
 ## Licence
 
