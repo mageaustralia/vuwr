@@ -11,6 +11,11 @@ license.workspace = true
 arboard = "3"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
+# Waiting on the terminal's own file descriptor to answer a question,
+# without crossterm's event reader in the way — it buffers what it polls,
+# and the bytes we were owed became keystrokes.
+libc = "0.2"
+
 vuwr-core = { path = "../vuwr-core" }
 
 [dev-dependencies]

@@ -4283,6 +4283,7 @@ dependencies = [
  "arboard",
  "crossterm",
  "insta",
+ "libc",
  "ratatui",
  "vuwr-core",
 ]

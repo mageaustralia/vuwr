@@ -2,6 +2,7 @@
 //! a browser.
 
 mod app;
+pub mod detect;
 pub mod keymap;
 pub mod palette;
 pub mod ui;
@@ -30,6 +31,10 @@ use vuwr_core::Document;
 /// piped, which is the whole point of it.
 pub fn run(path: PathBuf, doc: Document) -> io::Result<Option<String>> {
     enable_raw_mode()?;
+    // Before the alternate screen, while the terminal is still showing
+    // its own background — and after raw mode, or the reply is line
+    // buffered and never arrives.
+    palette::detect_ground();
     io::stdout().execute(EnterAlternateScreen)?;
     let terminal = Terminal::new(CrosstermBackend::new(io::stdout()));
     let mut terminal = match terminal {

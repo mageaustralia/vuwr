@@ -97,25 +97,25 @@ impl Scheme {
             Scheme::Vuwr => {
                 if dark {
                     match token {
-                        T::Key | T::Tag => rgb(0x6EA2E0),
-                        T::Keyword => rgb(0xB48EE6),
-                        T::Str => rgb(0xE6E8EB),
-                        T::Number => rgb(0x9BD08A),
-                        T::Comment => rgb(0x8D939C),
-                        T::Escape => rgb(0xD9A23C),
-                        T::Punctuation => rgb(0xABB1BA),
-                        T::Plain => rgb(0xE6E8EB),
+                        T::Key | T::Tag => rgb(0x7AA2F7),
+                        T::Keyword => rgb(0xC39BE8),
+                        T::Str => rgb(0xA8CC8C),
+                        T::Number => rgb(0xE5A76A),
+                        T::Comment => rgb(0x6E7D91),
+                        T::Escape => rgb(0xE0B341),
+                        T::Punctuation => rgb(0x8892A0),
+                        T::Plain => rgb(0xD6DCE5),
                     }
                 } else {
                     match token {
-                        T::Key | T::Tag => rgb(0x17568F),
+                        T::Key | T::Tag => rgb(0x1C5FA8),
                         T::Keyword => rgb(0x6B3FA0),
-                        T::Str => rgb(0x383D44),
-                        T::Number => rgb(0x2F6B45),
-                        T::Comment => rgb(0x868D97),
+                        T::Str => rgb(0x2F6B3A),
+                        T::Number => rgb(0x9A5518),
+                        T::Comment => rgb(0x7A828C),
                         T::Escape => rgb(0x8A5A1E),
                         T::Punctuation => rgb(0x6B7280),
-                        T::Plain => rgb(0x383D44),
+                        T::Plain => rgb(0x2B3038),
                     }
                 }
             }
@@ -233,6 +233,29 @@ impl Scheme {
             V::Element | V::Text | V::Other => Token::Plain,
         };
         self.token(token, dark)
+    }
+
+    /// A colour that reads on any ground, for when nobody knows what the
+    /// ground is.
+    ///
+    /// A terminal that will not say what colour it is leaves the choice
+    /// between the light and the dark palette a coin toss, and losing it
+    /// means white text on white. These sit in the middle instead:
+    /// against black and against white both, every one of them has enough
+    /// contrast to read. Duller than either tuned palette, and that is the
+    /// trade — legible everywhere beats handsome half the time.
+    pub fn adaptive(token: Token) -> Rgb {
+        use Token as T;
+        match token {
+            T::Key | T::Tag => rgb(0x4A90D9),
+            T::Keyword => rgb(0x8B5CC7),
+            T::Str => rgb(0x3F9E52),
+            T::Number => rgb(0xC07830),
+            T::Comment => rgb(0x8A8F98),
+            T::Escape => rgb(0xC08A2E),
+            T::Punctuation => rgb(0x8A8F98),
+            T::Plain => rgb(0x9198A2),
+        }
     }
 
     /// The colour for a container's summary: there is more inside, which

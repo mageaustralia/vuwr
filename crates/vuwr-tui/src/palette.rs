@@ -12,34 +12,51 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 use vuwr_core::Scheme;
 
 static SCHEME: AtomicUsize = AtomicUsize::new(0);
 
+static GROUND: AtomicUsize = AtomicUsize::new(GROUND_UNKNOWN);
+const GROUND_UNKNOWN: usize = 0;
+const GROUND_DARK: usize = 1;
+const GROUND_LIGHT: usize = 2;
+
+/// Ask the terminal what colour it is, once, at startup.
+///
+/// Called from `run` with the terminal in raw mode. Everything after this
+/// reads the answer; before it, nothing is assumed.
+pub fn detect_ground() {
+    let known = match crate::detect::background() {
+        Some(colour) if crate::detect::is_dark(colour) => GROUND_DARK,
+        Some(_) => GROUND_LIGHT,
+        // `COLORFGBG`, for a terminal that will not answer but did set it:
+        // two or three fields, the last being the background as an ANSI
+        // colour index. Under 8 is dark.
+        None => match std::env::var("COLORFGBG")
+            .ok()
+            .and_then(|v| v.rsplit(';').next()?.trim().parse::<u8>().ok())
+        {
+            Some(bg) if bg < 8 => GROUND_DARK,
+            Some(_) => GROUND_LIGHT,
+            None => GROUND_UNKNOWN,
+        },
+    };
+    GROUND.store(known, Ordering::Relaxed);
+}
+
 /// Whether the terminal's own background is dark.
 ///
-/// `COLORFGBG` is what terminals that will say anything set: two or three
-/// fields, the last being the background as an ANSI colour index. Under 8
-/// is a dark background, 8 and over a light one. Terminals that say
-/// nothing are assumed dark, which is what most of them are and what the
-/// bundled colours were chosen against.
+/// Only meaningful once [`detect_ground`] has run, and a terminal that
+/// will not say leaves it unknown. Nothing that has to stay legible
+/// depends on this being right — see [`token`].
 pub fn terminal_is_dark() -> bool {
-    use std::sync::OnceLock;
-    static DARK: OnceLock<bool> = OnceLock::new();
-    *DARK.get_or_init(|| {
-        let Ok(value) = std::env::var("COLORFGBG") else {
-            return true;
-        };
-        match value
-            .rsplit(';')
-            .next()
-            .and_then(|b| b.trim().parse::<u8>().ok())
-        {
-            Some(bg) => bg < 8,
-            None => true,
-        }
-    })
+    GROUND.load(Ordering::Relaxed) != GROUND_LIGHT
+}
+
+/// Whether the terminal told us, rather than us assuming.
+pub fn ground_is_known() -> bool {
+    GROUND.load(Ordering::Relaxed) != GROUND_UNKNOWN
 }
 
 /// The scheme the document's own text is coloured by. The chrome keeps
@@ -88,32 +105,66 @@ pub fn background() -> Option<Color> {
 }
 
 /// The colour for one syntax token under the chosen scheme.
+///
+/// Two things keep this legible whatever the terminal turns out to be.
+///
+/// The file's own prose — a value, a line of text — is drawn in the
+/// terminal's *own* foreground colour rather than one of ours. Whatever
+/// that is, it reads: it is what the terminal draws everything else in.
+/// Choosing a colour for the bulk of the text is how it ended up white on
+/// white.
+///
+/// And when the terminal will not say what colour it is, the accents come
+/// from a set that reads on either ground rather than from a guess.
 pub fn token(t: vuwr_core::Token) -> Color {
     use vuwr_core::Token as T;
-    let fallback = match t {
+    let scheme = scheme();
+    let content = matches!(t, T::Plain | T::Str);
+
+    if scheme == Scheme::Vuwr {
+        if content {
+            return Color::Reset;
+        }
+        if !ground_is_known() {
+            let (r, g, b) = Scheme::adaptive(t);
+            return pick(Color::Rgb(r, g, b), accent_fallback(t));
+        }
+    }
+    from_rgb(scheme.token(t, ground_is_dark()), accent_fallback(t))
+}
+
+/// What an indexed terminal gets instead, which is the same five colours
+/// the rest of the chrome uses.
+fn accent_fallback(t: vuwr_core::Token) -> Color {
+    use vuwr_core::Token as T;
+    match t {
         T::Key | T::Tag | T::Keyword => accent(),
         T::Comment => faint(),
         T::Escape => warn(),
         T::Punctuation => dim(),
-        T::Str | T::Number | T::Plain => text(),
-    };
-    from_rgb(scheme().token(t, ground_is_dark()), fallback)
+        T::Str | T::Number | T::Plain => Color::Reset,
+    }
 }
 
 /// The colour for a container's summary on a tree row.
 pub fn placeholder_value() -> Color {
-    from_rgb(scheme().placeholder(ground_is_dark()), placeholder())
+    token(vuwr_core::Token::Punctuation)
 }
 
 /// The colour for a leaf's value on a tree row.
+///
+/// Through [`token`], so a value is legible under the same rules the rest
+/// of the file's text is.
 pub fn value(kind: vuwr_core::ValueKind) -> Color {
-    use vuwr_core::ValueKind as V;
-    let fallback = match kind {
-        V::Array | V::Object | V::Element => placeholder(),
-        V::Null | V::Comment => faint(),
-        _ => text(),
-    };
-    from_rgb(scheme().value(kind, ground_is_dark()), fallback)
+    use vuwr_core::{Token as T, ValueKind as V};
+    token(match kind {
+        V::Null | V::Comment => T::Comment,
+        V::Bool => T::Keyword,
+        V::Number => T::Number,
+        V::String => T::Str,
+        V::Array | V::Object => T::Tag,
+        V::Element | V::Text | V::Other => T::Plain,
+    })
 }
 
 /// Whether the terminal was launched with truecolor support.
@@ -135,47 +186,72 @@ fn pick(exact: Color, fallback: Color) -> Color {
     if truecolor() { exact } else { fallback }
 }
 
-/// Active values, the current view's name.
+// The chrome's colours.
+//
+// Foregrounds are mid-tones, chosen to read on a white terminal and a
+// black one alike, and the brightest of them is the terminal's own
+// foreground — whatever that is, it reads. Nothing here is picked from a
+// guess about the ground, because a guess that goes wrong here is a
+// status line nobody can see.
+//
+// A *background* cannot be a mid-tone — it has to match the ground — so
+// the one of those there is asks which ground we are on.
+
+/// Active values, the current view's name: the terminal's own foreground.
 pub fn text() -> Color {
-    pick(Color::Rgb(0xE6, 0xE8, 0xEB), Color::White)
+    Color::Reset
 }
 
 /// Meta: counts, positions that are not the primary one.
 pub fn dim() -> Color {
-    pick(Color::Rgb(0xAB, 0xB1, 0xBA), Color::Gray)
+    pick(Color::Rgb(0x8A, 0x90, 0x99), Color::Gray)
 }
 
 /// Hint labels and anything else that should recede.
 pub fn faint() -> Color {
-    pick(Color::Rgb(0x8D, 0x93, 0x9C), Color::DarkGray)
+    pick(Color::Rgb(0x7A, 0x80, 0x89), Color::DarkGray)
 }
 
 /// Paths, identifiers, and the views you are not in.
-///
-/// The indexed fallback is *light* blue: plain `Blue` is near-black on a
-/// dark terminal, which is where a terminal application spends its life.
 pub fn accent() -> Color {
-    pick(Color::Rgb(0x6E, 0xA2, 0xE0), Color::LightBlue)
+    pick(Color::Rgb(0x4A, 0x90, 0xD9), Color::LightBlue)
 }
 
 /// Unsaved, outliers, anything the user should look at.
 pub fn warn() -> Color {
-    pick(Color::Rgb(0xD9, 0xA2, 0x3C), Color::LightYellow)
+    pick(Color::Rgb(0xC0, 0x8A, 0x2E), Color::LightYellow)
 }
 
 /// A problem, as opposed to a caution.
 pub fn bad() -> Color {
-    pick(Color::Rgb(0xD1, 0x6B, 0x5A), Color::LightRed)
+    pick(Color::Rgb(0xCC, 0x5F, 0x52), Color::LightRed)
 }
 
-/// The background of the row the cursor is on.
-pub fn row_selected() -> Color {
+/// How to mark the row the cursor is on.
+///
+/// A background has to match the ground — a dark band under a light
+/// terminal's dark text hides the row it is meant to point at — so this
+/// is the one colour that cannot be a mid-tone.
+///
+/// When the terminal will not say what colour it is, this inverts
+/// instead. Inversion is right on any ground by construction, which is
+/// why terminals have always used it, and it is better than a band that
+/// is wrong half the time.
+pub fn selection() -> Style {
     if let Some((r, g, b)) = scheme().selection()
         && truecolor()
     {
-        return Color::Rgb(r, g, b);
+        return Style::default().bg(Color::Rgb(r, g, b));
     }
-    pick(Color::Rgb(0x1C, 0x26, 0x36), Color::Blue)
+    if !ground_is_known() {
+        return Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+    }
+    let bg = if terminal_is_dark() {
+        pick(Color::Rgb(0x1C, 0x26, 0x36), Color::Blue)
+    } else {
+        pick(Color::Rgb(0xDC, 0xE6, 0xF5), Color::Cyan)
+    };
+    Style::default().bg(bg)
 }
 
 /// A value that is really a placeholder — `<item>`, `{…}` — rather than

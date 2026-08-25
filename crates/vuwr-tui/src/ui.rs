@@ -357,7 +357,7 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         // Reversing the whole row while typing would hide the caret,
         // which is drawn reversed itself.
         if r == cursor_row && !editing {
-            line = line.style(Style::default().bg(palette::row_selected()));
+            line = line.style(palette::selection());
         }
         lines.push(line);
     }
@@ -484,7 +484,7 @@ fn render_text(frame: &mut Frame, app: &mut App, area: Rect) {
         let mut spans = vec![gutter_span];
         for span in highlighted(&text, grammar) {
             spans.push(if n == cursor {
-                span.style(Style::default().bg(palette::row_selected()))
+                span.style(palette::selection())
             } else {
                 span
             });
