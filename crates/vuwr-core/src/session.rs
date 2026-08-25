@@ -188,6 +188,12 @@ pub struct Session {
     /// spreadsheet's formula bar does. A table column is far narrower
     /// than a description, and truncation hides most of the file.
     pub show_detail: bool,
+    /// Show text view with entity references decoded.
+    ///
+    /// Off by default: text view is the source, and the source is what it
+    /// should show. On, it reads as the markup it represents, which is
+    /// the point of asking.
+    pub decoded_text: bool,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
     /// The exact bytes those lines came from, and each line's byte span
@@ -228,6 +234,7 @@ impl Session {
             renaming: false,
             text_scroll: 0.0,
             show_detail: false,
+            decoded_text: false,
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -612,6 +619,19 @@ impl Session {
 
             Command::OpenPalette => self.mode = Mode::Command { buf: String::new() },
             Command::Help => self.show_help = !self.show_help,
+            Command::ToggleDecoded => {
+                if !self.doc.is_xml() {
+                    self.status = "only XML carries entity references".into();
+                    return Effect::None;
+                }
+                self.decoded_text = !self.decoded_text;
+                self.rebuild_text();
+                self.status = if self.decoded_text {
+                    "showing decoded text".into()
+                } else {
+                    "showing the source".into()
+                };
+            }
             Command::ToggleDetail => {
                 self.show_detail = !self.show_detail;
                 if self.show_detail && self.detail_text().is_none() {
@@ -1605,7 +1625,16 @@ impl Session {
         self.text_lines = self
             .text_spans
             .iter()
-            .map(|&(a, b)| String::from_utf8_lossy(&self.text_bytes[a..b]).into_owned())
+            .map(|&(a, b)| {
+                let line = String::from_utf8_lossy(&self.text_bytes[a..b]).into_owned();
+                // Decoding is a view: the bytes and the spans behind it are
+                // untouched, so an untouched line is written back exactly.
+                if self.decoded_text {
+                    crate::decode(&line)
+                } else {
+                    line
+                }
+            })
             .collect();
     }
 
@@ -1615,6 +1644,16 @@ impl Session {
     fn commit_text_line(&mut self, line: usize, value: &str) {
         let Some(&(start, end)) = self.text_spans.get(line) else {
             return;
+        };
+        // Typed against decoded text, so it has to be encoded again — and
+        // only this line is touched, so the rest of the file keeps its own
+        // spelling of every entity.
+        let encoded;
+        let value = if self.decoded_text {
+            encoded = crate::encode(value);
+            encoded.as_str()
+        } else {
+            value
         };
         let mut bytes = Vec::with_capacity(self.text_bytes.len() + value.len());
         bytes.extend_from_slice(&self.text_bytes[..start]);

@@ -694,3 +694,78 @@ fn csv_cells_are_written_verbatim() {
         "a\n<p>& literal</p>\n"
     );
 }
+
+// --- Decoded text view ---
+
+#[test]
+fn text_view_can_show_the_markup_rather_than_the_source() {
+    let mut s = xml_session("<r><d>&lt;p&gt;Hi&lt;/p&gt;</d></r>");
+    s.execute(Command::ViewText);
+    assert!(
+        s.table_cell(0, 0).unwrap().contains("&lt;p&gt;"),
+        "the source by default"
+    );
+
+    s.execute(Command::ToggleDecoded);
+    assert!(
+        s.table_cell(0, 0).unwrap().contains("<p>Hi</p>"),
+        "decoded when asked: {:?}",
+        s.table_cell(0, 0)
+    );
+}
+
+/// Decoding is a view. Nothing is written, so the file is untouched.
+#[test]
+fn decoding_the_view_does_not_change_the_file() {
+    let src = "<r><d>&lt;p&gt;Hi&lt;/p&gt;</d></r>";
+    let mut s = xml_session(src);
+    s.execute(Command::ViewText);
+    s.execute(Command::ToggleDecoded);
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+}
+
+/// A line edited while decoded is encoded again on the way back, so the
+/// document stays valid.
+#[test]
+fn editing_a_decoded_line_encodes_it_again() {
+    let mut s = xml_session("<r><d>&lt;p&gt;old&lt;/p&gt;</d></r>");
+    s.execute(Command::ViewText);
+    s.execute(Command::ToggleDecoded);
+    s.grid.cursor = (0, 0);
+
+    // Text view edits its line in place, which is the path a user takes.
+    let shown = s.table_cell(0, 0).unwrap();
+    s.execute(Command::ReplaceCell);
+    for c in shown.replace("old", "new").chars() {
+        s.input_char(c);
+    }
+    s.input_submit();
+
+    let out = String::from_utf8(s.doc.serialize()).unwrap();
+    assert!(
+        out.contains("&lt;p&gt;new&lt;/p&gt;"),
+        "encoded again: {out}"
+    );
+    assert!(
+        Document::parse(out.as_bytes(), FormatHint::Xml).is_ok(),
+        "and still valid"
+    );
+}
+
+#[test]
+fn toggling_back_shows_the_source_again() {
+    let mut s = xml_session("<r><d>&lt;p&gt;Hi&lt;/p&gt;</d></r>");
+    s.execute(Command::ViewText);
+    s.execute(Command::ToggleDecoded);
+    s.execute(Command::ToggleDecoded);
+    assert!(s.table_cell(0, 0).unwrap().contains("&lt;p&gt;"));
+}
+
+/// Only XML has entities; saying so beats a toggle that does nothing.
+#[test]
+fn the_decoded_toggle_is_refused_for_other_formats() {
+    let mut s = session(r#"{"a":1}"#);
+    s.execute(Command::ToggleDecoded);
+    assert!(!s.decoded_text);
+    assert!(s.status.contains("only XML"), "{}", s.status);
+}

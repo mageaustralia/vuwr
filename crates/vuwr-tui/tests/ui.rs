@@ -1568,3 +1568,56 @@ fn the_tree_opens_the_box_for_a_value_that_does_not_fit() {
     app.handle_key(key(KeyCode::Char('i')));
     assert!(app.editing_large(), "the box opened in the tree too");
 }
+
+/// Moving the caret must not change the text. With the caret *on* a
+/// newline, that newline was drawn as a reversed span holding "\n", which
+/// draws nothing and does not break the line — so the following line
+/// silently joined it and the value appeared to rewrite itself as the
+/// cursor moved.
+#[test]
+fn moving_the_caret_never_changes_what_is_drawn() {
+    // Escaped, so it is the element's *text* rather than child elements —
+    // which is how a feed carries markup, and what the editor opens on.
+    let encoded = "&lt;ul&gt;\n&lt;li&gt;one&lt;/li&gt;\n&lt;li&gt;two&lt;/li&gt;\n&lt;/ul&gt;";
+    let src = format!("<r><d>{encoded}</d></r>");
+    let value = "<ul>\n<li>one</li>\n<li>two</li>\n</ul>";
+    let doc = Document::parse(src.as_bytes(), FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+
+    /// The drawn text, ignoring where the caret happens to be.
+    fn drawn(app: &mut App) -> Vec<String> {
+        render(app, 60, 16)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| l.contains("<li>") || l.contains("<ul>") || l.contains("</ul>"))
+            .collect()
+    }
+
+    let start = drawn(&mut app);
+    assert!(
+        start.len() >= 4,
+        "four structural lines to begin with: {start:?}"
+    );
+
+    // Walk the caret through the whole value; the text must not move.
+    for _ in 0..value.chars().count() {
+        app.handle_key(key(KeyCode::Left));
+        assert_eq!(drawn(&mut app), start, "the text moved as the caret did");
+    }
+}
+
+/// The caret has to be findable: a reversed cell on a busy screen was not.
+#[test]
+fn the_editor_is_visibly_a_separate_thing() {
+    let doc = Document::parse(b"<r><d>hello there</d></r>", FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    let out = render(&mut app, 60, 12);
+    assert!(out.contains("edit value"), "titled:\n{out}");
+    assert!(out.contains("Ctrl-S"), "and says how to leave:\n{out}");
+    assert!(
+        out.contains('━'),
+        "with a heavy border to separate it:\n{out}"
+    );
+}

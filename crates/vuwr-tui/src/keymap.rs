@@ -97,6 +97,7 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         (KeyCode::Char('?'), false) => Command::Help,
         (KeyCode::Char('H'), false) => Command::ToggleHints,
         (KeyCode::Char('V'), false) => Command::ToggleDetail,
+        (KeyCode::Char('E'), false) => Command::ToggleDecoded,
 
         _ => return Resolved::None,
     };
@@ -163,6 +164,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::Help => "?",
         Command::ToggleHints => "H",
         Command::ToggleDetail => "V",
+        Command::ToggleDecoded => "E",
     }
 }
 

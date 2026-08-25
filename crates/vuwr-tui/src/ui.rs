@@ -5,7 +5,9 @@
 //! Tree view: two columns (key + summary), cursor row is highlighted.
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Cell as TCell, Clear, Paragraph, Row as TRow, Table, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Cell as TCell, Clear, Paragraph, Row as TRow, Table, Wrap,
+};
 
 use crate::app::App;
 use vuwr_core::Command;
@@ -88,36 +90,65 @@ fn render_large_edit(frame: &mut Frame, app: &App, area: Rect) {
     };
     frame.render_widget(Clear, popup);
 
-    // Split the text at the caret so it is visible, as inline editing does.
+    // Walk the text once, breaking lines at newlines and marking the
+    // character under the caret as it goes.
+    //
+    // Splitting at the caret and reassembling looked simpler and was
+    // wrong: with the caret *on* a newline, that newline became a reversed
+    // span holding "\n", which draws nothing and does not break the line —
+    // so the next line silently joined this one and the text appeared to
+    // change as the cursor moved.
     let caret = (*caret).min(buf.len());
-    let (before, after) = buf.split_at(caret);
-    let mut chars = after.chars();
-    let under = chars.next();
-    let rest: String = chars.collect();
-
     let mut lines: Vec<Line> = Vec::new();
-    let mut current: Vec<Span> = Vec::new();
-    for (i, part) in before.split('\n').enumerate() {
-        if i > 0 {
-            lines.push(Line::from(std::mem::take(&mut current)));
-        }
-        current.push(Span::raw(part.to_string()));
-    }
-    current.push(Span::styled(
-        under.map(|c| c.to_string()).unwrap_or_else(|| " ".into()),
-        Style::default().reversed(),
-    ));
-    for (i, part) in rest.split('\n').enumerate() {
-        if i > 0 {
-            lines.push(Line::from(std::mem::take(&mut current)));
-        }
-        current.push(Span::raw(part.to_string()));
-    }
-    lines.push(Line::from(current));
+    let mut spans: Vec<Span> = Vec::new();
+    let mut run = String::new();
+    let caret_style = Style::default().bg(Color::Yellow).fg(Color::Black).bold();
 
+    for (i, ch) in buf.char_indices() {
+        if ch == '\n' {
+            if !run.is_empty() {
+                spans.push(Span::raw(std::mem::take(&mut run)));
+            }
+            if i == caret {
+                // The caret sits at the end of the line it is on, and the
+                // newline still breaks it.
+                spans.push(Span::styled(" ", caret_style));
+            }
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            continue;
+        }
+        if i == caret {
+            if !run.is_empty() {
+                spans.push(Span::raw(std::mem::take(&mut run)));
+            }
+            spans.push(Span::styled(ch.to_string(), caret_style));
+        } else {
+            run.push(ch);
+        }
+    }
+    if !run.is_empty() {
+        spans.push(Span::raw(run));
+    }
+    if caret >= buf.len() {
+        spans.push(Span::styled(" ", caret_style));
+    }
+    lines.push(Line::from(spans));
+
+    // A filled, coloured frame: the overlay sits on top of the view, and a
+    // dim border left it hard to tell where the editor ended and the table
+    // behind it began.
     let block = Block::bordered()
-        .title(" edit value — Ctrl-S to save, Esc to cancel ")
-        .border_style(Style::default().dim());
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(Color::Cyan))
+        .style(Style::default().bg(Color::Black).fg(Color::White))
+        .title(Span::styled(
+            " edit value ",
+            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+        ))
+        .title_bottom(Span::styled(
+            " Ctrl-S save   Esc cancel   ←→↑↓ move ",
+            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+        ));
     frame.render_widget(
         Paragraph::new(lines)
             .block(block)

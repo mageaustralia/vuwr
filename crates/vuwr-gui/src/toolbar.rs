@@ -121,6 +121,14 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
         });
         ui.separator();
 
+        if session.doc.is_xml()
+            && ui
+                .selectable_label(session.decoded_text, "decoded")
+                .on_hover_text("Show text view as the markup it represents, not the source (E)")
+                .clicked()
+        {
+            clicked = Some(Command::ToggleDecoded);
+        }
         if ui
             .selectable_label(session.show_detail, "detail")
             .on_hover_text("Show the selected value in full (V)")

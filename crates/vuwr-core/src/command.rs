@@ -80,6 +80,7 @@ pub enum Command {
     /// Show or hide the hint bar.
     ToggleHints,
     ToggleDetail,
+    ToggleDecoded,
 }
 
 impl Command {
@@ -139,6 +140,7 @@ impl Command {
         Command::Help,
         Command::ToggleHints,
         Command::ToggleDetail,
+        Command::ToggleDecoded,
     ];
 
     /// The stable name used by the `:` palette and by help.
@@ -198,6 +200,7 @@ impl Command {
             Command::Help => "help",
             Command::ToggleHints => "toggle-hints",
             Command::ToggleDetail => "detail",
+            Command::ToggleDecoded => "decoded",
         }
     }
 
@@ -258,6 +261,7 @@ impl Command {
             Command::Help => "show this help",
             Command::ToggleHints => "show or hide the hint bar",
             Command::ToggleDetail => "show the selected value in full",
+            Command::ToggleDecoded => "show text view decoded, or as the source",
         }
     }
 
@@ -319,6 +323,7 @@ impl Command {
             Command::Help => "help",
             Command::ToggleHints => "hints",
             Command::ToggleDetail => "detail",
+            Command::ToggleDecoded => "decoded",
         }
     }
 
@@ -371,7 +376,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 54, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 55, "update ALL when adding a command");
     }
 
     #[test]
