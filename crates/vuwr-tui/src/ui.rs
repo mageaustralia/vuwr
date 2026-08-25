@@ -5,7 +5,7 @@
 //! Tree view: two columns (key + summary), cursor row is highlighted.
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Cell as TCell, Clear, Paragraph, Row as TRow, Table};
+use ratatui::widgets::{Block, Cell as TCell, Clear, Paragraph, Row as TRow, Table, Wrap};
 
 use crate::app::App;
 use vuwr_core::Command;
@@ -33,9 +33,68 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if hint_rows == 1 {
         render_hints(frame, &hints, chunks[2]);
     }
+    if app.editing_large() {
+        render_large_edit(frame, app, frame.area());
+    }
     if app.show_help {
         render_help(frame, frame.area());
     }
+}
+
+/// The larger editor, for a value that will not fit on one line.
+///
+/// The GUI opens a window; a terminal has none, so this is an overlay over
+/// the view, with the same decoded text and the same commit.
+fn render_large_edit(frame: &mut Frame, app: &App, area: Rect) {
+    let Some((buf, caret)) = &app.large_edit else {
+        return;
+    };
+    let width = area.width.saturating_sub(6).max(20);
+    let height = area.height.saturating_sub(4).max(6);
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, popup);
+
+    // Split the text at the caret so it is visible, as inline editing does.
+    let caret = (*caret).min(buf.len());
+    let (before, after) = buf.split_at(caret);
+    let mut chars = after.chars();
+    let under = chars.next();
+    let rest: String = chars.collect();
+
+    let mut lines: Vec<Line> = Vec::new();
+    let mut current: Vec<Span> = Vec::new();
+    for (i, part) in before.split('\n').enumerate() {
+        if i > 0 {
+            lines.push(Line::from(std::mem::take(&mut current)));
+        }
+        current.push(Span::raw(part.to_string()));
+    }
+    current.push(Span::styled(
+        under.map(|c| c.to_string()).unwrap_or_else(|| " ".into()),
+        Style::default().reversed(),
+    ));
+    for (i, part) in rest.split('\n').enumerate() {
+        if i > 0 {
+            lines.push(Line::from(std::mem::take(&mut current)));
+        }
+        current.push(Span::raw(part.to_string()));
+    }
+    lines.push(Line::from(current));
+
+    let block = Block::bordered()
+        .title(" edit value — Ctrl-S to save, Esc to cancel ")
+        .border_style(Style::default().dim());
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
 }
 
 /// The help overlay, built from `Command::ALL` paired with the keymap —

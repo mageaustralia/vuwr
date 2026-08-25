@@ -14,6 +14,9 @@ use crate::keymap::Resolved;
 
 pub struct App {
     pub session: Session,
+    /// The larger editor: the value being edited, and the caret in it.
+    /// A terminal has no window to open, so it is drawn as an overlay.
+    pub large_edit: Option<(String, usize)>,
     /// Where the document came from. `-` means it was piped in.
     path: PathBuf,
     pub quit: bool,
@@ -39,6 +42,7 @@ impl App {
     pub fn new(path: PathBuf, doc: Document) -> App {
         App {
             session: Session::new(doc),
+            large_edit: None,
             path,
             quit: false,
             pending_output: None,
@@ -55,7 +59,67 @@ impl App {
         self.pending_output.take()
     }
 
+    /// True while the larger editor is open.
+    pub fn editing_large(&self) -> bool {
+        self.large_edit.is_some()
+    }
+
+    /// Keys for the larger editor. It takes newlines, which is the whole
+    /// point of it; Ctrl-S commits and Esc abandons.
+    fn large_edit_key(&mut self, key: KeyEvent) {
+        let Some((buf, caret)) = self.large_edit.as_mut() else {
+            return;
+        };
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => self.large_edit = None,
+            KeyCode::Char('s') if ctrl => {
+                let (text, _) = self.large_edit.take().expect("open");
+                self.session.commit_large_edit(&text);
+            }
+            KeyCode::Enter => {
+                buf.insert(*caret, '\n');
+                *caret += 1;
+            }
+            KeyCode::Backspace => {
+                if let Some(prev) = buf[..*caret].chars().next_back() {
+                    let start = *caret - prev.len_utf8();
+                    buf.remove(start);
+                    *caret = start;
+                }
+            }
+            KeyCode::Delete => {
+                if *caret < buf.len() {
+                    buf.remove(*caret);
+                }
+            }
+            KeyCode::Left => {
+                if let Some(prev) = buf[..*caret].chars().next_back() {
+                    *caret -= prev.len_utf8();
+                }
+            }
+            KeyCode::Right => {
+                if let Some(next) = buf[*caret..].chars().next() {
+                    *caret += next.len_utf8();
+                }
+            }
+            KeyCode::Home => *caret = 0,
+            KeyCode::End => *caret = buf.len(),
+            KeyCode::Char(c)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
+                buf.insert(*caret, c);
+                *caret += c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if self.editing_large() {
+            self.large_edit_key(key);
+            return;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             let effect = self.session.execute(Command::Quit);
             self.apply(effect);
@@ -97,6 +161,13 @@ impl App {
         let was_pending_g = self.pending_g;
         self.pending_g = false;
         match crate::keymap::resolve(key, was_pending_g) {
+            Resolved::Run(Command::EditLarge) => match self.session.large_edit_text() {
+                Some(text) => {
+                    let caret = text.len();
+                    self.large_edit = Some((text, caret));
+                }
+                None => self.session.report("nothing here to edit"),
+            },
             Resolved::Run(cmd) => {
                 let effect = self.session.execute(cmd);
                 self.apply(effect);

@@ -374,3 +374,47 @@ fn editing_a_cell_in_a_wrapped_feed_writes_the_right_element() {
     assert!(d.undo());
     assert_eq!(out(&d), src);
 }
+
+/// Feeds put a newline between a tag and its CDATA. That whitespace lays
+/// the file out; it is not the value, and showing it made a column of
+/// links read `\r    https://…`.
+#[test]
+fn layout_whitespace_around_content_is_not_the_value() {
+    let d = xml("<rows><row><link>\n    <![CDATA[https://example.com]]>\n  </link></row></rows>");
+    assert_eq!(
+        d.as_xml().unwrap().table_cell(0, 0).as_deref(),
+        Some("https://example.com")
+    );
+}
+
+/// Writing must land on the content, not on the whitespace beside it, and
+/// must leave the layout alone.
+#[test]
+fn writing_lands_on_the_content_not_the_whitespace() {
+    let mut d = xml("<rows><row><link>\n  <![CDATA[old]]>\n</link></row></rows>");
+    d.set_cell(0, 0, "new").unwrap();
+    assert_eq!(
+        out(&d),
+        "<rows><row><link>\n  <![CDATA[new]]>\n</link></row></rows>",
+        "the value changes and the layout survives"
+    );
+}
+
+/// An element that really is only whitespace keeps it: that whitespace is
+/// the content, however unlikely.
+#[test]
+fn an_element_of_only_whitespace_keeps_it() {
+    let src = "<rows><row><pad>   </pad></row></rows>";
+    let d = xml(src);
+    assert_eq!(d.as_xml().unwrap().table_cell(0, 0).as_deref(), Some("   "));
+    assert_eq!(out(&d), src);
+}
+
+#[test]
+fn text_split_around_a_comment_still_reads_whole() {
+    let d = xml("<rows><row><t>one<!-- c -->two</t></row></rows>");
+    assert_eq!(
+        d.as_xml().unwrap().table_cell(0, 0).as_deref(),
+        Some("onetwo")
+    );
+}

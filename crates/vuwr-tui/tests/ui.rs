@@ -1250,3 +1250,129 @@ fn tree_edits_commit_to_the_right_node() {
         "the number stays a number"
     );
 }
+
+// --- Tree navigation with arrows, and the larger editor ---
+
+/// Down, right, down, right — the way every file browser works. Right in
+/// a tree used to move a column, which a tree does not have.
+#[test]
+fn right_opens_a_node_and_left_closes_it() {
+    let doc = Document::parse(br#"{"a":1,"o":{"x":1,"y":2}}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    assert_eq!(app.tree_rows.len(), 2);
+
+    app.handle_key(key(KeyCode::Down)); // the object
+    app.handle_key(key(KeyCode::Right)); // open it
+    assert_eq!(app.tree_rows.len(), 4, "its children appear");
+
+    app.handle_key(key(KeyCode::Left)); // close it again
+    assert_eq!(app.tree_rows.len(), 2);
+}
+
+/// Right on an already-open node steps into it rather than doing nothing.
+#[test]
+fn right_on_an_open_node_steps_into_it() {
+    let doc = Document::parse(br#"{"o":{"x":1}}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.handle_key(key(KeyCode::Right)); // open
+    app.handle_key(key(KeyCode::Right)); // into
+    assert_eq!(app.grid.cursor.0, 1);
+    assert_eq!(app.tree_rows[1].label, "x");
+}
+
+/// Left on a closed child goes out to its parent.
+#[test]
+fn left_on_a_child_returns_to_the_parent() {
+    let doc = Document::parse(br#"{"o":{"x":1}}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.handle_key(key(KeyCode::Right));
+    app.handle_key(key(KeyCode::Right)); // on `x`
+    app.handle_key(key(KeyCode::Left));
+    assert_eq!(app.grid.cursor.0, 0, "back on the object");
+}
+
+#[test]
+fn right_on_a_scalar_does_nothing() {
+    let doc = Document::parse(br#"{"a":1}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.handle_key(key(KeyCode::Right));
+    assert_eq!(app.tree_rows.len(), 1);
+    assert_eq!(app.grid.cursor.0, 0);
+}
+
+/// The terminal gets the same larger editor as the window, since a long
+/// value cannot be edited inline in either.
+#[test]
+fn f2_opens_the_larger_editor_in_the_terminal() {
+    let long = "line one\nline two";
+    let src = format!("<r><d>{long}</d></r>");
+    let doc = Document::parse(src.as_bytes(), FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    assert!(app.editing_large());
+
+    let out = render(&mut app, 60, 12);
+    assert!(out.contains("line one"), "the value is shown:\n{out}");
+    assert!(out.contains("Ctrl-S"), "and how to commit it:\n{out}");
+}
+
+#[test]
+fn the_larger_editor_takes_newlines_and_commits_with_ctrl_s() {
+    let doc = Document::parse(b"<r><d>old</d></r>", FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+
+    for _ in 0.."old".len() {
+        app.handle_key(key(KeyCode::Backspace));
+    }
+    for c in "one".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Enter)); // a newline, not a commit
+    for c in "two".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    assert!(
+        app.editing_large(),
+        "Enter inserts a line rather than committing"
+    );
+
+    app.handle_key(ctrl('s'));
+    assert!(!app.editing_large());
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "<r><d>one\ntwo</d></r>"
+    );
+}
+
+#[test]
+fn escape_abandons_the_larger_editor() {
+    let src = "<r><d>old</d></r>";
+    let doc = Document::parse(src.as_bytes(), FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Char('x')));
+    app.handle_key(key(KeyCode::Esc));
+    assert!(!app.editing_large());
+    assert_eq!(String::from_utf8(app.doc.serialize()).unwrap(), src);
+}
+
+/// The terminal decodes and encodes exactly as the window does.
+#[test]
+fn the_larger_editor_decodes_and_encodes() {
+    let doc = Document::parse(b"<r><d>&lt;p&gt;hi&lt;/p&gt;</d></r>", FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+
+    let out = render(&mut app, 60, 12);
+    assert!(out.contains("<p>hi</p>"), "decoded for reading:\n{out}");
+
+    app.handle_key(key(KeyCode::Char('!')));
+    app.handle_key(ctrl('s'));
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "<r><d>&lt;p&gt;hi&lt;/p&gt;!</d></r>",
+        "and encoded on the way back"
+    );
+}

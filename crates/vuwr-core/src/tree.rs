@@ -266,15 +266,8 @@ pub fn summarize(node: &Node) -> String {
             // An element's value is its text, whether written plainly or
             // wrapped in CDATA — a feed that wraps everything in CDATA
             // would otherwise show nothing but empty rows.
-            let text: String = e
-                .children
-                .iter()
-                .filter_map(|c| match c {
-                    Node::Text(t) | Node::CData(t) => Some(t.trim()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("");
+            let text = e.text_content();
+            let text = text.trim().to_string();
             if is_container(node) {
                 format!("<{}>", e.tag)
             } else {

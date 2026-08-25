@@ -367,6 +367,10 @@ impl Session {
         let (rows, cols) = self.grid_dims();
         let page = self.viewport_rows as isize;
         match cmd {
+            // In a tree, left and right open and close, the way every
+            // file browser behaves: down, right, down, right.
+            Command::MoveLeft if self.view == ViewMode::Tree => self.collapse_or_parent(),
+            Command::MoveRight if self.view == ViewMode::Tree => self.expand_or_child(),
             Command::MoveLeft => self.grid.move_by(0, -1, rows, cols),
             Command::MoveRight => self.grid.move_by(0, 1, rows, cols),
             Command::MoveUp => self.grid.move_by(-1, 0, rows, cols),
@@ -1041,6 +1045,44 @@ impl Session {
         }
     }
 
+    /// Right: open this node, or step into it if it is already open.
+    fn expand_or_child(&mut self) {
+        let Some(row) = self.tree_rows.get(self.grid.cursor.0).cloned() else {
+            return;
+        };
+        if !row.is_container() {
+            return;
+        }
+        if row.is_expanded() {
+            // Already open, so move to the first child, which is the next
+            // row by construction.
+            let (rows, cols) = self.grid_dims();
+            self.grid.move_by(1, 0, rows, cols);
+        } else {
+            self.expansion.open(&row.path);
+            self.rebuild_tree();
+        }
+    }
+
+    /// Left: close this node, or step out to its parent.
+    fn collapse_or_parent(&mut self) {
+        let Some(row) = self.tree_rows.get(self.grid.cursor.0).cloned() else {
+            return;
+        };
+        if row.is_expanded() {
+            self.expansion.close(&row.path);
+            self.rebuild_tree();
+            self.clamp_cursor();
+            return;
+        }
+        if row.path.len() > 1 {
+            let parent = &row.path[..row.path.len() - 1];
+            if let Some(i) = self.tree_rows.iter().position(|r| r.path == parent) {
+                self.grid.cursor.0 = i;
+            }
+        }
+    }
+
     /// Open or close a specific path, for a frontend that can point at
     /// one directly rather than moving a cursor to it.
     pub fn toggle_path(&mut self, path: &[crate::PathSeg]) {
@@ -1595,14 +1637,7 @@ fn node_to_edit_string(node: &Node) -> String {
         // An element that holds only text *is* its text as far as editing
         // goes: `<description>` shows its content in the tree, so the
         // editor has to open on the same thing.
-        Node::Element(e) => e
-            .children
-            .iter()
-            .filter_map(|c| match c {
-                Node::Text(t) | Node::CData(t) => Some(t.as_str()),
-                _ => None,
-            })
-            .collect(),
+        Node::Element(e) => e.text_content(),
         _ => String::new(),
     }
 }

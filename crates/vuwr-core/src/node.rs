@@ -61,6 +61,56 @@ pub struct Map {
     pub spaced: bool,
 }
 
+impl Element {
+    /// The element's text, ignoring the whitespace that only exists to
+    /// lay the file out.
+    ///
+    /// `<link>\n  <![CDATA[url]]></link>` is a URL, not a newline
+    /// followed by a URL — showing the layout made a column of feed links
+    /// read `\r    https://…`.
+    pub fn text_content(&self) -> String {
+        let meaningful: Vec<&str> = self
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                Node::CData(t) => Some(t.as_str()),
+                Node::Text(t) if !t.trim().is_empty() => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        if meaningful.is_empty() {
+            // Nothing but whitespace: that whitespace *is* the content.
+            return self
+                .children
+                .iter()
+                .filter_map(|c| match c {
+                    Node::Text(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect();
+        }
+        meaningful.concat()
+    }
+
+    /// Where the element's text lives, so an edit replaces the content
+    /// rather than the whitespace beside it.
+    fn text_slot(&self) -> Option<usize> {
+        self.children
+            .iter()
+            .position(|c| matches!(c, Node::CData(_)))
+            .or_else(|| {
+                self.children
+                    .iter()
+                    .position(|c| matches!(c, Node::Text(t) if !t.trim().is_empty()))
+            })
+            .or_else(|| {
+                self.children
+                    .iter()
+                    .position(|c| matches!(c, Node::Text(_)))
+            })
+    }
+}
+
 /// An XML element: tag, attributes (order preserved), children, and
 /// whether it was self-closing (`<br/>`).
 #[derive(Debug, Clone, PartialEq)]
@@ -142,36 +192,26 @@ impl Node {
                 let Node::Element(e) = node else {
                     return Err(crate::Error::NoSuchPath);
                 };
-                let old: String = e
-                    .children
-                    .iter()
-                    .filter_map(|c| match c {
-                        Node::Text(t) | Node::CData(t) => Some(t.as_str()),
-                        _ => None,
-                    })
-                    .collect();
+                let old = e.text_content();
                 let text = match value {
                     Node::Text(t) | Node::Str(t) => t,
                     other => other.scalar_text(),
                 };
                 // Replace the first text child and drop any others, so
                 // repeated edits do not accumulate fragments.
-                // Replace the first text-bearing child in place, keeping
-                // it whatever it was: rewriting a CDATA section as a plain
-                // text node would change how the document escapes.
-                let mut replaced = false;
-                e.children.retain_mut(|c| match c {
-                    Node::Text(t) | Node::CData(t) if !replaced => {
-                        *t = text.clone();
-                        replaced = true;
-                        true
+                // Write into the slot the content lives in, keeping it
+                // whatever it was: rewriting a CDATA section as plain text
+                // would change how the document escapes, and writing into
+                // the layout whitespace would leave the old value behind.
+                match e.text_slot() {
+                    Some(i) => match &mut e.children[i] {
+                        Node::Text(t) | Node::CData(t) => *t = text,
+                        _ => unreachable!("text_slot only points at text"),
+                    },
+                    None => {
+                        e.children.push(Node::Text(text));
+                        e.self_closing = false;
                     }
-                    Node::Text(_) | Node::CData(_) => false,
-                    _ => true,
-                });
-                if !replaced {
-                    e.children.push(Node::Text(text));
-                    e.self_closing = false;
                 }
                 Ok(Node::Text(old))
             }

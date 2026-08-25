@@ -173,16 +173,7 @@ impl XmlDoc {
             .nth(child_idx)?;
         // An empty element (`<name/>`) has no children at all — indexing
         // child.children[0] here used to panic.
-        Some(
-            child
-                .children
-                .iter()
-                .filter_map(|c| match c {
-                    Node::Text(t) | Node::CData(t) => Some(t.as_str()),
-                    _ => None,
-                })
-                .collect::<String>(),
-        )
+        Some(child.text_content())
     }
 
     /// Re-indent the document.
