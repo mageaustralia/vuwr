@@ -747,9 +747,14 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
                         return;
                     }
 
-                    let value = RichText::new(&row.summary)
-                        .monospace()
-                        .color(value_color(row.value));
+                    // A container's summary says there is more inside; a
+                    // leaf's is the value itself.
+                    let colour = if row.is_container() {
+                        theme::placeholder()
+                    } else {
+                        value_color(row.value)
+                    };
+                    let value = RichText::new(&row.summary).monospace().color(colour);
                     let value_response =
                         ui.add(egui::Label::new(value).sense(egui::Sense::click()));
                     if value_response.clicked() {

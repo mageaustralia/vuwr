@@ -170,6 +170,11 @@ pub struct Session {
     block: Option<(usize, Option<Block>)>,
     /// The colour scheme the document's own text is drawn in.
     scheme: crate::Scheme,
+    /// The layout last applied, so a frontend can show which one the
+    /// document is in. `None` until one is, which is honest: a file
+    /// arrives with whatever shape it was written with, and guessing at
+    /// which of the three that resembles would sometimes be wrong.
+    layout: Option<crate::Layout>,
     /// Columns the user has put away, by their index in the document.
     ///
     /// Hiding is a view: the column is still there, still saved, still
@@ -272,6 +277,7 @@ impl Session {
             decoded_text: true,
             block: None,
             scheme: crate::Scheme::Vuwr,
+            layout: None,
             hidden_columns: std::collections::BTreeSet::new(),
             manual_widths: std::collections::BTreeMap::new(),
             lint: None,
@@ -867,6 +873,8 @@ impl Session {
         match self.doc.reformat(style) {
             Ok(()) => {
                 self.mark_changed();
+                // After `mark_changed`, which forgets the old one.
+                self.layout = Some(style);
                 self.after_edit();
                 if self.view == ViewMode::Text {
                     self.rebuild_text();
@@ -1284,6 +1292,10 @@ impl Session {
         // The findings were about the bytes as they were.
         self.lint = None;
         self.block = None;
+        // An edit leaves the layout alone, but an undo of a reformat does
+        // not — and from here the two look the same. Saying nothing beats
+        // lighting a button for a layout the document may no longer have.
+        self.layout = None;
     }
 
     /// The lines the value under the cursor spans.
@@ -1388,6 +1400,53 @@ impl Session {
         let (rows, cols) = self.grid_dims();
         self.grid.move_to(line.saturating_sub(1), 0, rows, cols);
         self.status = format!("line {line}, column {column}");
+    }
+
+    /// Take the cursor to where a diagnostic is, in whichever view can
+    /// show it: the text for a syntax problem, the table for a value.
+    pub fn reveal_diagnostic(&mut self, d: &crate::Diagnostic) {
+        match d.place {
+            crate::Place::Text(offset) => self.reveal(offset),
+            crate::Place::Cell { row, column } => self.reveal_cell(row, column),
+        }
+    }
+
+    /// Put the cursor on one cell of the table.
+    ///
+    /// The row is the document's; the table shows display rows, and with
+    /// a filter on they are not the same. A row a filter is hiding cannot
+    /// be shown without dropping the filter, so it says so rather than
+    /// landing somewhere else and looking like it worked.
+    pub fn reveal_cell(&mut self, row: usize, column: usize) {
+        if self.doc.sheet().is_none() {
+            self.status = "no table view for this document".into();
+            return;
+        }
+        if self.view != ViewMode::Table {
+            self.set_view(ViewMode::Table);
+        }
+        let Some(display_row) = self.grid.display_row(row) else {
+            self.status = "that row is hidden by the filter — clear it to see".into();
+            return;
+        };
+        let display_col = self
+            .visible_columns()
+            .iter()
+            .position(|c| *c == column)
+            .unwrap_or(0);
+        if !self.visible_columns().contains(&column) {
+            self.status = "that column is hidden — bring it back to see".into();
+            return;
+        }
+        let (rows, cols) = self.grid_dims();
+        self.grid.move_to(display_row, display_col, rows, cols);
+        self.grid.ensure_visible(self.viewport_rows);
+        let name = self
+            .doc
+            .sheet()
+            .and_then(|s| s.headers().get(column).cloned())
+            .unwrap_or_default();
+        self.status = format!("row {}, {name}", row + 1);
     }
 
     /// Where the cursor is, in the terms each view uses.
@@ -1788,6 +1847,11 @@ impl Session {
                 Effect::None
             }
         }
+    }
+
+    /// The layout last applied, or `None` if none has been.
+    pub fn layout(&self) -> Option<crate::Layout> {
+        self.layout
     }
 
     /// The scheme in use, for a frontend drawing the document.

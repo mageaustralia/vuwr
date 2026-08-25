@@ -25,7 +25,7 @@ mod xml;
 
 pub use command::Command;
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
-pub use diagnostics::{Diagnostic, Severity, scan_columns, scan_json};
+pub use diagnostics::{Diagnostic, Place, Severity, scan_columns, scan_json};
 pub use entities::{decode, encode};
 pub use json::{JsonDoc, Layout};
 pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};

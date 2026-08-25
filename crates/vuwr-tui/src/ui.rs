@@ -339,9 +339,17 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         if editing && r == cursor_row {
             spans.extend(caret_spans(app));
         } else {
+            // A container's summary says there is more inside; a leaf's
+            // is the value itself. Colouring both the same made every
+            // line one colour, keys included.
+            let colour = if row.is_container() {
+                palette::placeholder_value()
+            } else {
+                palette::value(row.value)
+            };
             spans.push(Span::styled(
                 escape(&row.summary),
-                Style::default().fg(palette::value(row.value)),
+                Style::default().fg(colour),
             ));
         }
 

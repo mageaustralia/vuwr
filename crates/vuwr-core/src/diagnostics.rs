@@ -26,6 +26,23 @@ pub struct Diagnostic {
     pub offset: usize,
     pub line: usize,
     pub column: usize,
+    /// Where to go when somebody asks to be shown this.
+    ///
+    /// Separate from `line`/`column`, which say where it *is* for the
+    /// message. A problem with a value has no byte offset worth jumping
+    /// to — the value is a cell, and the place to see it is the table.
+    /// Carrying only an offset meant the outliers all pointed at byte
+    /// zero, and "Show me" went to line 1 every time.
+    pub place: Place,
+}
+
+/// Where a diagnostic can be shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// A byte offset into the document's text.
+    Text(usize),
+    /// A cell, by its row and column in the document.
+    Cell { row: usize, column: usize },
 }
 
 impl Diagnostic {
@@ -88,6 +105,7 @@ pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
                         offset: at,
                         line,
                         column,
+                        place: Place::Text(at),
                     });
                 }
                 stack.pop();
@@ -119,6 +137,7 @@ pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
                             offset: start,
                             line,
                             column,
+                            place: Place::Text(start),
                         });
                     } else {
                         seen.push((value, start));
@@ -188,6 +207,7 @@ pub fn scan_columns(sheet: &dyn crate::Sheet) -> Vec<Diagnostic> {
                 offset: 0,
                 line: row + 1,
                 column: col + 1,
+                place: Place::Cell { row, column: col },
             });
         }
     }

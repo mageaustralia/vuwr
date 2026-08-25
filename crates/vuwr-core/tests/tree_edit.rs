@@ -1329,3 +1329,66 @@ fn the_scheme_command_lists_and_chooses() {
     assert!(s.status.contains("no scheme"), "{}", s.status);
     assert_eq!(s.scheme(), vuwr_core::Scheme::GruvboxDark, "unchanged");
 }
+
+/// "Show me" on a column outlier has to land on the cell. It has no byte
+/// offset to jump to, and carrying one anyway sent every outlier to byte
+/// zero — line 1, every time.
+#[test]
+fn showing_a_column_outlier_lands_on_its_cell() {
+    let mut rows = String::from("sku,price\n");
+    for i in 0..20 {
+        rows.push_str(&format!("SKU-{i},{}.00\n", 100 + i));
+    }
+    rows.push_str("SKU-99,\"129,00\"\n");
+
+    let mut s = csv_session(&rows);
+    s.execute(Command::ViewTable);
+    s.execute(Command::Lint);
+    let found = s.lint_results().expect("linted").to_vec();
+    assert_eq!(found.len(), 1);
+    assert!(
+        matches!(found[0].place, vuwr_core::Place::Cell { .. }),
+        "a value's problem is a cell, not an offset: {:?}",
+        found[0].place
+    );
+
+    s.grid.cursor = (0, 0);
+    s.reveal_diagnostic(&found[0]);
+    assert_eq!(s.view_mode(), vuwr_core::ViewMode::Table);
+    assert_eq!(
+        s.table_cell(s.grid.cursor.0, s.grid.cursor.1).as_deref(),
+        Some("129,00")
+    );
+}
+
+/// A syntax problem still goes to its line in the text.
+#[test]
+fn showing_a_syntax_problem_still_goes_to_its_line() {
+    let mut s = session("{\n  \"a\": 1,\n  \"a\": 2\n}");
+    s.execute(Command::Lint);
+    let found = s.lint_results().expect("linted").to_vec();
+    let dup = found
+        .iter()
+        .find(|d| d.message.contains("duplicate"))
+        .expect("a duplicate key");
+    s.reveal_diagnostic(dup);
+    assert_eq!(s.view_mode(), vuwr_core::ViewMode::Text);
+    assert_eq!(s.grid.cursor.0, 2, "line 3, zero-indexed");
+}
+
+/// Which layout was applied is state a frontend can show; a file as it
+/// arrived is in none of them, and saying so beats guessing.
+#[test]
+fn the_applied_layout_is_remembered_and_then_forgotten() {
+    let mut s = session("{\n  \"a\": [1, 2]\n}");
+    assert_eq!(s.layout(), None, "nothing applied yet");
+
+    s.execute(Command::FormatCompact);
+    assert_eq!(s.layout(), Some(vuwr_core::Layout::Compact));
+
+    // An undo may or may not have taken the layout with it, and from here
+    // the two look the same — so it says nothing rather than lighting a
+    // button for a layout the document may not have.
+    s.execute(Command::Undo);
+    assert_eq!(s.layout(), None);
+}

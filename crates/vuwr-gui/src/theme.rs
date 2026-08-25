@@ -48,9 +48,14 @@ pub fn token(token: vuwr_core::Token) -> Color32 {
     from_rgb(vuwr_core::Scheme::Vuwr.token(token, is_dark()))
 }
 
-/// The colour for a tree value of a given kind.
+/// The colour for a leaf's value on a tree row.
 pub fn value(kind: vuwr_core::ValueKind) -> Color32 {
     from_rgb(vuwr_core::Scheme::Vuwr.value(kind, is_dark()))
+}
+
+/// The colour for a container's summary on a tree row.
+pub fn placeholder() -> Color32 {
+    from_rgb(vuwr_core::Scheme::Vuwr.placeholder(is_dark()))
 }
 
 const fn rgb(hex: u32) -> Color32 {

@@ -215,8 +215,13 @@ impl Scheme {
         }
     }
 
-    /// The colour for a tree value of a given kind, which is the same
+    /// The colour for the value on a tree row, which is the same
     /// vocabulary read through the token table: a string is a string.
+    ///
+    /// For a leaf. A container's summary — `<item>`, `{…}` — is a
+    /// placeholder rather than a value, and the row knows which it is;
+    /// see [`Scheme::placeholder`]. An XML leaf is an `Element` and its
+    /// value is its text, which is why that lands on content here.
     pub fn value(self, kind: crate::ValueKind, dark: bool) -> Rgb {
         use crate::ValueKind as V;
         let token = match kind {
@@ -224,10 +229,16 @@ impl Scheme {
             V::Bool => Token::Keyword,
             V::Number => Token::Number,
             V::String => Token::Str,
-            V::Array | V::Object | V::Element => Token::Tag,
-            V::Text | V::Other => Token::Plain,
+            V::Array | V::Object => Token::Tag,
+            V::Element | V::Text | V::Other => Token::Plain,
         };
         self.token(token, dark)
+    }
+
+    /// The colour for a container's summary: there is more inside, which
+    /// is worth saying quietly rather than in the colour a value gets.
+    pub fn placeholder(self, dark: bool) -> Rgb {
+        self.token(Token::Punctuation, dark)
     }
 }
 

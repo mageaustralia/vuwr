@@ -100,7 +100,12 @@ pub fn token(t: vuwr_core::Token) -> Color {
     from_rgb(scheme().token(t, ground_is_dark()), fallback)
 }
 
-/// The colour for a tree value of a given kind.
+/// The colour for a container's summary on a tree row.
+pub fn placeholder_value() -> Color {
+    from_rgb(scheme().placeholder(ground_is_dark()), placeholder())
+}
+
+/// The colour for a leaf's value on a tree row.
 pub fn value(kind: vuwr_core::ValueKind) -> Color {
     use vuwr_core::ValueKind as V;
     let fallback = match kind {

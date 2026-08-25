@@ -6,7 +6,7 @@
 //! and the menus use, so nothing here is a second implementation.
 
 use eframe::egui::{self, RichText};
-use vuwr_core::{Command, SortDirection, ViewMode};
+use vuwr_core::{Command, Layout, SortDirection, ViewMode};
 
 use crate::{VuwrApp, theme};
 
@@ -67,19 +67,39 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Toolbar {
         let can_format = (session.doc.is_json() || session.doc.is_xml())
             && session.view_mode() == ViewMode::Text;
         if can_format {
-            if button(ui, "Format", "Re-indent: one value per line (Ctrl+I)").clicked() {
+            // Which one is lit says what was applied. Nothing is lit for
+            // a file as it arrived, which is honest: it has whatever
+            // shape it was written with.
+            let applied = session.layout();
+            let is = |l: Layout| applied == Some(l);
+            if state_button(
+                ui,
+                "Format",
+                "Re-indent: one value per line (Ctrl+I)",
+                is(Layout::Pretty),
+            )
+            .clicked()
+            {
                 clicked = Some(Command::FormatPretty);
             }
-            if button(
+            if state_button(
                 ui,
                 "Smart",
                 "Re-indent, keeping short lists on one line (Ctrl+J)",
+                is(Layout::Smart),
             )
             .clicked()
             {
                 clicked = Some(Command::FormatSmart);
             }
-            if button(ui, "Compact", "Remove all whitespace (Ctrl+Shift+I)").clicked() {
+            if state_button(
+                ui,
+                "Compact",
+                "Remove all whitespace (Ctrl+Shift+I)",
+                is(Layout::Compact),
+            )
+            .clicked()
+            {
                 clicked = Some(Command::FormatCompact);
             }
             theme::divider(ui);
@@ -209,6 +229,23 @@ pub struct Toolbar {
     pub command: Option<Command>,
     /// A column to put away or bring back, by its index in the document.
     pub toggle_column: Option<usize>,
+}
+
+/// An action that is also a state: lit when the document is in it.
+///
+/// The accent, as everywhere else something is active — the same tint the
+/// filter uses, so "on" looks the same wherever it appears.
+fn state_button(ui: &mut egui::Ui, label: &str, tooltip: &str, on: bool) -> egui::Response {
+    if !on {
+        return button(ui, label, tooltip);
+    }
+    ui.add(
+        egui::Button::new(RichText::new(label).color(theme::accent_text()))
+            .fill(theme::accent_tint())
+            .stroke(egui::Stroke::new(1.0_f32, theme::accent_border()))
+            .corner_radius(egui::CornerRadius::same(5)),
+    )
+    .on_hover_text(tooltip)
 }
 
 /// Filter, which unlike the others carries state: when it is on, it takes

@@ -1228,9 +1228,9 @@ impl VuwrApp {
                     // Right-aligned controls, so the message can be long.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Show me").clicked() {
-                            let offset = d.offset;
+                            let d = d.clone();
                             if let Some(s) = self.session.as_mut() {
-                                s.reveal(offset);
+                                s.reveal_diagnostic(&d);
                             }
                         }
                         if diagnostics.len() > 1 {
