@@ -279,6 +279,7 @@ fn help_never_claims_a_binding_the_gui_does_not_have() {
         Key::Colon,
         Key::Questionmark,
         Key::Equals,
+        Key::Minus,
     ];
     let mods = [
         Modifiers::NONE,

@@ -48,6 +48,7 @@ pub const TOOLBAR_ONLY: &[Command] = &[
     Command::CollapseAll,
     Command::CopyRow,
     Command::Lint,
+    Command::ShowAllColumns,
 ];
 
 /// The keys help shows for a command. Exposed for tests, which assert the
@@ -572,9 +573,14 @@ impl eframe::App for VuwrApp {
             )
             .show_separator_line(false)
             .show(ctx, |ui| {
-                let cmd = toolbar::toolbar(self, ui);
+                let asked = toolbar::toolbar(self, ui);
                 edge_bottom(ui);
-                if let Some(cmd) = cmd {
+                if let Some(col) = asked.toggle_column
+                    && let Some(session) = self.session.as_mut()
+                {
+                    session.toggle_column(col);
+                }
+                if let Some(cmd) = asked.command {
                     self.run(cmd, ctx);
                 }
             });

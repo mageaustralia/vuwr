@@ -58,6 +58,8 @@ pub enum Command {
     NarrowColumn,
     AutoSizeColumns,
     Lint,
+    HideColumn,
+    ShowAllColumns,
 
     // --- Editing ---
     EditCell,
@@ -129,6 +131,8 @@ impl Command {
         Command::NarrowColumn,
         Command::AutoSizeColumns,
         Command::Lint,
+        Command::HideColumn,
+        Command::ShowAllColumns,
         Command::EditCell,
         Command::ReplaceCell,
         Command::RenameKey,
@@ -193,6 +197,8 @@ impl Command {
             Command::NarrowColumn => "narrow-column",
             Command::AutoSizeColumns => "auto-size-columns",
             Command::Lint => "lint",
+            Command::HideColumn => "hide-column",
+            Command::ShowAllColumns => "show-all-columns",
             Command::EditCell => "edit-cell",
             Command::ReplaceCell => "replace-cell",
             Command::RenameKey => "rename-key",
@@ -258,6 +264,8 @@ impl Command {
             Command::NarrowColumn => "narrow this column",
             Command::AutoSizeColumns => "size every column to its contents again",
             Command::Lint => "check the document for problems a parser lets through",
+            Command::HideColumn => "put this column away",
+            Command::ShowAllColumns => "bring every column back",
             Command::EditCell => "edit the selected cell",
             Command::ReplaceCell => "replace the selected cell",
             Command::RenameKey => "rename the selected key",
@@ -324,6 +332,8 @@ impl Command {
             Command::NarrowColumn => "narrower",
             Command::AutoSizeColumns => "auto width",
             Command::Lint => "lint",
+            Command::HideColumn => "hide column",
+            Command::ShowAllColumns => "all columns",
             Command::EditCell => "edit",
             Command::ReplaceCell => "replace",
             Command::RenameKey => "rename",
@@ -396,7 +406,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 59, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 61, "update ALL when adding a command");
     }
 
     #[test]

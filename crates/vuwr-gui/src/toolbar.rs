@@ -11,13 +11,14 @@ use vuwr_core::{Command, SortDirection, ViewMode};
 use crate::{VuwrApp, theme};
 
 /// Draw the toolbar and return the command a button asked for.
-pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
+pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Toolbar {
     let mut clicked = None;
+    let mut toggle = None;
     let Some(session) = app.try_session() else {
         ui.horizontal(|ui| {
             ui.label(RichText::new("no document").weak());
         });
-        return None;
+        return Toolbar::default();
     };
 
     ui.horizontal(|ui| {
@@ -105,6 +106,36 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
             if button(ui, "Nat", "Sort naturally: file2 before file10").clicked() {
                 clicked = Some(Command::SortNatural);
             }
+
+            // Which columns are on display. A feed has twenty-three and
+            // you are usually reading four.
+            let hidden = session.hidden_column_count();
+            let label = if hidden == 0 {
+                "Columns".to_string()
+            } else {
+                format!("Columns · {hidden} hidden")
+            };
+            let response =
+                theme::action(ui, &label, true).on_hover_text("Choose which columns to show");
+            egui::Popup::menu(&response)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    ui.set_min_width(220.0);
+                    for (i, (name, shown)) in session.column_visibility().into_iter().enumerate() {
+                        let label = if name.is_empty() {
+                            format!("column {}", i + 1)
+                        } else {
+                            name
+                        };
+                        if ui.selectable_label(shown, label).clicked() {
+                            toggle = Some(i);
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Show all").clicked() {
+                        clicked = Some(Command::ShowAllColumns);
+                    }
+                });
         }
 
         // Finding and filtering are not table verbs: you look for a value
@@ -165,7 +196,18 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
         }
     });
 
-    clicked
+    Toolbar {
+        command: clicked,
+        toggle_column: toggle,
+    }
+}
+
+/// What the toolbar was asked for this frame.
+#[derive(Default)]
+pub struct Toolbar {
+    pub command: Option<Command>,
+    /// A column to put away or bring back, by its index in the document.
+    pub toggle_column: Option<usize>,
 }
 
 /// Filter, which unlike the others carries state: when it is on, it takes

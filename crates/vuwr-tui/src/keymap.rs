@@ -88,6 +88,8 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         (KeyCode::Char('>'), false) => Command::WidenColumn,
         (KeyCode::Char('<'), false) => Command::NarrowColumn,
         (KeyCode::Char('='), false) => Command::AutoSizeColumns,
+        (KeyCode::Char('-'), false) => Command::HideColumn,
+        (KeyCode::Char('+'), false) => Command::ShowAllColumns,
         // Sorting: `s` cycles direction, capital variants pick a
         // comparison. csvlens uses Shift-Down; `s` is easier to reach.
         (KeyCode::Char('s'), false) => Command::Sort,
@@ -150,6 +152,8 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::WidenColumn => ">",
         Command::NarrowColumn => "<",
         Command::AutoSizeColumns => "=",
+        Command::HideColumn => "-",
+        Command::ShowAllColumns => "+",
         Command::Lint => ":lint",
         Command::EditCell => "i  Enter",
         Command::ReplaceCell => "c",

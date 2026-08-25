@@ -165,6 +165,12 @@ pub struct Session {
     widths: Vec<usize>,
     /// The value the cursor sits inside, worked out once per cursor line.
     block: Option<(usize, Option<Block>)>,
+    /// Columns the user has put away, by their index in the document.
+    ///
+    /// Hiding is a view: the column is still there, still saved, still
+    /// edited by anything that addresses it directly. A feed has
+    /// twenty-three of them and you are usually reading four.
+    hidden_columns: std::collections::BTreeSet<usize>,
     viewport_rows: usize,
     viewport_cols: usize,
     /// For table view: the column headers.
@@ -260,6 +266,7 @@ impl Session {
             // other view already showed it decoded.
             decoded_text: true,
             block: None,
+            hidden_columns: std::collections::BTreeSet::new(),
             manual_widths: std::collections::BTreeMap::new(),
             lint: None,
             text_lines: Vec::new(),
@@ -277,10 +284,18 @@ impl Session {
         match self.view {
             ViewMode::Table => match self.doc.sheet() {
                 Some(sheet) => {
-                    let (rows, cols) = sheet.dims();
-                    // A filter changes how many rows are on display, not
-                    // how many the document has.
-                    (sheet.headers(), self.grid.visible_rows(rows), cols)
+                    let (rows, _) = sheet.dims();
+                    // A filter changes how many rows are on display, and
+                    // hiding changes how many columns are; neither changes
+                    // what the document holds.
+                    let headers = sheet.headers();
+                    let shown: Vec<String> = self
+                        .visible_columns()
+                        .into_iter()
+                        .map(|c| headers.get(c).cloned().unwrap_or_default())
+                        .collect();
+                    let cols = shown.len();
+                    (shown, self.grid.visible_rows(rows), cols)
                 }
                 None => (Vec::new(), 0, 0),
             },
@@ -293,6 +308,90 @@ impl Session {
         }
     }
 
+    /// The columns on display, as indices into the document.
+    pub fn visible_columns(&self) -> Vec<usize> {
+        let cols = self.doc.sheet().map(|s| s.dims().1).unwrap_or(0);
+        (0..cols)
+            .filter(|c| !self.hidden_columns.contains(c))
+            .collect()
+    }
+
+    /// Every column, with whether it is on display — for a frontend that
+    /// offers to put one away.
+    pub fn column_visibility(&self) -> Vec<(String, bool)> {
+        let Some(sheet) = self.doc.sheet() else {
+            return Vec::new();
+        };
+        sheet
+            .headers()
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| (name, !self.hidden_columns.contains(&i)))
+            .collect()
+    }
+
+    /// The document column a display column refers to.
+    ///
+    /// Every write and every sort must go through this: with a column
+    /// hidden, display column 3 is not document column 3, and mixing them
+    /// edits the wrong field.
+    pub fn source_col(&self, display: usize) -> usize {
+        self.visible_columns()
+            .get(display)
+            .copied()
+            .unwrap_or(display)
+    }
+
+    /// Put a column away, or bring it back.
+    pub fn toggle_column(&mut self, source: usize) {
+        if !self.hidden_columns.remove(&source) {
+            // Never hide the last one: an empty table is not a view of
+            // anything, and there would be nothing left to click.
+            if self.visible_columns().len() <= 1 {
+                self.status = "the last column stays".into();
+                return;
+            }
+            self.hidden_columns.insert(source);
+        }
+        self.rebuild_table_widths();
+        self.clamp_cursor();
+    }
+
+    /// Hide the column the cursor is on.
+    pub fn hide_cursor_column(&mut self) {
+        if self.view != ViewMode::Table {
+            self.status = "columns are a table thing".into();
+            return;
+        }
+        let source = self.source_col(self.grid.cursor.1);
+        let name = self
+            .doc
+            .sheet()
+            .and_then(|s| s.headers().get(source).cloned())
+            .unwrap_or_default();
+        self.toggle_column(source);
+        if self.hidden_columns.contains(&source) {
+            self.status = format!("{name} hidden — 'show all' brings it back");
+        }
+    }
+
+    /// Bring every column back.
+    pub fn show_all_columns(&mut self) {
+        let n = self.hidden_columns.len();
+        self.hidden_columns.clear();
+        self.rebuild_table_widths();
+        self.status = match n {
+            0 => "every column was already showing".into(),
+            1 => "1 column brought back".into(),
+            n => format!("{n} columns brought back"),
+        };
+    }
+
+    /// How many columns are put away.
+    pub fn hidden_column_count(&self) -> usize {
+        self.hidden_columns.len()
+    }
+
     /// The display text of one cell.
     pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
         match self.view {
@@ -300,7 +399,7 @@ impl Session {
             ViewMode::Table => self
                 .doc
                 .sheet()?
-                .cell(self.grid.source_row(row), col)
+                .cell(self.grid.source_row(row), self.source_col(col))
                 .map(|v| escape(&self.for_display(&v))),
             ViewMode::Tree => self.tree_rows.get(row).map(|r| r.summary.clone()),
             ViewMode::Text => self.text_lines.get(row).cloned(),
@@ -445,6 +544,7 @@ impl Session {
         let Some(sheet) = self.doc.sheet() else {
             return false;
         };
+        let col = self.source_col(col);
         // CSV keeps its headings in row 0, and a heading is never a
         // number: sampling it would say every column is text.
         let first = usize::from(sheet.header_is_first_row());
@@ -693,6 +793,8 @@ impl Session {
                 None => self.status = "no rows marked — press m to mark one".into(),
             },
             Command::Lint => self.run_lint(),
+            Command::HideColumn => self.hide_cursor_column(),
+            Command::ShowAllColumns => self.show_all_columns(),
             Command::WidenColumn => self.resize_cursor_column(4),
             Command::NarrowColumn => self.resize_cursor_column(-4),
             Command::AutoSizeColumns => {
@@ -809,7 +911,7 @@ impl Session {
         match self.view {
             ViewMode::Table => {
                 let (row, column) = self.grid.cursor;
-                let row = self.grid.source_row(row);
+                let (row, column) = (self.grid.source_row(row), self.source_col(column));
                 match self.doc.set_cell(row, column, text) {
                     Ok(()) => {
                         self.mark_changed();
@@ -900,7 +1002,10 @@ impl Session {
         if !self.doc.is_xml() {
             return text.to_string();
         }
-        let (row, col) = (self.grid.source_row(self.grid.cursor.0), self.grid.cursor.1);
+        let (row, col) = (
+            self.grid.source_row(self.grid.cursor.0),
+            self.source_col(self.grid.cursor.1),
+        );
         let literal = self.doc.as_xml().is_some_and(|x| x.cell_is_cdata(row, col));
         if literal {
             text.to_string()
@@ -1023,8 +1128,10 @@ impl Session {
             }
             ViewMode::Table => {
                 let sheet = self.doc.sheet()?;
-                let raw =
-                    sheet.cell(self.grid.source_row(self.grid.cursor.0), self.grid.cursor.1)?;
+                let raw = sheet.cell(
+                    self.grid.source_row(self.grid.cursor.0),
+                    self.source_col(self.grid.cursor.1),
+                )?;
                 // XML text carries entity references; JSON strings do not,
                 // and decoding one would eat a literal `&amp;`.
                 Some(if self.doc.is_xml() {
@@ -1060,7 +1167,7 @@ impl Session {
             }
             ViewMode::Table => {
                 let (row, column) = self.grid.cursor;
-                let row = self.grid.source_row(row);
+                let (row, column) = (self.grid.source_row(row), self.source_col(column));
                 let written = self.encode_for_cell(text);
                 match self.doc.set_cell(row, column, &written) {
                     Ok(()) => {
@@ -1665,7 +1772,7 @@ impl Session {
             }
             return;
         }
-        let row = self.grid.source_row(row);
+        let (row, column) = (self.grid.source_row(row), self.source_col(column));
         let value = self.encode_for_cell(&value);
         match self.doc.set_cell(row, column, &value) {
             Ok(()) => {
@@ -1994,7 +2101,8 @@ impl Session {
             self.status = "sorting needs a table view".into();
             return;
         }
-        let column = self.grid.cursor.1;
+        // Sorting reorders the document's rows by a document column.
+        let column = self.source_col(self.grid.cursor.1);
         let direction = match self.sort {
             Some(spec) if spec.column == column && spec.kind == kind => spec.direction.flipped(),
             _ => SortDirection::Ascending,
@@ -2315,7 +2423,7 @@ impl Session {
             ViewMode::Table => self
                 .doc
                 .sheet()
-                .and_then(|s| s.cell(self.grid.source_row(r), c))
+                .and_then(|s| s.cell(self.grid.source_row(r), self.source_col(c)))
                 .map(|v| self.for_display(&v))
                 .unwrap_or_default(),
             ViewMode::Text => self.text_lines.get(r).cloned().unwrap_or_default(),

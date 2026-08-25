@@ -1179,3 +1179,65 @@ fn extending_moves_the_caret_and_keeps_the_anchor() {
     s.extend_entry_selection(4);
     assert_eq!(s.selected_text().as_deref(), Some("ell"));
 }
+
+// --- Putting a column away ---
+
+/// Hiding is a view. The column leaves the table and the document keeps
+/// it: what you save is what you opened.
+#[test]
+fn a_hidden_column_leaves_the_table_and_not_the_file() {
+    let src = "sku,name,qty\nA-1,Widget,7\n";
+    let mut s = csv_session(src);
+    s.execute(Command::ViewTable);
+    s.toggle_column(1);
+
+    let (headers, _, cols) = s.table_dims();
+    assert_eq!(headers, vec!["sku", "qty"]);
+    assert_eq!(cols, 2);
+    assert_eq!(s.table_cell(1, 1).as_deref(), Some("7"), "qty moved left");
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+
+    s.execute(Command::ShowAllColumns);
+    assert_eq!(s.table_dims().2, 3);
+}
+
+/// The display and the document disagree about what column 1 is once
+/// something is hidden. An edit has to follow the document, or it writes
+/// to the wrong field.
+#[test]
+fn editing_past_a_hidden_column_writes_to_the_right_field() {
+    let mut s = csv_session("sku,name,qty\nA-1,Widget,7\n");
+    s.execute(Command::ViewTable);
+    s.toggle_column(1); // away with `name`
+    s.grid.cursor = (1, 1); // which is now `qty`
+    s.execute(Command::EditCell);
+    s.select_all();
+    s.input_char('9');
+    s.input_submit();
+
+    let out = String::from_utf8(s.doc.serialize()).unwrap();
+    assert_eq!(out, "sku,name,qty\nA-1,Widget,9\n", "{out}");
+}
+
+/// Sorting reorders by a document column, so it has to map too.
+#[test]
+fn sorting_past_a_hidden_column_sorts_the_right_one() {
+    let mut s = csv_session("sku,name,qty\nA,Zeta,2\nB,Alpha,1\n");
+    s.execute(Command::ViewTable);
+    s.toggle_column(1);
+    s.grid.cursor = (1, 1); // `qty`
+    s.execute(Command::Sort);
+    assert_eq!(s.table_cell(1, 1).as_deref(), Some("1"));
+    assert_eq!(s.table_cell(1, 0).as_deref(), Some("B"));
+}
+
+/// An empty table is not a view of anything.
+#[test]
+fn the_last_column_stays() {
+    let mut s = csv_session("sku,name\nA-1,Widget\n");
+    s.execute(Command::ViewTable);
+    s.toggle_column(0);
+    s.toggle_column(1);
+    assert_eq!(s.table_dims().2, 1);
+    assert!(s.status.contains("last column"), "{}", s.status);
+}
