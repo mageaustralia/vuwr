@@ -837,3 +837,96 @@ fn editing_a_table_cell_does_not_double_encode_it() {
     assert!(out.contains("&lt;p&gt;Hi&lt;/p&gt;"), "{out}");
     assert!(!out.contains("&amp;lt;"), "double-encoded: {out}");
 }
+
+// --- The value a text-view line belongs to ---
+
+fn block_session() -> Session {
+    let src = "<rss>\n  <item>\n    <d><![CDATA[<p>one\n<li>two</li>\n</p>]]></d>\n\
+               <e>short</e>\n  </item>\n</rss>";
+    let mut s = xml_session(src);
+    s.execute(Command::ViewText);
+    s
+}
+
+/// A description is one value and reads as one thing, but in the source it
+/// is several lines. The lines inside it belong to it.
+#[test]
+fn a_line_inside_an_element_knows_the_block_it_belongs_to() {
+    let mut s = block_session();
+    s.grid.cursor = (3, 0); // `<li>two</li>`, inside the CDATA
+    assert_eq!(s.value_block(), Some((2, 4)));
+    // Markup inside CDATA is content, not tags: the block is `<d>`, not
+    // the `<li>` the line happens to start with.
+    assert!(s.table_cell(2, 0).unwrap().contains("<d>"));
+}
+
+/// A field on its own line is its own value: marking it must not light
+/// up the whole `<item>` around it.
+#[test]
+fn a_field_line_is_not_swallowed_by_its_parent() {
+    let mut s = block_session();
+    s.grid.cursor = (1, 0); // `<item>` — which is a block
+    assert_eq!(s.value_block(), Some((1, 6)));
+    s.grid.cursor = (5, 0); // `<e>short</e>` — which is not
+    assert_eq!(s.value_block(), None);
+}
+
+/// A value that fits on one line is its own block, and marking it adds
+/// nothing over the cursor already being there.
+#[test]
+fn a_one_line_value_has_no_block() {
+    let mut s = block_session();
+    s.grid.cursor = (5, 0); // `<e>short</e>`
+    assert_eq!(s.value_block(), None);
+}
+
+/// Editing the block hands over the source as written — a CDATA section
+/// holds its markup literally, and re-encoding it would rewrite the file.
+#[test]
+fn the_block_editor_opens_on_the_source_and_writes_it_back() {
+    let mut s = block_session();
+    s.grid.cursor = (3, 0);
+    let text = s.large_edit_text().expect("a block to edit");
+    assert!(text.starts_with("<d><![CDATA["), "{text}");
+    assert!(text.ends_with("</d>"), "{text}");
+
+    s.commit_large_edit(&text.replace("two", "three"));
+    let out = String::from_utf8(s.doc.serialize()).unwrap();
+    assert!(out.contains("<li>three</li>"), "{out}");
+    assert!(!out.contains("&lt;li&gt;"), "the CDATA was encoded: {out}");
+}
+
+/// Editing a line inside a CDATA section must not encode it: the markup
+/// there is content the file holds literally.
+#[test]
+fn editing_a_line_inside_cdata_leaves_its_markup_alone() {
+    // One line, so it is edited in place rather than as a block — which
+    // is the path that used to encode the markup CDATA holds literally.
+    let mut s = xml_session("<r>\n  <d><![CDATA[<p>two</p>]]></d>\n</r>");
+    s.execute(Command::ViewText);
+    s.grid.cursor = (1, 0);
+    s.execute(Command::ReplaceCell);
+    for c in "  <d><![CDATA[<p>three</p>]]></d>".chars() {
+        s.input_char(c);
+    }
+    s.input_submit();
+    let out = String::from_utf8(s.doc.serialize()).unwrap();
+    assert!(
+        out.contains("<p>three</p>"),
+        "status={} out={out}",
+        s.status
+    );
+    assert!(!out.contains("&lt;p&gt;"), "encoded content: {out}");
+}
+
+/// Clicking where you want to type is how every editor works.
+#[test]
+fn the_caret_can_be_put_where_it_was_clicked() {
+    let mut s = block_session();
+    s.grid.cursor = (5, 0);
+    s.execute(Command::EditCell);
+    s.set_entry_caret(3);
+    assert_eq!(s.entry_caret(), 3);
+    s.set_entry_caret(usize::MAX);
+    assert_eq!(s.entry_caret(), s.entry().unwrap().1.len(), "clamped");
+}

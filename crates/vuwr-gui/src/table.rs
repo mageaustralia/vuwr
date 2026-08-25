@@ -121,12 +121,14 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                             // field, so it is obvious which value you are
                             // typing into.
                             if editing && (r, c) == cursor {
-                                edit_field(
+                                let response = edit_field(
                                     ui,
                                     session,
                                     *chars as f32 * char_width + GRIP + PAD * 2.0,
                                     row_height,
                                 );
+                                let left = response.rect.left() + PAD;
+                                place_caret(session, &response, ui, left);
                                 continue;
                             }
                             let raw = session.table_cell(r, c).unwrap_or_default();
@@ -296,8 +298,8 @@ fn rule(ui: &egui::Ui, rect: egui::Rect) {
 /// A plain highlight left it looking like any other selected cell, so it
 /// was not obvious the keyboard was going somewhere. This gives it a
 /// filled background and a focus ring, which is what a field looks like.
-fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
     let visuals = ui.visuals();
     ui.painter()
         .rect_filled(rect, 2.0, visuals.extreme_bg_color);
@@ -312,7 +314,8 @@ fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) {
     let y = rect.center().y - galley.size().y / 2.0;
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .galley(egui::pos2(rect.left() + 3.0, y), galley, Color32::GRAY);
+        .galley(egui::pos2(rect.left() + PAD, y), galley, Color32::GRAY);
+    response
 }
 
 /// Cut a value down to what a cell can show, marking that there is more.
@@ -321,6 +324,44 @@ fn truncate(text: &str, limit: usize) -> String {
         return text.to_string();
     }
     text.chars().take(limit).collect::<String>() + "…"
+}
+
+/// Move the caret to where the text being edited was clicked.
+///
+/// The buffer is drawn by hand rather than by a `TextEdit`, so nothing
+/// else would place the caret: a typo halfway along a line meant deleting
+/// everything after it and typing it again.
+pub fn place_caret(
+    session: &mut Session,
+    response: &egui::Response,
+    ui: &egui::Ui,
+    text_left: f32,
+) {
+    if !response.clicked() && !response.drag_started() {
+        return;
+    }
+    let Some(pos) = response.interact_pointer_pos() else {
+        return;
+    };
+    let Some((_, buf)) = session.entry() else {
+        return;
+    };
+    let font = egui::FontId::monospace(13.0);
+    let advance = ui
+        .painter()
+        .layout_no_wrap("0".to_owned(), font, Color32::PLACEHOLDER)
+        .size()
+        .x
+        .max(1.0);
+    let column = ((pos.x - text_left) / advance).round().max(0.0) as usize;
+    // Monospace, so the column is a character index; the byte offset it
+    // sits at is what the buffer is addressed by.
+    let byte = buf
+        .char_indices()
+        .nth(column)
+        .map(|(i, _)| i)
+        .unwrap_or(buf.len());
+    session.set_entry_caret(byte);
 }
 
 /// The text being typed, with a caret drawn where it actually is.
@@ -608,6 +649,10 @@ fn node_menu(ui: &mut egui::Ui, is_container: bool) -> Option<NodeAction> {
 
 pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
     session.set_viewport_rows(PAGE_ROWS);
+    // The value the cursor sits inside, so a description reads as the one
+    // thing it is rather than as twenty unrelated lines.
+    let block = session.value_block();
+    let block_indent = session.block_indent();
     let (_, lines, _) = session.table_dims();
     let cursor_row = session.grid.cursor.0;
     let editing = session.is_editing_inline();
@@ -658,20 +703,44 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                     // folding.
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     for n in range {
-                        if editing && n == cursor_row {
-                            ui.label(caret_text(session));
-                            continue;
-                        }
-                        let line = session.table_cell(n, 0).unwrap_or_default();
-                        let response = ui
-                            .selectable_label(n == cursor_row, coloured_line(&line, grammar, dark));
-                        if response.clicked() {
-                            session.grid.cursor = (n, 0);
-                        }
-                        if response.double_clicked() {
-                            session.grid.cursor = (n, 0);
-                            edit = true;
-                        }
+                        let inside = block.is_some_and(|(a, b)| (a..=b).contains(&n));
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            // A CDATA section keeps its own newlines, so
+                            // its later lines start at column zero however
+                            // deep the element is. They are drawn shifted
+                            // under the tag they belong to — a rendering
+                            // offset only; the file's bytes are untouched.
+                            if inside && Some(n) != block.map(|(a, _)| a) {
+                                ui.add_space(block_indent as f32 * 7.5);
+                            }
+                            if editing && n == cursor_row {
+                                let response = ui.label(caret_text(session));
+                                place_caret(session, &response, ui, response.rect.left());
+                                return;
+                            }
+                            let line = session.table_cell(n, 0).unwrap_or_default();
+                            let response = ui.selectable_label(
+                                n == cursor_row,
+                                coloured_line(&line, grammar, dark),
+                            );
+                            // The whole value is marked, not just the line
+                            // the cursor landed on.
+                            if inside && n != cursor_row {
+                                ui.painter().rect_filled(
+                                    response.rect,
+                                    2.0,
+                                    ui.visuals().selection.bg_fill.gamma_multiply(0.20),
+                                );
+                            }
+                            if response.clicked() {
+                                session.grid.cursor = (n, 0);
+                            }
+                            if response.double_clicked() {
+                                session.grid.cursor = (n, 0);
+                                edit = true;
+                            }
+                        });
                     }
                 });
             });

@@ -158,6 +158,8 @@ pub struct Session {
     pub status: String,
     pub dirty: bool,
     widths: Vec<usize>,
+    /// The value the cursor sits inside, worked out once per cursor line.
+    block: Option<(usize, Option<Block>)>,
     viewport_rows: usize,
     viewport_cols: usize,
     /// For table view: the column headers.
@@ -250,6 +252,7 @@ impl Session {
             // On by default: escaped markup is unreadable, and every
             // other view already showed it decoded.
             decoded_text: true,
+            block: None,
             manual_widths: std::collections::BTreeMap::new(),
             diagnostics: std::cell::RefCell::new(None),
             text_lines: Vec::new(),
@@ -792,7 +795,10 @@ impl Session {
     /// paragraph does, and a fixed limit missed exactly that case.
     pub fn value_needs_more_room(&self) -> bool {
         if self.view == ViewMode::Text {
-            return false;
+            // A line that is only part of a value is edited as that whole
+            // value: editing one line of a description in isolation is
+            // rarely what anybody means.
+            return self.block_span_read().is_some();
         }
         let Some(text) = self.large_edit_text() else {
             return false;
@@ -912,8 +918,16 @@ impl Session {
                     raw
                 })
             }
-            // Text view edits a line, which is one line by definition.
-            ViewMode::Text => None,
+            // A line is one line by definition, but the value it belongs
+            // to need not be: `<description>` runs for twenty of them, and
+            // that is what somebody asking to edit it means. The source is
+            // handed over as it is written, since a block can hold a CDATA
+            // section whose markup is literal — decoding and re-encoding
+            // that would rewrite the file's own content.
+            ViewMode::Text => {
+                let b = self.block_span_read()?;
+                Some(String::from_utf8_lossy(&self.text_bytes[b.start..b.end]).into_owned())
+            }
         }
     }
 
@@ -937,7 +951,23 @@ impl Session {
                     Err(e) => self.status = e.to_string(),
                 }
             }
-            ViewMode::Text => {}
+            ViewMode::Text => {
+                let Some(b) = self.block_span_read() else {
+                    return;
+                };
+                self.splice_source(b.start, b.end, text);
+            }
+        }
+    }
+
+    /// The block under the cursor, from the cache when it is warm.
+    fn block_span_read(&self) -> Option<Block> {
+        if self.view != ViewMode::Text || !self.doc.is_xml() {
+            return None;
+        }
+        match self.block {
+            Some((line, found)) if line == self.grid.cursor.0 => found,
+            _ => self.compute_block(self.grid.cursor.0),
         }
     }
 
@@ -997,6 +1027,95 @@ impl Session {
     fn mark_changed(&mut self) {
         self.dirty = true;
         self.diagnostics.replace(None);
+        self.block = None;
+    }
+
+    /// The lines the value under the cursor spans.
+    ///
+    /// A description is one element and reads as one thing, but in the
+    /// source it is twenty lines. Highlighting only the line the cursor
+    /// happens to be on says nothing about where the value starts or
+    /// ends, so the whole element is marked instead. `None` when the
+    /// value is a single line, which is its own block.
+    pub fn value_block(&mut self) -> Option<(usize, usize)> {
+        let b = self.block_span()?;
+        Some((b.first, b.last))
+    }
+
+    /// How far the block under the cursor is indented, in characters.
+    ///
+    /// A CDATA section keeps its own newlines, so its later lines start
+    /// at column zero however deeply the element itself is nested. The
+    /// frontends draw those lines shifted across to sit under the tag
+    /// they belong to — as a rendering offset only, since the file's own
+    /// bytes are what the text view is for.
+    pub fn block_indent(&mut self) -> usize {
+        let Some(b) = self.block_span() else {
+            return 0;
+        };
+        self.text_lines
+            .get(b.first)
+            .map(|l| l.len() - l.trim_start_matches([' ', '\t']).len())
+            .unwrap_or(0)
+    }
+
+    /// The block under the cursor, as lines and as bytes.
+    ///
+    /// Worked out once per cursor line and kept: the scan reads the whole
+    /// source, and the frame that draws the highlight asks every time.
+    fn block_span(&mut self) -> Option<Block> {
+        if self.view != ViewMode::Text || !self.doc.is_xml() {
+            return None;
+        }
+        let line = self.grid.cursor.0;
+        if self.block.map(|(l, _)| l) != Some(line) {
+            let found = self.compute_block(line);
+            self.block = Some((line, found));
+        }
+        self.block.and_then(|(_, found)| found)
+    }
+
+    fn compute_block(&self, line: usize) -> Option<Block> {
+        let &(from, to) = self.text_spans.get(line)?;
+        let (span, inside_text) = value_element(&self.text_bytes, from, to);
+        // A line that stands on its own is its own block, and marking it
+        // would swallow it into its parent — the whole `<item>` lighting
+        // up because the cursor is on one of its fields. Markup inside a
+        // CDATA section is content, so a balanced-looking line there is
+        // still part of the value around it.
+        if !inside_text && line_is_self_contained(&self.text_bytes[from..to]) {
+            return None;
+        }
+        let (start, end) = span?;
+        let first = self.line_of(start)?;
+        let last = self.line_of(end.saturating_sub(1))?;
+        if first == last {
+            // A one-line value is already what the cursor highlights.
+            return None;
+        }
+        Some(Block {
+            first,
+            last,
+            start,
+            end,
+        })
+    }
+
+    /// The line a byte offset falls on.
+    fn line_of(&self, byte: usize) -> Option<usize> {
+        match self.text_spans.binary_search_by(|&(a, b)| {
+            if byte < a {
+                std::cmp::Ordering::Greater
+            } else if byte >= b {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        }) {
+            Ok(i) => Some(i),
+            // Between two spans (on the newline itself): the line before.
+            Err(i) => Some(i.saturating_sub(1)),
+        }
     }
 
     /// Jump to a byte offset in the document's text.
@@ -1144,6 +1263,20 @@ impl Session {
     }
 
     /// Where the caret sits in the text being entered, as a byte index.
+    /// Put the caret at a byte offset in the text being edited.
+    ///
+    /// Clicking where you want to type is how every other editor works;
+    /// without it a typo halfway along a line means retyping the rest.
+    pub fn set_entry_caret(&mut self, byte: usize) {
+        if let Mode::Edit { buf, caret } = &mut self.mode {
+            let mut at = byte.min(buf.len());
+            while at > 0 && !buf.is_char_boundary(at) {
+                at -= 1;
+            }
+            *caret = at;
+        }
+    }
+
     pub fn entry_caret(&self) -> usize {
         match &self.mode {
             Mode::Edit { caret, .. } => *caret,
@@ -1716,6 +1849,7 @@ impl Session {
             self.text_spans.push((start, self.text_bytes.len()));
         }
 
+        self.block = None;
         self.text_lines = self
             .text_spans
             .iter()
@@ -1739,16 +1873,25 @@ impl Session {
         let Some(&(start, end)) = self.text_spans.get(line) else {
             return;
         };
-        // Typed against decoded text, so it has to be encoded again — and
-        // only this line is touched, so the rest of the file keeps its own
-        // spelling of every entity.
+        // Typed against decoded text, so it has to be encoded again — but
+        // only if this line was encoded to begin with. A line inside a
+        // CDATA section holds its markup literally, and encoding that
+        // would turn `<li>` in the file into `&lt;li&gt;`.
+        let raw = String::from_utf8_lossy(&self.text_bytes[start..end]).into_owned();
         let encoded;
-        let value = if self.decoded_text {
+        let value = if self.decoded_text && crate::decode(&raw) != raw {
             encoded = crate::encode(value);
             encoded.as_str()
         } else {
             value
         };
+        self.splice_source(start, end, value);
+    }
+
+    /// Put `value` in place of the source between two byte offsets, and
+    /// re-parse. Anything that would make the document invalid is refused
+    /// with the parse error, leaving the file as it was.
+    fn splice_source(&mut self, start: usize, end: usize, value: &str) {
         let mut bytes = Vec::with_capacity(self.text_bytes.len() + value.len());
         bytes.extend_from_slice(&self.text_bytes[..start]);
         bytes.extend_from_slice(value.as_bytes());
@@ -1874,6 +2017,162 @@ fn compute_widths(doc: &CsvDoc) -> Vec<usize> {
         }
     }
     widths
+}
+
+/// Where the value under the cursor begins and ends, as lines and as
+/// bytes into the source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Block {
+    first: usize,
+    last: usize,
+    start: usize,
+    end: usize,
+}
+
+/// The element the source line `from..to` is part of, as the offsets of
+/// its opening `<` and of the byte after its closing `>`.
+///
+/// Read straight from the source rather than from the parsed tree: the
+/// tree does not record where each node came from, and the text view is
+/// about the file as written.
+///
+/// Two cases count. A line that opens an element and does not close it —
+/// `<description><![CDATA[…` — belongs to the element it opened. A line
+/// that is text inside one, which is every line of a CDATA section,
+/// belongs to the element around it. A line that opens and closes
+/// everything it starts is a value in its own right, and gets `None`
+/// rather than being swallowed by its parent.
+fn value_element(src: &[u8], from: usize, to: usize) -> (Option<(usize, usize)>, bool) {
+    let mut open: Vec<usize> = Vec::new();
+    let mut i = 0usize;
+    // The outermost element that starts on this line and outlives it.
+    let mut starts_here: Option<(usize, usize)> = None;
+    let mut inside_opaque = false;
+    while i < src.len() {
+        if src[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        // Comments, CDATA, declarations and processing instructions hold
+        // whatever they like, `<li>` included — so they are stepped over
+        // rather than read as markup.
+        if let Some(skip) = opaque_end(src, i) {
+            if i < to && skip > from {
+                inside_opaque = true;
+            }
+            i = skip;
+            continue;
+        }
+        let Some((end, self_closing, closing)) = tag_end(src, i) else {
+            break;
+        };
+        if closing {
+            // Popped either way: the stack has to stay balanced.
+            if let Some(start) = open.pop()
+                && end >= to
+            {
+                if start >= from && start < to {
+                    // Opened on this line. Pops run outwards, so the last
+                    // one seen is the outermost of them.
+                    starts_here = Some((start, end));
+                } else if start < from {
+                    // Nothing on the line opened it, so the line is text
+                    // inside this element.
+                    return (starts_here.or(Some((start, end))), inside_opaque);
+                }
+            }
+        } else if !self_closing {
+            open.push(i);
+        }
+        i = end;
+    }
+    (starts_here, inside_opaque)
+}
+
+/// True when the line closes everything it opens, so it stands on its own.
+fn line_is_self_contained(line: &[u8]) -> bool {
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i < line.len() {
+        if line[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        if let Some(skip) = opaque_end(line, i) {
+            // An unterminated CDATA section runs past this line.
+            if skip >= line.len() && !line[i..].ends_with(b">") {
+                return false;
+            }
+            i = skip;
+            continue;
+        }
+        let Some((end, self_closing, closing)) = tag_end(line, i) else {
+            return false;
+        };
+        if closing {
+            depth -= 1;
+            if depth < 0 {
+                return false;
+            }
+        } else if !self_closing {
+            depth += 1;
+        }
+        i = end;
+    }
+    depth == 0
+}
+
+/// Where a comment, CDATA section, declaration or processing instruction
+/// starting at `i` ends, or `None` if this is an ordinary tag.
+fn opaque_end(src: &[u8], i: usize) -> Option<usize> {
+    let rest = &src[i..];
+    let after = |needle: &[u8], from: usize| -> usize {
+        find(src, from, needle)
+            .map(|p| p + needle.len())
+            .unwrap_or(src.len())
+    };
+    if rest.starts_with(b"<!--") {
+        Some(after(b"-->", i + 4))
+    } else if rest.starts_with(b"<![CDATA[") {
+        Some(after(b"]]>", i + 9))
+    } else if rest.starts_with(b"<?") || rest.starts_with(b"<!") {
+        Some(after(b">", i + 2))
+    } else {
+        None
+    }
+}
+
+fn find(src: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
+    if from >= src.len() {
+        return None;
+    }
+    src[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|p| p + from)
+}
+
+/// The end of the tag starting at `i`, and what kind it is: `(offset after
+/// `>`, self-closing, closing)`. Quoted attribute values are skipped, so a
+/// `>` inside one does not end the tag early.
+fn tag_end(src: &[u8], i: usize) -> Option<(usize, bool, bool)> {
+    let closing = src.get(i + 1) == Some(&b'/');
+    let mut j = i + 1;
+    let mut quote = 0u8;
+    while j < src.len() {
+        let c = src[j];
+        if quote != 0 {
+            if c == quote {
+                quote = 0;
+            }
+        } else if c == b'"' || c == b'\'' {
+            quote = c;
+        } else if c == b'>' {
+            return Some((j + 1, src[j - 1] == b'/', closing));
+        }
+        j += 1;
+    }
+    None
 }
 
 /// Make control characters visible so a cell always renders on one line.
