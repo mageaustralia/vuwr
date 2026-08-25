@@ -17,6 +17,7 @@ use eframe::egui;
 use vuwr_core::{Command, Document, Effect, NewNode, Session, ViewMode};
 
 pub use input::{command_for, command_for_char};
+pub use table::{NodeAction, TreeAction};
 
 /// Adopt the platform's fonts, returning the faces used. Exposed so tests
 /// can check the platform we build for actually has them.
@@ -202,7 +203,11 @@ impl VuwrApp {
     }
 
     /// Carry out something the tree asked for.
-    fn apply_tree_action(&mut self, action: table::TreeAction, ctx: &egui::Context) {
+    ///
+    /// Public so the context menu's wiring is testable: every item in it
+    /// arrives here, and "Copy value does nothing" was a bug in exactly
+    /// this layer as far as anyone clicking it was concerned.
+    pub fn apply_tree_action(&mut self, action: table::TreeAction, ctx: &egui::Context) {
         use table::{NodeAction, TreeAction};
         let Some(session) = self.session.as_mut() else {
             return;

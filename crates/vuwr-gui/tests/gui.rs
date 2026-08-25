@@ -464,3 +464,102 @@ fn copying_from_the_gui_puts_text_on_the_clipboard() {
         app.session().status
     );
 }
+
+// --- The tree's context menu ---
+//
+// Every item in that menu arrives at apply_tree_action. "Copy value does
+// nothing" was a bug in this layer as far as anyone clicking it was
+// concerned, and nothing tested it.
+
+use vuwr_gui::{NodeAction, TreeAction};
+
+fn context(app: &mut VuwrApp, ctx: &egui::Context, row: usize, action: NodeAction) {
+    app.apply_tree_action(TreeAction::Context { row, action }, ctx);
+}
+
+fn tree_app(src: &str) -> (egui::Context, VuwrApp) {
+    (ctx(), VuwrApp::new(None, doc(src)))
+}
+
+#[test]
+fn context_menu_copy_value_reaches_the_clipboard() {
+    let (ctx, mut app) = tree_app(r#"{"a":"hello","b":2}"#);
+    context(&mut app, &ctx, 0, NodeAction::CopyValue);
+    assert!(
+        app.session().status.contains("copied"),
+        "{}",
+        app.session().status
+    );
+}
+
+#[test]
+fn context_menu_remove_deletes_the_node() {
+    let (ctx, mut app) = tree_app(r#"{"a":1,"b":2}"#);
+    context(&mut app, &ctx, 0, NodeAction::Remove);
+    assert_eq!(app.document_text(), r#"{"b":2}"#);
+}
+
+#[test]
+fn context_menu_duplicate_adds_a_uniquely_named_copy() {
+    let (ctx, mut app) = tree_app(r#"{"a":1}"#);
+    context(&mut app, &ctx, 0, NodeAction::Duplicate);
+    let out = app.document_text();
+    assert!(out.contains(r#""a":1"#), "the original survives: {out}");
+    assert!(
+        out.contains("a copy"),
+        "and the copy is named apart, rather than making a duplicate key: {out}"
+    );
+}
+
+#[test]
+fn context_menu_inserts_after_the_selected_node() {
+    for (action, expect) in [
+        (NodeAction::InsertValueAfter, r#""""#),
+        (NodeAction::InsertObjectAfter, "{}"),
+        (NodeAction::InsertArrayAfter, "[]"),
+    ] {
+        let (ctx, mut app) = tree_app(r#"{"a":1}"#);
+        context(&mut app, &ctx, 0, action);
+        let out = app.document_text();
+        assert!(
+            out.contains(expect),
+            "{action:?} should insert {expect}: {out}"
+        );
+        assert!(out.starts_with(r#"{"a":1,"#), "after, not before: {out}");
+    }
+}
+
+#[test]
+fn context_menu_edit_value_opens_the_inline_editor() {
+    let (ctx, mut app) = tree_app(r#"{"a":"short"}"#);
+    context(&mut app, &ctx, 0, NodeAction::EditValue);
+    assert!(app.session().is_editing_inline());
+    assert_eq!(
+        app.session().entry().map(|(_, b)| b.to_string()),
+        Some("short".into())
+    );
+}
+
+/// The window is the path for values the inline editor refuses.
+#[test]
+fn context_menu_edit_in_a_window_opens_on_the_value() {
+    let long = "x".repeat(400);
+    let (ctx, mut app) = tree_app(&format!(r#"{{"a":"{long}"}}"#));
+    context(&mut app, &ctx, 0, NodeAction::EditLarge);
+    assert!(
+        !app.session().is_editing_inline(),
+        "the inline editor must not open on this"
+    );
+}
+
+/// Selecting and toggling arrive the same way.
+#[test]
+fn tree_select_and_toggle_actions() {
+    let (ctx, mut app) = tree_app(r#"{"a":1,"o":{"x":1}}"#);
+    app.apply_tree_action(TreeAction::Select(1), &ctx);
+    assert_eq!(app.session().grid.cursor.0, 1);
+
+    let path = app.session().tree_rows[1].path.clone();
+    app.apply_tree_action(TreeAction::Toggle(path), &ctx);
+    assert_eq!(app.session().tree_rows.len(), 3, "the object opened");
+}
