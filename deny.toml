@@ -41,4 +41,12 @@ confidence-threshold = 0.8
 multiple-versions = "warn"
 
 [advisories]
-ignore = []
+ignore = [
+    # RUSTSEC-2026-0192: ttf-parser is unmaintained. Not a vulnerability —
+    # its author has said there will be no further fixes. It reaches us
+    # only through egui's font rasterisation (ab_glyph → owned_ttf_parser),
+    # so there is nothing to swap out on our side until egui moves; the
+    # core, which is what anything else would depend on, never sees it.
+    # Revisit when eframe is next upgraded.
+    "RUSTSEC-2026-0192",
+]
