@@ -278,11 +278,14 @@ pub fn summarize(node: &Node) -> String {
             if is_container(node) {
                 format!("<{}>", e.tag)
             } else {
-                text
+                // Escaped markup is decoded for display: a description
+                // reading `&lt;p&gt;` is what people came here to stop
+                // squinting at. The document keeps its raw bytes.
+                crate::decode(&text)
             }
         }
         Node::Comment(c) => format!("<!--{}-->", c.trim()),
-        Node::Text(t) => t.trim().to_string(),
+        Node::Text(t) => crate::decode(t.trim()),
         Node::CData(t) => t.trim().to_string(),
         Node::Doctype(raw) => raw.clone(),
         Node::XmlDecl(_) => "<?xml?>".to_string(),

@@ -35,6 +35,7 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
             Key::Q => Some(Command::Quit),
             Key::E => Some(Command::PrintMarks),
             Key::R => Some(Command::Redo),
+            Key::Y => Some(Command::Redo),
             Key::D => Some(Command::HalfPageDown),
             // Formatting shortcuts follow JSON Editor Online's, which is
             // what people coming from a browser will already have in
@@ -133,7 +134,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::CopyRow => "toolbar",
         Command::Paste => "Ctrl-V",
         Command::Undo => "Ctrl-Z / u",
-        Command::Redo => "Ctrl-Shift-Z",
+        Command::Redo => "Ctrl-Shift-Z / Ctrl-Y",
         Command::Find => "Ctrl-F / /",
         Command::FindNext => "n",
         Command::FindPrev => "N",

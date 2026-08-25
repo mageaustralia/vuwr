@@ -425,3 +425,42 @@ fn open_and_save_as_are_bound() {
         Some(Command::Save)
     );
 }
+
+/// Undo and redo answer to the shortcuts people already have in their
+/// fingers, both halves of the world's conventions.
+#[test]
+fn undo_and_redo_have_the_usual_shortcuts() {
+    use eframe::egui::{Key, Modifiers};
+    let cmd = Modifiers::COMMAND;
+    assert_eq!(
+        vuwr_gui::command_for(Key::Z, cmd, false),
+        Some(Command::Undo)
+    );
+    assert_eq!(
+        vuwr_gui::command_for(Key::Z, cmd.plus(Modifiers::SHIFT), false),
+        Some(Command::Redo)
+    );
+    assert_eq!(
+        vuwr_gui::command_for(Key::Y, cmd, false),
+        Some(Command::Redo)
+    );
+    // And the vim keys still work, since the TUI shares this vocabulary.
+    assert_eq!(
+        vuwr_gui::command_for(Key::U, Modifiers::NONE, false),
+        Some(Command::Undo)
+    );
+}
+
+/// Copy must reach the clipboard, not silently copy nothing.
+#[test]
+fn copying_from_the_gui_puts_text_on_the_clipboard() {
+    let ctx = ctx();
+    let mut app = VuwrApp::new(None, doc(SAMPLE));
+    app.run(Command::MoveDown, &ctx);
+    app.run(Command::Copy, &ctx);
+    assert!(
+        app.session().status.contains("copied"),
+        "{}",
+        app.session().status
+    );
+}

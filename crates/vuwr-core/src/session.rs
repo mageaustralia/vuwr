@@ -1057,6 +1057,9 @@ impl Session {
                 let root = self.tree_root()?;
                 let node = root.get_at(&row.path)?;
                 Some(match node {
+                    // An element is its text, decoded — the same thing the
+                    // editor opens on, so copy and edit agree.
+                    crate::Node::Element(_) => crate::decode(&node_to_edit_string(node)),
                     crate::Node::Array(_) | crate::Node::Map(_) => {
                         // A container copies as JSON, which is what you
                         // would want to paste somewhere else.
@@ -1064,7 +1067,7 @@ impl Session {
                         *doc.root_mut() = node.clone();
                         String::from_utf8_lossy(&doc.serialize()).into_owned()
                     }
-                    other => other.scalar_text(),
+                    other => crate::decode(&other.scalar_text()),
                 })
             }
             _ => self.table_cell(self.grid.cursor.0, self.grid.cursor.1),

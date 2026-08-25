@@ -454,3 +454,55 @@ fn a_short_value_still_edits_inline() {
     s.execute(Command::EditCell);
     assert!(s.is_entering_text());
 }
+
+// --- Copy, and what the tree shows ---
+
+/// Copy value returned nothing for an XML element: `scalar_text` has no
+/// case for one, the same gap that made the editor open empty.
+#[test]
+fn copying_an_xml_element_yields_its_text() {
+    let mut s = xml_session("<r><d>hello</d></r>");
+    s.grid.cursor = (0, 0);
+    match s.execute(Command::Copy) {
+        Effect::Copy(text) => assert_eq!(text, "hello"),
+        other => panic!("expected a copy effect, got {other:?}"),
+    }
+}
+
+/// Copy gives what the editor would open on, so the two agree.
+#[test]
+fn copying_decodes_escaped_markup() {
+    let mut s = xml_session("<r><d>&lt;p&gt;Hello&lt;/p&gt;</d></r>");
+    s.grid.cursor = (0, 0);
+    match s.execute(Command::Copy) {
+        Effect::Copy(text) => assert_eq!(text, "<p>Hello</p>"),
+        other => panic!("got {other:?}"),
+    }
+    assert_eq!(s.large_edit_text().as_deref(), Some("<p>Hello</p>"));
+}
+
+/// And the tree shows the same thing, rather than making you read
+/// `&lt;p&gt;`.
+#[test]
+fn the_tree_shows_decoded_text() {
+    let s = xml_session("<r><d>&lt;p&gt;Hello&lt;/p&gt;</d></r>");
+    assert_eq!(s.tree_rows[0].summary, "<p>Hello</p>");
+}
+
+/// Decoding is a display concern: the file keeps its own bytes.
+#[test]
+fn showing_decoded_text_does_not_rewrite_the_document() {
+    let src = "<r><d>&lt;p&gt;Hello&lt;/p&gt;</d></r>";
+    let s = xml_session(src);
+    let _ = &s.tree_rows;
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+}
+
+#[test]
+fn copying_a_container_still_yields_json() {
+    let mut s = session(r#"{"o":{"x":1}}"#);
+    match s.execute(Command::Copy) {
+        Effect::Copy(text) => assert_eq!(text, r#"{"x":1}"#),
+        other => panic!("got {other:?}"),
+    }
+}
