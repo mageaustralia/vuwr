@@ -1304,7 +1304,11 @@ fn the_scheme_command_lists_and_chooses() {
     }
     s.input_submit();
     assert!(s.status.contains("Gruvbox dark"), "{}", s.status);
-    assert_eq!(s.scheme(), vuwr_core::Scheme::Vuwr, "listing changes nothing");
+    assert_eq!(
+        s.scheme(),
+        vuwr_core::Scheme::Vuwr,
+        "listing changes nothing"
+    );
 
     s.execute(Command::OpenPalette);
     for c in "scheme gruvbox-dark".chars() {

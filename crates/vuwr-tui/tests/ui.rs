@@ -1621,3 +1621,35 @@ fn the_editor_is_visibly_a_separate_thing() {
         "with a heavy border to separate it:\n{out}"
     );
 }
+
+/// A scheme is a foreground and a background. Monokai's near-white text
+/// on a light terminal is invisible, so a named scheme carries its own
+/// surface; ours carries none, and leaves the terminal alone.
+#[test]
+fn a_named_scheme_brings_its_own_ground() {
+    use vuwr_core::Scheme;
+    use vuwr_tui::palette;
+
+    palette::set_scheme(Scheme::Vuwr);
+    assert!(
+        palette::background().is_none(),
+        "ours should not paint over the terminal"
+    );
+
+    for scheme in [Scheme::Monokai, Scheme::GruvboxLight, Scheme::Nord] {
+        palette::set_scheme(scheme);
+        assert!(
+            scheme.background().is_some(),
+            "{} has no ground of its own",
+            scheme.name()
+        );
+        // And the text is drawn for that ground, not for the terminal's.
+        assert_eq!(
+            palette::ground_is_dark(),
+            scheme.ground() != Some(vuwr_core::Ground::Light),
+            "{}",
+            scheme.name()
+        );
+    }
+    palette::set_scheme(Scheme::Vuwr);
+}

@@ -652,3 +652,62 @@ fn dragging_a_column_boundary_resizes_it() {
     );
     assert!(session.column_is_manual(0));
 }
+
+/// Both of egui's styles must be ours.
+///
+/// egui keeps one `Style` for light and one for dark, and `set_style`
+/// fills only whichever is active. We installed into one, the active
+/// theme flipped when the system theme arrived a moment after startup,
+/// and the other slot was egui's default — with none of the text styles
+/// the views ask for by name. egui aborts the process on a name it does
+/// not know, so the app died on load. An abort cannot be caught, so this
+/// checks the condition that caused it.
+#[test]
+fn either_theme_can_be_active_without_taking_the_app_down() {
+    let ctx = ctx();
+    // Whichever ground egui decides on, the style behind it is ours.
+    for theme in [egui::Theme::Light, egui::Theme::Dark] {
+        ctx.set_theme(theme);
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        assert!(
+            vuwr_gui::theme_is_installed(&ctx),
+            "{theme:?} has a style we did not install"
+        );
+    }
+
+    // And a style that is not ours at all is put back before drawing.
+    ctx.set_style(egui::Style::default());
+    assert!(
+        !vuwr_gui::theme_is_installed(&ctx),
+        "the foreign style did not take"
+    );
+
+    // Every view, drawn on that context. This is the path that aborted.
+    let mut session = Session::new(doc(SAMPLE));
+    for view in session.available_views() {
+        session.execute(match view {
+            ViewMode::Table => Command::ViewTable,
+            ViewMode::Tree => Command::ViewTree,
+            ViewMode::Text => Command::ViewText,
+        });
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| vuwr_gui::render_view(&mut session, ui));
+        });
+    }
+
+    assert!(
+        vuwr_gui::theme_is_installed(&ctx),
+        "drawing did not put our own style back"
+    );
+}
+
+/// egui's saved memory carries the style, and a style saved by an older
+/// build would arrive without the names this one uses.
+#[test]
+fn egui_memory_is_not_persisted() {
+    let app = VuwrApp::empty();
+    assert!(
+        !eframe::App::persist_egui_memory(&app),
+        "a saved style would be restored over ours"
+    );
+}

@@ -17,6 +17,31 @@ use vuwr_core::Scheme;
 
 static SCHEME: AtomicUsize = AtomicUsize::new(0);
 
+/// Whether the terminal's own background is dark.
+///
+/// `COLORFGBG` is what terminals that will say anything set: two or three
+/// fields, the last being the background as an ANSI colour index. Under 8
+/// is a dark background, 8 and over a light one. Terminals that say
+/// nothing are assumed dark, which is what most of them are and what the
+/// bundled colours were chosen against.
+pub fn terminal_is_dark() -> bool {
+    use std::sync::OnceLock;
+    static DARK: OnceLock<bool> = OnceLock::new();
+    *DARK.get_or_init(|| {
+        let Ok(value) = std::env::var("COLORFGBG") else {
+            return true;
+        };
+        match value
+            .rsplit(';')
+            .next()
+            .and_then(|b| b.trim().parse::<u8>().ok())
+        {
+            Some(bg) => bg < 8,
+            None => true,
+        }
+    })
+}
+
 /// The scheme the document's own text is coloured by. The chrome keeps
 /// the terminal's own five colours: a status line in Gruvbox red would be
 /// a scheme deciding something it was not asked about.
@@ -38,6 +63,30 @@ fn from_rgb(c: vuwr_core::Rgb, fallback: Color) -> Color {
     pick(Color::Rgb(c.0, c.1, c.2), fallback)
 }
 
+/// Which ground the document is being drawn on: the scheme's own where it
+/// brings one, the terminal's otherwise.
+pub fn ground_is_dark() -> bool {
+    match scheme().ground() {
+        Some(vuwr_core::Ground::Light) => false,
+        Some(vuwr_core::Ground::Dark) => true,
+        None => terminal_is_dark(),
+    }
+}
+
+/// The surface a named scheme wants behind the document, or `None` to
+/// leave the terminal's own background showing.
+///
+/// A scheme is a foreground *and* a background. Monokai's near-white text
+/// on a light terminal is invisible, and picking a different grey does
+/// not fix it — so a named scheme paints its own surface, as it does in
+/// the editor it came from.
+pub fn background() -> Option<Color> {
+    if !truecolor() {
+        return None;
+    }
+    scheme().background().map(|(r, g, b)| Color::Rgb(r, g, b))
+}
+
 /// The colour for one syntax token under the chosen scheme.
 pub fn token(t: vuwr_core::Token) -> Color {
     use vuwr_core::Token as T;
@@ -48,10 +97,7 @@ pub fn token(t: vuwr_core::Token) -> Color {
         T::Punctuation => dim(),
         T::Str | T::Number | T::Plain => text(),
     };
-    // The terminal is dark far more often than not, and a scheme that
-    // names a ground is asking for that one.
-    let dark = !matches!(scheme().ground(), Some(vuwr_core::Ground::Light));
-    from_rgb(scheme().token(t, dark), fallback)
+    from_rgb(scheme().token(t, ground_is_dark()), fallback)
 }
 
 /// The colour for a tree value of a given kind.
@@ -62,8 +108,7 @@ pub fn value(kind: vuwr_core::ValueKind) -> Color {
         V::Null | V::Comment => faint(),
         _ => text(),
     };
-    let dark = !matches!(scheme().ground(), Some(vuwr_core::Ground::Light));
-    from_rgb(scheme().value(kind, dark), fallback)
+    from_rgb(scheme().value(kind, ground_is_dark()), fallback)
 }
 
 /// Whether the terminal was launched with truecolor support.
@@ -120,6 +165,11 @@ pub fn bad() -> Color {
 
 /// The background of the row the cursor is on.
 pub fn row_selected() -> Color {
+    if let Some((r, g, b)) = scheme().selection()
+        && truecolor()
+    {
+        return Color::Rgb(r, g, b);
+    }
     pick(Color::Rgb(0x1C, 0x26, 0x36), Color::Blue)
 }
 

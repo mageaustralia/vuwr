@@ -18,7 +18,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use eframe::egui::{self, Color32, CornerRadius, Stroke};
 
 static DARK: AtomicBool = AtomicBool::new(false);
-static SCHEME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Whether the dark ground is in use.
 pub fn is_dark() -> bool {
@@ -30,44 +29,28 @@ pub fn set_dark(on: bool) {
     DARK.store(on, Ordering::Relaxed);
 }
 
-/// The scheme the document's own text is coloured by.
-pub fn scheme() -> vuwr_core::Scheme {
-    let i = SCHEME.load(Ordering::Relaxed);
-    vuwr_core::Scheme::ALL
-        .get(i)
-        .copied()
-        .unwrap_or(vuwr_core::Scheme::Vuwr)
-}
-
-/// Choose the scheme. A scheme that wants a particular ground gets it,
-/// since Gruvbox's yellows are unreadable on white and Solarized light's
-/// are unreadable on black.
-pub fn set_scheme(chosen: vuwr_core::Scheme) {
-    let i = vuwr_core::Scheme::ALL
-        .iter()
-        .position(|s| *s == chosen)
-        .unwrap_or(0);
-    SCHEME.store(i, Ordering::Relaxed);
-    match chosen.ground() {
-        Some(vuwr_core::Ground::Dark) => set_dark(true),
-        Some(vuwr_core::Ground::Light) => set_dark(false),
-        None => {}
-    }
-}
-
 /// A colour from core's table, in egui's type.
 pub fn from_rgb(c: vuwr_core::Rgb) -> Color32 {
     Color32::from_rgb(c.0, c.1, c.2)
 }
 
-/// The colour for one syntax token, under the chosen scheme.
+/// The colour for one syntax token.
+///
+/// The design's own, in both grounds. Colour schemes are a terminal
+/// feature: a window has a design, and a window that is sometimes
+/// Monokai and sometimes not has two.
+///
+/// Read from the palette's own idea of the ground rather than from
+/// `ui.visuals().dark_mode`, which is a different question and once
+/// answered dark while the window was white — every piece of the file
+/// drawn in a grey meant for a dark ground, on white.
 pub fn token(token: vuwr_core::Token) -> Color32 {
-    from_rgb(scheme().token(token, is_dark()))
+    from_rgb(vuwr_core::Scheme::Vuwr.token(token, is_dark()))
 }
 
 /// The colour for a tree value of a given kind.
 pub fn value(kind: vuwr_core::ValueKind) -> Color32 {
-    from_rgb(scheme().value(kind, is_dark()))
+    from_rgb(vuwr_core::Scheme::Vuwr.value(kind, is_dark()))
 }
 
 const fn rgb(hex: u32) -> Color32 {
@@ -220,6 +203,26 @@ pub const ROW_MARKER: f32 = 2.0;
 /// Height of a control: an outlined pill.
 pub const CONTROL_HEIGHT: f32 = 26.0;
 
+/// Whether the style in this context is one we installed.
+///
+/// The views ask for text styles by name, and egui aborts the process on
+/// a name it does not know. Anything that can replace the style — a
+/// restored session, a second context — has to be noticed before a view
+/// draws rather than after.
+pub fn is_installed(ctx: &egui::Context) -> bool {
+    ctx.style().text_styles.contains_key(&meta())
+}
+
+/// Install the style if this context does not already have ours.
+///
+/// Cheap enough to call before drawing anything: one map lookup against
+/// a style that is nearly always already right.
+pub fn ensure(ctx: &egui::Context) {
+    if !is_installed(ctx) {
+        install(ctx);
+    }
+}
+
 /// Install the palette, the type scale and the spacing rhythm.
 ///
 /// Called once. Everything drawn afterwards assumes it: a colour set at a
@@ -312,7 +315,22 @@ pub fn install(ctx: &egui::Context) {
     // Disabled drops to a lighter fill rather than the same box greyed.
     v.widgets.noninteractive.weak_bg_fill = surface_header();
 
-    ctx.set_style(s);
+    // Into *both* slots, and pin the preference to the ground we chose.
+    //
+    // egui keeps one style for light and one for dark, and `set_style`
+    // fills only whichever is active. Install ours into one, let the
+    // active theme flip — the system theme arriving a moment after
+    // startup will do it — and the other slot is egui's default, with
+    // none of the text styles named here. egui aborts the process on a
+    // style name it does not know, so the app died on load rather than
+    // looking wrong.
+    ctx.set_style_of(egui::Theme::Light, s.clone());
+    ctx.set_style_of(egui::Theme::Dark, s);
+    ctx.set_theme(if is_dark() {
+        egui::ThemePreference::Dark
+    } else {
+        egui::ThemePreference::Light
+    });
 }
 
 /// A keycap: the key itself, boxed, the way the hint row shows it.

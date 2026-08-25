@@ -35,6 +35,12 @@ pub fn install_theme(ctx: &egui::Context) {
     theme::install(ctx);
 }
 
+/// Whether this context carries our style. Exposed for the test that
+/// guards against a restored one taking the app down.
+pub fn theme_is_installed(ctx: &egui::Context) -> bool {
+    theme::is_installed(ctx)
+}
+
 /// Commands the GUI offers only through the menu bar. Help says "menu" for
 /// these, and the File menu builds from the same list, so the two cannot
 /// disagree.
@@ -338,9 +344,9 @@ impl VuwrApp {
             // egui delivers the clipboard as an event rather than on
             // demand, so ask for it and take it next frame.
             Effect::Paste => self.want_paste = true,
-            Effect::SchemeChanged(scheme) => {
-                theme::set_scheme(scheme);
-                self.dark = theme::is_dark();
+            // The window has a design; the terminal takes schemes.
+            Effect::SchemeChanged(_) => {
+                self.report_status("colour schemes apply to the terminal, not the window");
             }
             Effect::EditLarge => {
                 self.large_edit = self.session.as_ref().and_then(|s| s.large_edit_text());
@@ -542,7 +548,20 @@ fn quiet_action(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response
 }
 
 impl eframe::App for VuwrApp {
+    /// Do not restore egui's saved memory.
+    ///
+    /// eframe otherwise writes the whole of `egui::Memory` to disk on
+    /// exit and reads it back on start — the style included. A style
+    /// saved by an older build has none of the named text styles this one
+    /// asks for, and egui aborts on a style it does not know rather than
+    /// falling back: the app crashed on load, for anybody who had ever
+    /// run an earlier version. The style is ours to decide, every time.
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        theme::ensure(ctx);
         if theme::is_dark() != self.dark {
             theme::set_dark(self.dark);
             theme::install(ctx);
@@ -757,17 +776,6 @@ impl VuwrApp {
                         // A ground chosen by hand outranks the one the
                         // scheme asked for.
                         theme::set_dark(dark);
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                ui.label(egui::RichText::new("Colours").weak());
-                for scheme in vuwr_core::Scheme::ALL {
-                    let on = theme::scheme() == *scheme;
-                    if ui.selectable_label(on, scheme.name()).clicked() {
-                        theme::set_scheme(*scheme);
-                        // A scheme that names a ground brings it with it.
-                        self.dark = theme::is_dark();
                         ui.close();
                     }
                 }
@@ -1513,6 +1521,10 @@ fn drop_zone(ui: &mut egui::Ui, error: Option<&str>) {
 /// Public so it can be exercised headlessly: egui runs without a window,
 /// so the drawing code is testable like anything else.
 pub fn render_view(session: &mut Session, ui: &mut egui::Ui) -> Option<table::TreeAction> {
+    // The views ask for text styles by name and egui aborts on a name it
+    // does not know, so this is checked where the drawing happens rather
+    // than trusted to have been done once at startup.
+    theme::ensure(ui.ctx());
     match session.view_mode() {
         ViewMode::Table => table::table(session, ui).then_some(table::TreeAction::EditCurrent),
         ViewMode::Tree => table::tree(session, ui),

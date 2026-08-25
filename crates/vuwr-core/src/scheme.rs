@@ -182,6 +182,39 @@ impl Scheme {
         }
     }
 
+    /// The ground this scheme wants behind the document, or `None` for
+    /// one with no opinion — which is only ours.
+    ///
+    /// A scheme is a foreground *and* a background: Monokai's near-white
+    /// text on a light terminal is invisible, and no amount of choosing
+    /// the right grey fixes that. So a named scheme paints its own
+    /// surface, exactly as it does in the editor it came from, and ours
+    /// leaves the terminal's own background alone.
+    pub fn background(self) -> Option<Rgb> {
+        match self {
+            Scheme::Vuwr => None,
+            Scheme::GruvboxDark => Some(rgb(0x282828)),
+            Scheme::GruvboxLight => Some(rgb(0xFBF1C7)),
+            Scheme::SolarizedDark => Some(rgb(0x002B36)),
+            Scheme::SolarizedLight => Some(rgb(0xFDF6E3)),
+            Scheme::Nord => Some(rgb(0x2E3440)),
+            Scheme::Monokai => Some(rgb(0x272822)),
+        }
+    }
+
+    /// The row the cursor is on, against this scheme's ground.
+    pub fn selection(self) -> Option<Rgb> {
+        match self {
+            Scheme::Vuwr => None,
+            Scheme::GruvboxDark => Some(rgb(0x3C3836)),
+            Scheme::GruvboxLight => Some(rgb(0xEBDBB2)),
+            Scheme::SolarizedDark => Some(rgb(0x073642)),
+            Scheme::SolarizedLight => Some(rgb(0xEEE8D5)),
+            Scheme::Nord => Some(rgb(0x3B4252)),
+            Scheme::Monokai => Some(rgb(0x3E3D32)),
+        }
+    }
+
     /// The colour for a tree value of a given kind, which is the same
     /// vocabulary read through the token table: a string is a string.
     pub fn value(self, kind: crate::ValueKind, dark: bool) -> Rgb {
@@ -221,7 +254,13 @@ mod tests {
     fn no_scheme_is_invisible_on_its_own_ground() {
         for scheme in Scheme::ALL {
             let dark = !matches!(scheme.ground(), Some(Ground::Light));
-            let ground: i32 = if dark { 0x16 } else { 0xFD };
+            // Against the scheme's own surface where it has one, since
+            // that is what it will actually be drawn on.
+            let ground: i32 = match scheme.background() {
+                Some((r, g, b)) => (r as i32 + g as i32 + b as i32) / 3,
+                None if dark => 0x16,
+                None => 0xFD,
+            };
             for token in [
                 Token::Key,
                 Token::Tag,

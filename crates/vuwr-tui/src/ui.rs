@@ -40,6 +40,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Constraint::Length(hint_rows),
     ])
     .split(frame.area());
+    // A named scheme brings its own surface, painted under the document
+    // before anything is drawn on it. Without it, Monokai's near-white
+    // text lands on whatever the terminal's background happens to be —
+    // which on a light terminal is nothing at all.
+    if let Some(bg) = palette::background() {
+        frame.render_widget(
+            ratatui::widgets::Block::default().style(Style::default().bg(bg)),
+            chunks[0],
+        );
+    }
     match app.view_mode() {
         ViewMode::Table => render_table(frame, app, chunks[0]),
         ViewMode::Tree => render_tree(frame, app, chunks[0]),
