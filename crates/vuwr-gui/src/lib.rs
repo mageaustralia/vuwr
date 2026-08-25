@@ -456,14 +456,13 @@ fn shortcut_label(ctx: &egui::Context, cmd: Command) -> String {
     }
     // ⌘ is in every Mac font; ⇧ is not in all of them, and a missing
     // glyph draws as an empty box — which is worse than the word.
-    // ⌘ is in every Mac font. ⇧ is not — SF Rounded draws it as an empty
-    // box — and a shortcut nobody can read is worse than a longer one, so
-    // that modifier stays a word.
+    // Both symbols are in the faces we bundle now, so the shortcut is
+    // spelled the way a Mac spells it.
     // Mac order puts the modifier first: Shift ⌘S, not ⌘Shift S.
     first
-        .replace("Ctrl-Shift-", "Shift ⌘")
+        .replace("Ctrl-Shift-", "⇧⌘")
         .replace("Ctrl-", "⌘")
-        .replace("Shift-", "Shift ")
+        .replace("Shift-", "⇧")
 }
 
 /// What the document is, for the right-hand end of the status line.
@@ -1374,6 +1373,14 @@ pub fn render_license_window(open: &mut bool, ctx: &egui::Context) {
 /// Licence notices that must be distributed with the binary, embedded so
 /// they cannot be separated from it.
 pub const LICENSE_NOTICES: &[(&str, &str)] = &[
+    (
+        "IBM Plex Sans — SIL Open Font License 1.1",
+        include_str!("../licenses/IBMPlexSans-OFL.txt"),
+    ),
+    (
+        "JetBrains Mono — SIL Open Font License 1.1",
+        include_str!("../licenses/JetBrainsMono-OFL.txt"),
+    ),
     (
         "Ubuntu Light — Ubuntu Font Licence 1.0",
         include_str!("../licenses/UFL.txt"),

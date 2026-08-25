@@ -30,6 +30,13 @@ python3 -m http.server -d web 8080
 # then open http://localhost:8080
 ```
 
+## Size
+
+The bundle is about 5.5 MB, of which 1.1 MB is the five font files the
+design asks for. They are not subset: this is a viewer for whatever file
+somebody opens, and a feed with Chinese or Arabic in it would come out as
+empty boxes. `wasm-opt -Oz` takes 15–25% off the rest if that matters.
+
 ## Gotchas paid for already
 
 **Do not set `default-features = false` on `eframe`.** It builds, renders,

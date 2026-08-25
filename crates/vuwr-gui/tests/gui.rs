@@ -11,8 +11,10 @@ fn doc(src: &str) -> Document {
 
 fn ctx() -> egui::Context {
     let ctx = egui::Context::default();
-    // The views ask for named text styles, so the theme has to be in
-    // place before anything is drawn — as it is in the app.
+    // Fonts, then the theme that names them — the order the app uses.
+    // The views ask for named text styles, and egui panics on a style or
+    // a family it does not know rather than falling back.
+    vuwr_gui::install_fonts(&ctx);
     vuwr_gui::install_theme(&ctx);
     // One warm-up pass so fonts and style exist before anything is drawn.
     let _ = ctx.run(egui::RawInput::default(), |_| {});
@@ -389,25 +391,27 @@ fn the_acknowledgements_window_draws() {
 /// The platform's fonts are preferred over the bundled ones, which look
 /// out of place and lack most symbols. A missing font must not be fatal.
 #[test]
-fn system_fonts_are_adopted_when_present() {
-    let ctx = ctx();
+fn the_bundled_faces_are_installed() {
+    let ctx = egui::Context::default();
     let adopted = vuwr_gui::install_fonts(&ctx);
-    if cfg!(target_os = "macos") {
-        assert!(
-            !adopted.is_empty(),
-            "macOS ships fonts we can read; found none"
-        );
-        assert!(
-            adopted
-                .iter()
-                .any(|p| p.contains("SFNS") || p.contains("Monaco")),
-            "expected a system face, got {adopted:?}"
-        );
-    }
-    // Whatever happened, the context still draws.
+    // Five files, five families: the design names two faces and three
+    // weights of one of them, and egui will not fake a weight.
+    assert_eq!(
+        adopted,
+        vec!["sans", "sans_medium", "sans_semi", "mono", "mono_medium"],
+        "the bundle did not arrive"
+    );
+    vuwr_gui::install_theme(&ctx);
+
+    // And every named face actually draws.
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.label("still renders");
+            for name in &adopted {
+                ui.label(
+                    egui::RichText::new("still renders")
+                        .family(egui::FontFamily::Name(name.as_str().into())),
+                );
+            }
         });
     });
 }

@@ -194,21 +194,29 @@ pub fn install(ctx: &egui::Context) {
         egui::Visuals::light()
     };
 
-    let sans = egui::FontFamily::Proportional;
-    let mono = egui::FontFamily::Monospace;
-    let (sans2, mono2) = (sans.clone(), mono.clone());
+    // Named faces rather than weights: egui does not synthesise bold, so
+    // a "semibold" heading in one file is the only way to have one.
+    let sans = egui::FontFamily::Name("sans".into());
+    let sans_medium = egui::FontFamily::Name("sans_medium".into());
+    let sans_semi = egui::FontFamily::Name("sans_semi".into());
+    let mono = egui::FontFamily::Name("mono".into());
+    let mono_medium = egui::FontFamily::Name("mono_medium".into());
+    let (sans2, mono2) = (sans_semi.clone(), mono.clone());
     // Inserted rather than assigned: replacing the map drops egui's own
     // Heading and Small, and anything still asking for one panics.
     let styles = [
-        (heading(), egui::FontId::new(13.5, sans.clone())),
+        (heading(), egui::FontId::new(13.5, sans_semi.clone())),
         (egui::TextStyle::Body, egui::FontId::new(12.5, sans.clone())),
-        (egui::TextStyle::Button, egui::FontId::new(12.5, sans)),
+        (
+            egui::TextStyle::Button,
+            egui::FontId::new(12.5, sans_medium),
+        ),
         (
             egui::TextStyle::Monospace,
             egui::FontId::new(12.0, mono.clone()),
         ),
         (meta(), egui::FontId::new(11.5, mono.clone())),
-        (micro(), egui::FontId::new(11.0, mono)),
+        (micro(), egui::FontId::new(11.0, mono_medium)),
     ];
     for (name, font) in styles {
         s.text_styles.insert(name, font);
