@@ -436,7 +436,7 @@ fn a_long_value_hands_over_to_the_larger_editor() {
     let long = "line one\nline two\nline three";
     let mut s = xml_session(&format!("<r><d>{long}</d></r>"));
     s.grid.cursor = (0, 0);
-    assert!(s.value_is_multiline());
+    assert!(s.value_needs_more_room());
     assert_eq!(s.execute(Command::EditCell), Effect::EditLarge);
     assert!(!s.is_entering_text(), "the inline editor must not open");
 }
@@ -545,4 +545,142 @@ fn replace_also_routes_long_values_to_the_larger_editor() {
     let mut s = xml_session(&format!("<r><d>{long}</d></r>"));
     s.grid.cursor = (0, 0);
     assert_eq!(s.execute(Command::ReplaceCell), Effect::EditLarge);
+}
+
+// --- Anything that does not fit gets the larger editor ---
+
+/// A URL cut off at the column's width needs the bigger editor as much as
+/// a paragraph does. A fixed character limit missed exactly that: a
+/// 70-character link sat under 80 and opened inline, where it could not
+/// be read.
+#[test]
+fn a_value_wider_than_its_column_opens_the_larger_editor() {
+    let url = "https://www.example.com/media/catalog/product/a/l/alu-power.jpg";
+    let src = format!("<rows><row><id>1</id><link>{url}</link></row></rows>");
+    let mut s = xml_session(&src);
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 1);
+
+    assert!(
+        url.chars().count() < Session::INLINE_LIMIT,
+        "under the old limit"
+    );
+    assert!(
+        s.value_needs_more_room(),
+        "but wider than its column, so it still needs room"
+    );
+    assert_eq!(s.execute(Command::EditCell), Effect::EditLarge);
+}
+
+/// Something that does fit its column still edits in place.
+#[test]
+fn a_value_that_fits_its_column_edits_inline() {
+    let mut s = xml_session("<rows><row><id>1</id><n>short</n></row></rows>");
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 1);
+    assert!(!s.value_needs_more_room());
+    assert_eq!(s.execute(Command::EditCell), Effect::None);
+    assert!(s.is_entering_text());
+}
+
+/// The editor opens on decoded text in the table too — it only decoded in
+/// the tree, so editing a description from table view showed `&lt;p&gt;`.
+#[test]
+fn the_table_editor_opens_on_decoded_text() {
+    let mut s = xml_session("<rows><row><d>&lt;p&gt;Hello&lt;/p&gt;</d></row></rows>");
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.large_edit_text().as_deref(), Some("<p>Hello</p>"));
+}
+
+/// And writing back from the table encodes again.
+#[test]
+fn editing_from_the_table_encodes_on_the_way_back() {
+    let mut s = xml_session("<rows><row><d>&lt;p&gt;old&lt;/p&gt;</d></row></rows>");
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    s.commit_large_edit("<p>new</p>");
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "<rows><row><d>&lt;p&gt;new&lt;/p&gt;</d></row></rows>"
+    );
+}
+
+/// JSON strings have no entities, and decoding one would eat a literal
+/// `&amp;` the user actually typed.
+#[test]
+fn json_values_are_not_entity_decoded() {
+    let mut s = session(r#"[{"a":"x &amp; y"}]"#);
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.large_edit_text().as_deref(), Some("x &amp; y"));
+}
+
+/// The detail pane shows the same text the editor would open on.
+#[test]
+fn the_detail_pane_shows_decoded_text_too() {
+    let mut s = xml_session("<rows><row><d>&lt;b&gt;bold&lt;/b&gt;</d></row></rows>");
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.detail_text().as_deref(), Some("<b>bold</b>"));
+}
+
+/// Typing markup into a table cell must not put raw `<p>` into the file:
+/// that is not a formatting slip, it is invalid XML.
+#[test]
+fn typing_markup_into_a_table_cell_cannot_break_the_document() {
+    let mut s = xml_session("<rows><row><d>old</d></row></rows>");
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    s.commit_large_edit("<p>new & shiny</p>");
+
+    let out = String::from_utf8(s.doc.serialize()).unwrap();
+    assert_eq!(
+        out,
+        "<rows><row><d>&lt;p&gt;new &amp; shiny&lt;/p&gt;</d></row></rows>"
+    );
+    // The proof that matters: it still parses.
+    assert!(Document::parse(out.as_bytes(), FormatHint::Xml).is_ok());
+}
+
+/// A CDATA cell holds its content literally, so it must not be encoded.
+#[test]
+fn a_cdata_cell_is_written_literally() {
+    let mut s = xml_session("<rows><row><d><![CDATA[old]]></d></row></rows>");
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    s.commit_large_edit("<p>new</p>");
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "<rows><row><d><![CDATA[<p>new</p>]]></d></row></rows>"
+    );
+}
+
+/// The inline editor writes through the same path.
+#[test]
+fn inline_table_edits_encode_too() {
+    let mut s = xml_session("<rows><row><n>a</n></row></rows>");
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 0);
+    s.execute(Command::ReplaceCell);
+    for c in "a<b".chars() {
+        s.input_char(c);
+    }
+    s.input_submit();
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "<rows><row><n>a&lt;b</n></row></rows>"
+    );
+}
+
+/// CSV and JSON are untouched by any of this.
+#[test]
+fn csv_cells_are_written_verbatim() {
+    let mut s = Session::new(Document::parse(b"a\nx\n", FormatHint::Csv).unwrap());
+    s.grid.cursor = (1, 0);
+    s.commit_large_edit("<p>& literal</p>");
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "a\n<p>& literal</p>\n"
+    );
 }

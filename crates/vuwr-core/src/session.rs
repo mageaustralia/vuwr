@@ -468,7 +468,7 @@ impl Session {
                 };
                 if !editable {
                     self.status = "this view is not editable".into();
-                } else if self.value_is_multiline() {
+                } else if self.value_needs_more_room() {
                     // Too long for one line, so open the editor that can
                     // hold it rather than making the user find F2.
                     return Effect::EditLarge;
@@ -688,19 +688,54 @@ impl Session {
         }
     }
 
-    /// Longest value still worth editing on one line.
-    ///
-    /// Beyond this it wraps, and a wrapped value in a single-line editor
-    /// is unreadable however the caret behaves. Roughly a terminal line,
-    /// which is the width people think in.
+    /// Longest value still worth editing on one line, where nothing
+    /// better is known. A tree row has no column to measure against.
     pub const INLINE_LIMIT: usize = 80;
 
-    /// True when the value under the cursor will not fit an inline edit.
-    pub fn value_is_multiline(&self) -> bool {
-        self.view != ViewMode::Text
-            && self
-                .large_edit_text()
-                .is_some_and(|t| t.contains('\n') || t.chars().count() > Self::INLINE_LIMIT)
+    /// True when the value under the cursor will not fit where it is
+    /// shown, so editing it inline would hide most of it.
+    ///
+    /// In a table the test is the column's own rendered width: a URL cut
+    /// off at 40 characters needs the larger editor as much as a
+    /// paragraph does, and a fixed limit missed exactly that case.
+    pub fn value_needs_more_room(&self) -> bool {
+        if self.view == ViewMode::Text {
+            return false;
+        }
+        let Some(text) = self.large_edit_text() else {
+            return false;
+        };
+        if text.contains('\n') {
+            return true;
+        }
+        let visible = match self.view {
+            ViewMode::Table => self
+                .widths
+                .get(self.grid.cursor.1)
+                .copied()
+                .unwrap_or(Self::INLINE_LIMIT),
+            _ => Self::INLINE_LIMIT,
+        };
+        text.chars().count() > visible
+    }
+
+    /// Prepare a value typed in a table cell for writing.
+    ///
+    /// The editor works in decoded text, so XML has to be encoded again —
+    /// otherwise a typed `<p>` lands in the file as markup and breaks the
+    /// document. A CDATA section holds its content literally, so that one
+    /// is left alone.
+    fn encode_for_cell(&self, text: &str) -> String {
+        if !self.doc.is_xml() {
+            return text.to_string();
+        }
+        let (row, col) = (self.grid.source_row(self.grid.cursor.0), self.grid.cursor.1);
+        let literal = self.doc.as_xml().is_some_and(|x| x.cell_is_cdata(row, col));
+        if literal {
+            text.to_string()
+        } else {
+            crate::encode(text)
+        }
     }
 
     /// The selected value in full, decoded, for the detail pane.
@@ -750,7 +785,15 @@ impl Session {
             }
             ViewMode::Table => {
                 let sheet = self.doc.sheet()?;
-                sheet.cell(self.grid.source_row(self.grid.cursor.0), self.grid.cursor.1)
+                let raw =
+                    sheet.cell(self.grid.source_row(self.grid.cursor.0), self.grid.cursor.1)?;
+                // XML text carries entity references; JSON strings do not,
+                // and decoding one would eat a literal `&amp;`.
+                Some(if self.doc.is_xml() {
+                    crate::decode(&raw)
+                } else {
+                    raw
+                })
             }
             // Text view edits a line, which is one line by definition.
             ViewMode::Text => None,
@@ -768,7 +811,8 @@ impl Session {
             ViewMode::Table => {
                 let (row, column) = self.grid.cursor;
                 let row = self.grid.source_row(row);
-                match self.doc.set_cell(row, column, text) {
+                let written = self.encode_for_cell(text);
+                match self.doc.set_cell(row, column, &written) {
                     Ok(()) => {
                         self.dirty = true;
                         self.after_edit();
@@ -1028,13 +1072,11 @@ impl Session {
             return;
         }
         let row = self.grid.source_row(row);
+        let value = self.encode_for_cell(&value);
         match self.doc.set_cell(row, column, &value) {
             Ok(()) => {
                 self.dirty = true;
-                // JSON/XML edits can change a cell's rendered width.
-                if self.doc.sheet().is_some() && !self.doc.is_csv() {
-                    self.rebuild_table_widths();
-                }
+                self.after_edit();
             }
             Err(e) => self.status = e.to_string(),
         }
@@ -1457,10 +1499,12 @@ impl Session {
     /// Refresh derived state after the document changed.
     fn after_edit(&mut self) {
         self.clamp_cursor();
-        if self.view == ViewMode::Table && !self.doc.is_csv() {
-            self.rebuild_table_widths();
-        } else if self.view == ViewMode::Tree {
-            self.rebuild_tree();
+        match self.view {
+            // Widths decide whether a value still fits its column, so a
+            // stale one sends a barely-longer value to the large editor.
+            ViewMode::Table => self.rebuild_table_widths(),
+            ViewMode::Tree => self.rebuild_tree(),
+            ViewMode::Text => {}
         }
     }
 

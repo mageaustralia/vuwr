@@ -218,6 +218,26 @@ impl XmlDoc {
         Some(field_of(elem, name).unwrap_or_default())
     }
 
+    /// True when the cell's text lives in a CDATA section.
+    ///
+    /// Content there is already literal, so encoding it on the way in
+    /// would double the escaping.
+    pub fn cell_is_cdata(&self, row: usize, col: usize) -> bool {
+        let Some(shape) = self.shape() else {
+            return false;
+        };
+        let Some(name) = shape.headers.get(col) else {
+            return false;
+        };
+        let Some(elem) = self.row_at(row) else {
+            return false;
+        };
+        element_children(elem)
+            .into_iter()
+            .find(|c| c.tag == *name)
+            .is_some_and(|c| c.children.iter().any(|k| matches!(k, Node::CData(_))))
+    }
+
     /// The path addressing the cell at `(row, col)`: an attribute of the
     /// row element, or the text of one of its child elements.
     pub fn cell_path(&self, row: usize, col: usize) -> Option<crate::node::NodePath> {

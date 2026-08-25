@@ -1448,3 +1448,21 @@ fn the_detail_pane_follows_the_selection() {
     app.handle_key(key(KeyCode::Down));
     assert_eq!(app.detail_text().as_deref(), Some("second"));
 }
+
+/// A value that grows by an edit must not then be judged against the old
+/// column width: it sent a six-character cell to the large editor.
+#[test]
+fn column_widths_keep_up_with_edits() {
+    let mut app = app("name\nAlice\n");
+    app.grid.move_to(1, 0, 2, 1);
+
+    app.handle_key(key(KeyCode::Char('i')));
+    app.handle_key(key(KeyCode::Char('!')));
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.table_cell(1, 0).as_deref(), Some("Alice!"));
+
+    // The next edit still happens in place.
+    app.handle_key(key(KeyCode::Char('c')));
+    assert!(!app.editing_large(), "still inline after the value grew");
+    assert!(app.is_entering_text());
+}
