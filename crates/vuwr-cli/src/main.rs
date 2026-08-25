@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use vuwr_core::{Document, FormatHint};
+use vuwr_core::{Document, FormatHint, Severity};
 
 /// vuwr — a fast, editable viewer for CSV / JSON / XML
 #[derive(Parser)]
@@ -20,6 +20,9 @@ struct Args {
     /// With --check, print nothing and rely on the exit status alone.
     #[arg(short, long)]
     quiet: bool,
+    /// With --check, fail on warnings too, not only on errors.
+    #[arg(long)]
+    strict: bool,
     /// Print the licence notices bundled with this binary and exit.
     #[arg(long)]
     licenses: bool,
@@ -90,7 +93,29 @@ fn check(args: &Args) -> ExitCode {
             hint_for(&path)
         };
         match Document::parse(&bytes, hint) {
-            Ok(_) => {}
+            // Parsing is only half of it. vuwr reads a trailing comma so
+            // that a file carrying one can be opened and fixed, and a
+            // duplicate key is valid JSON that silently discards a value —
+            // so a file that parses here can still be one every other tool
+            // rejects. The scan is what says so.
+            Ok(doc) => {
+                for d in doc.diagnostics() {
+                    let fatal = d.severity == Severity::Error || args.strict;
+                    if !args.quiet {
+                        let label = if fatal { "error" } else { "warning" };
+                        eprintln!(
+                            "{}:{}:{}: {label}: {}",
+                            path.display(),
+                            d.line,
+                            d.column,
+                            d.message
+                        );
+                    }
+                    if fatal {
+                        worst = worst.max(1);
+                    }
+                }
+            }
             Err(e) => {
                 if !args.quiet {
                     eprintln!("{}:{}", path.display(), e.located(&bytes));

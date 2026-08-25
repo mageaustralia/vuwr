@@ -201,7 +201,9 @@ pub struct Session {
     /// Finding them means serialising the whole document — seven
     /// megabytes for a feed — and the bar that shows them asks every
     /// frame, which is not a thing to do sixty times a second.
-    diagnostics: std::cell::RefCell<Option<Vec<crate::Diagnostic>>>,
+    /// What the last lint found, or `None` if the document has not been
+    /// linted since it last changed.
+    lint: Option<Vec<crate::Diagnostic>>,
 
     /// Show text view with entity references decoded.
     ///
@@ -254,7 +256,7 @@ impl Session {
             decoded_text: true,
             block: None,
             manual_widths: std::collections::BTreeMap::new(),
-            diagnostics: std::cell::RefCell::new(None),
+            lint: None,
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -645,6 +647,7 @@ impl Session {
                 Some(text) => return Effect::Output(text),
                 None => self.status = "no rows marked — press m to mark one".into(),
             },
+            Command::Lint => self.run_lint(),
             Command::WidenColumn => self.resize_cursor_column(4),
             Command::NarrowColumn => self.resize_cursor_column(-4),
             Command::AutoSizeColumns => {
@@ -1010,13 +1013,26 @@ impl Session {
     ///
     /// Cheap enough to call per frame for ordinary files; a frontend that
     /// opens something enormous should cache it.
-    pub fn diagnostics(&self) -> Vec<crate::Diagnostic> {
-        if let Some(found) = self.diagnostics.borrow().as_ref() {
-            return found.clone();
-        }
+    /// What the last lint found, if the document has been linted since it
+    /// last changed.
+    ///
+    /// Asked for rather than computed as you type: the scan re-serialises
+    /// the whole document, which is 150 ms on a 15 MB file — a hitch after
+    /// every edit, paid whether or not anybody was looking.
+    pub fn lint_results(&self) -> Option<&[crate::Diagnostic]> {
+        self.lint.as_deref()
+    }
+
+    /// Scan the document now, and keep the result.
+    pub fn run_lint(&mut self) {
         let found = self.doc.diagnostics();
-        self.diagnostics.replace(Some(found.clone()));
-        found
+        self.status = match found.len() {
+            0 if !self.doc.is_json() => "nothing to check in this format yet".into(),
+            0 => "no problems found".into(),
+            1 => "1 problem found".into(),
+            n => format!("{n} problems found"),
+        };
+        self.lint = Some(found);
     }
 
     /// Record that the document changed.
@@ -1026,7 +1042,8 @@ impl Session {
     /// problem that had been fixed.
     fn mark_changed(&mut self) {
         self.dirty = true;
-        self.diagnostics.replace(None);
+        // The findings were about the bytes as they were.
+        self.lint = None;
         self.block = None;
     }
 

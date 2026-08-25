@@ -37,6 +37,7 @@ pub const TOOLBAR_ONLY: &[Command] = &[
     Command::ExpandAll,
     Command::CollapseAll,
     Command::CopyRow,
+    Command::Lint,
 ];
 
 /// The keys help shows for a command. Exposed for tests, which assert the
@@ -616,8 +617,8 @@ impl VuwrApp {
     /// A warning without a position leaves you hunting, so each one names
     /// its line and offers to take you there.
     fn diagnostics_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let diagnostics = match self.session.as_ref() {
-            Some(s) => s.diagnostics(),
+        let diagnostics: Vec<_> = match self.session.as_ref() {
+            Some(s) => s.lint_results().unwrap_or_default().to_vec(),
             None => return,
         };
         if diagnostics.is_empty() {

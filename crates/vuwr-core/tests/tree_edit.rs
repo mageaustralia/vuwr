@@ -111,8 +111,9 @@ fn session(src: &str) -> Session {
 /// A duplicate key must be reported with somewhere to go, not just noted.
 #[test]
 fn duplicate_keys_surface_as_diagnostics_with_positions() {
-    let s = session("{\n  \"color\": true,\n  \"color\": \"gold\"\n}");
-    let found = s.diagnostics();
+    let mut s = session("{\n  \"color\": true,\n  \"color\": \"gold\"\n}");
+    s.execute(Command::Lint);
+    let found = s.lint_results().expect("linted");
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].line, 3);
     assert!(found[0].message.contains("duplicate key 'color'"));
@@ -120,7 +121,9 @@ fn duplicate_keys_surface_as_diagnostics_with_positions() {
 
 #[test]
 fn a_clean_document_has_no_diagnostics() {
-    assert!(session(r#"{"a":1,"b":2}"#).diagnostics().is_empty());
+    let mut s = session(r#"{"a":1,"b":2}"#);
+    s.execute(Command::Lint);
+    assert_eq!(s.lint_results(), Some(&[][..]));
 }
 
 /// "Show me" has to actually show you: revealing switches to the view
@@ -128,8 +131,9 @@ fn a_clean_document_has_no_diagnostics() {
 #[test]
 fn revealing_a_diagnostic_goes_to_its_line() {
     let mut s = session("{\n  \"color\": true,\n  \"color\": \"gold\"\n}");
-    let d = s.diagnostics().remove(0);
-    s.reveal(d.offset);
+    s.execute(Command::Lint);
+    let offset = s.lint_results().expect("linted")[0].offset;
+    s.reveal(offset);
     assert_eq!(s.view_mode(), vuwr_core::ViewMode::Text);
     assert_eq!(s.grid.cursor.0, 2, "line 3, zero-indexed");
 }
@@ -772,10 +776,15 @@ fn the_decoded_toggle_is_refused_for_other_formats() {
 /// Diagnostics are cached because finding them serialises the document,
 /// and the bar that shows them asks every frame. The cache must not
 /// outlive a change.
+/// Linting is asked for, not automatic — the scan re-reads the whole
+/// document, which is a visible hitch on a large one after every edit.
 #[test]
-fn diagnostics_refresh_after_an_edit() {
+fn linting_happens_when_asked_and_its_findings_expire_on_a_change() {
     let mut s = session("{\n  \"a\": 1,\n  \"b\": 2\n}");
-    assert!(s.diagnostics().is_empty(), "clean to begin with");
+    assert!(s.lint_results().is_none(), "nothing until asked");
+    s.execute(Command::Lint);
+    assert_eq!(s.lint_results(), Some(&[][..]), "clean to begin with");
+    assert!(s.status.contains("no problems"), "{}", s.status);
 
     // Rename `b` to `a`, creating a duplicate.
     s.grid.cursor = (1, 0);
@@ -786,13 +795,19 @@ fn diagnostics_refresh_after_an_edit() {
     s.input_char('a');
     s.input_submit();
 
-    let found = s.diagnostics();
+    assert!(
+        s.lint_results().is_none(),
+        "the old findings were about the old bytes"
+    );
+    s.execute(Command::Lint);
+    let found = s.lint_results().expect("linted");
     assert_eq!(found.len(), 1, "the new duplicate is reported: {found:?}");
     assert!(found[0].message.contains("duplicate key 'a'"));
+    assert!(s.status.contains("1 problem"), "{}", s.status);
 }
 
 #[test]
-fn diagnostics_clear_again_on_undo() {
+fn linting_is_clean_again_after_an_undo() {
     let mut s = session("{\n  \"a\": 1,\n  \"b\": 2\n}");
     s.grid.cursor = (1, 0);
     s.execute(Command::RenameKey);
@@ -801,10 +816,16 @@ fn diagnostics_clear_again_on_undo() {
     }
     s.input_char('a');
     s.input_submit();
-    assert_eq!(s.diagnostics().len(), 1);
+    s.execute(Command::Lint);
+    assert_eq!(s.lint_results().map(<[_]>::len), Some(1));
 
     s.execute(Command::Undo);
-    assert!(s.diagnostics().is_empty(), "undo puts the document back");
+    s.execute(Command::Lint);
+    assert_eq!(
+        s.lint_results(),
+        Some(&[][..]),
+        "undo puts the document back"
+    );
 }
 
 /// The table showed raw entity references while the tree beside it showed

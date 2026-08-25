@@ -35,11 +35,18 @@ impl Diagnostic {
     }
 }
 
-/// Scan JSON text for problems that are legal but almost certainly wrong.
+/// Scan JSON text for problems a parser will not stop for.
 ///
-/// Only duplicate keys today. A duplicate is valid JSON, and most parsers
-/// keep the last one silently, so the earlier value is dead — the kind of
-/// bug that costs an afternoon.
+/// Two things today:
+///
+/// - **Duplicate keys.** Valid JSON, and most parsers keep the last one
+///   silently, so the earlier value is dead — the kind of bug that costs
+///   an afternoon.
+/// - **Trailing commas.** *Not* valid JSON, and `jq` and friends reject
+///   the file outright. vuwr's own parser accepts one and writes it back
+///   where it found it, so that a file carrying one can still be opened
+///   and fixed rather than merely refused. That leniency belongs in the
+///   reader, not in the verdict, so it is reported here as an error.
 pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
     let Ok(text) = std::str::from_utf8(source) else {
         return Vec::new();
@@ -62,6 +69,27 @@ pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
                 i += 1;
             }
             b'}' | b']' => {
+                // Whatever precedes the bracket, ignoring whitespace: a
+                // comma there closes nothing.
+                let mut back = i;
+                while back > 0 && bytes[back - 1].is_ascii_whitespace() {
+                    back -= 1;
+                }
+                if back > 0 && bytes[back - 1] == b',' {
+                    let at = back - 1;
+                    let (line, column) = line_col(source, at);
+                    let closer = bytes[i] as char;
+                    out.push(Diagnostic {
+                        severity: Severity::Error,
+                        message: format!(
+                            "trailing comma before '{closer}' — not valid JSON; \
+                             most parsers reject the whole file"
+                        ),
+                        offset: at,
+                        line,
+                        column,
+                    });
+                }
                 stack.pop();
                 i += 1;
             }
@@ -135,6 +163,41 @@ fn scan_string(text: &str, at: usize) -> Option<(String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// vuwr reads a trailing comma so the file can be opened and fixed.
+    /// Every other tool rejects the file, so the check has to say so.
+    #[test]
+    fn a_trailing_comma_is_an_error() {
+        for src in [br#"{"a":1,}"#.as_slice(), b"[1,2,]", b"[\n  1,\n]"] {
+            let found = scan_json(src);
+            assert_eq!(found.len(), 1, "{}", String::from_utf8_lossy(src));
+            assert_eq!(found[0].severity, Severity::Error);
+            assert!(found[0].message.contains("trailing comma"));
+        }
+    }
+
+    #[test]
+    fn a_comma_between_values_is_fine() {
+        for src in [
+            br#"{"a":1,"b":2}"#.as_slice(),
+            b"[1, 2]",
+            b"[[1],[2]]",
+            b"[]",
+            b"{}",
+        ] {
+            assert!(
+                scan_json(src).is_empty(),
+                "{}",
+                String::from_utf8_lossy(src)
+            );
+        }
+    }
+
+    /// A comma inside a string is text, not syntax.
+    #[test]
+    fn a_bracket_inside_a_string_is_not_a_closer() {
+        assert!(scan_json(br#"{"a":"x,]"}"#).is_empty());
+    }
 
     #[test]
     fn a_duplicate_key_is_reported_with_a_position() {

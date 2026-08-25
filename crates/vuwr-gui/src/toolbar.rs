@@ -129,6 +129,11 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
         {
             clicked = Some(Command::ToggleDecoded);
         }
+        // Asked for, not automatic: the scan re-reads the whole document,
+        // which is a visible hitch on a large one after every edit.
+        if button(ui, "lint", "Check for problems a parser lets through").clicked() {
+            clicked = Some(Command::Lint);
+        }
         if ui
             .selectable_label(session.show_detail, "detail")
             .on_hover_text("Show the selected value in full (V)")

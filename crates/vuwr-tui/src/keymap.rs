@@ -150,6 +150,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::WidenColumn => ">",
         Command::NarrowColumn => "<",
         Command::AutoSizeColumns => "=",
+        Command::Lint => ":lint",
         Command::EditCell => "i  Enter",
         Command::ReplaceCell => "c",
         Command::RenameKey => "R",

@@ -20,7 +20,13 @@ file meant a text editor plus `jq` or `xmllint`.
   one cell gives you a one-line `git diff`.
 - Search, filter, marks, frozen columns
 - Validates: `vuwr --check` replaces `jq empty` and `xmllint --noout`, and
-  covers CSV too
+  covers CSV too. It also reports what a parser lets through — a trailing
+  comma (which vuwr itself reads, so the file can be opened and fixed) and
+  duplicate JSON keys. `--strict` makes warnings fail too.
+- A **lint** button in the window, and `:lint` in the terminal. Asked for
+  rather than run as you type: the scan re-reads the whole document, which
+  is 150 ms on a 15 MB file — a hitch after every edit, paid whether or
+  not anybody was looking.
 
 
 ## See it
@@ -77,6 +83,7 @@ matter in the current view.
 | `m` `M` `Ctrl-E` | mark, clear marks, print marked rows and exit |
 | `f` | freeze columns left of the cursor |
 | `<` `>` `=` | narrow, widen, re-fit the column (or drag its edge) |
+| `:lint` | check for problems a parser lets through |
 | `:w` `:q` `:wq` | write, quit, write and quit |
 
 ## Sample files

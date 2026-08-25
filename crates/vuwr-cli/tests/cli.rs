@@ -266,3 +266,50 @@ fn licenses_flag_prints_the_bundled_notices() {
     assert!(text.contains("SIL OPEN FONT LICENSE"), "OFL notice");
     assert!(text.contains("MIT OR Apache-2.0"), "vuwr's own licence");
 }
+
+/// `--check` is not just "does it parse": vuwr reads a trailing comma so
+/// the file can be opened and fixed, but every other tool rejects it, so
+/// the verdict has to be that the file is bad.
+#[test]
+fn check_fails_on_a_trailing_comma() {
+    let dir = std::env::temp_dir().join("vuwr-check-trailing");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = write(&dir, "trailing.json", r#"{"a":1,}"#);
+    let out = vuwr().arg("--check").arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("trailing comma"), "{err}");
+}
+
+/// A duplicate key is valid JSON, so it is reported without failing —
+/// unless the caller asks for that with --strict.
+#[test]
+fn a_duplicate_key_warns_and_only_fails_under_strict() {
+    let dir = std::env::temp_dir().join("vuwr-check-dup");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = write(&dir, "dup.json", r#"{"a":1,"a":2}"#);
+
+    let out = vuwr().arg("--check").arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "a warning is not a failure");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("duplicate key"), "{err}");
+
+    let out = vuwr()
+        .arg("--check")
+        .arg("--strict")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+}
+
+/// -q means the exit status is the whole answer.
+#[test]
+fn quiet_check_says_nothing_about_diagnostics() {
+    let dir = std::env::temp_dir().join("vuwr-check-quiet");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = write(&dir, "trailing.json", "[1,2,]");
+    let out = vuwr().arg("--check").arg("-q").arg(&path).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty());
+}

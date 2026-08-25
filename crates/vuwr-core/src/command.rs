@@ -57,6 +57,7 @@ pub enum Command {
     WidenColumn,
     NarrowColumn,
     AutoSizeColumns,
+    Lint,
 
     // --- Editing ---
     EditCell,
@@ -127,6 +128,7 @@ impl Command {
         Command::WidenColumn,
         Command::NarrowColumn,
         Command::AutoSizeColumns,
+        Command::Lint,
         Command::EditCell,
         Command::ReplaceCell,
         Command::RenameKey,
@@ -190,6 +192,7 @@ impl Command {
             Command::WidenColumn => "widen-column",
             Command::NarrowColumn => "narrow-column",
             Command::AutoSizeColumns => "auto-size-columns",
+            Command::Lint => "lint",
             Command::EditCell => "edit-cell",
             Command::ReplaceCell => "replace-cell",
             Command::RenameKey => "rename-key",
@@ -254,6 +257,7 @@ impl Command {
             Command::WidenColumn => "widen this column",
             Command::NarrowColumn => "narrow this column",
             Command::AutoSizeColumns => "size every column to its contents again",
+            Command::Lint => "check the document for problems a parser lets through",
             Command::EditCell => "edit the selected cell",
             Command::ReplaceCell => "replace the selected cell",
             Command::RenameKey => "rename the selected key",
@@ -319,6 +323,7 @@ impl Command {
             Command::WidenColumn => "wider",
             Command::NarrowColumn => "narrower",
             Command::AutoSizeColumns => "auto width",
+            Command::Lint => "lint",
             Command::EditCell => "edit",
             Command::ReplaceCell => "replace",
             Command::RenameKey => "rename",
@@ -391,7 +396,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 58, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 59, "update ALL when adding a command");
     }
 
     #[test]

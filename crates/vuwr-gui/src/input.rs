@@ -158,6 +158,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::WidenColumn => "drag / >",
         Command::NarrowColumn => "drag / <",
         Command::AutoSizeColumns => "=",
+        Command::Lint => "toolbar",
         Command::Open => "Ctrl-O",
         Command::Save => "Ctrl-S",
         Command::SaveAs => "Ctrl-Shift-S",
