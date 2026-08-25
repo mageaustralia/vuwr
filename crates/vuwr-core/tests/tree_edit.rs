@@ -908,17 +908,40 @@ fn a_one_line_value_has_no_block() {
 /// Editing the block hands over the source as written — a CDATA section
 /// holds its markup literally, and re-encoding it would rewrite the file.
 #[test]
-fn the_block_editor_opens_on_the_source_and_writes_it_back() {
+fn the_block_editor_opens_on_the_value_and_writes_it_back() {
     let mut s = block_session();
     s.grid.cursor = (3, 0);
     let text = s.large_edit_text().expect("a block to edit");
-    assert!(text.starts_with("<d><![CDATA["), "{text}");
-    assert!(text.ends_with("</d>"), "{text}");
+    // The value, not its wrapper: the tags cannot be broken by an edit.
+    assert!(text.starts_with("<p>one"), "{text}");
+    assert!(!text.contains("<![CDATA["), "{text}");
+    assert!(!text.contains("</d>"), "{text}");
 
     s.commit_large_edit(&text.replace("two", "three"));
     let out = String::from_utf8(s.doc.serialize()).unwrap();
     assert!(out.contains("<li>three</li>"), "{out}");
+    assert!(out.contains("<![CDATA["), "the wrapper survived: {out}");
     assert!(!out.contains("&lt;li&gt;"), "the CDATA was encoded: {out}");
+}
+
+/// A feed puts encoded HTML inside CDATA. Reading that as `&lt;p&gt;` is
+/// no use to anybody, so it is decoded to edit and encoded on the way
+/// back — the wrapper and the tags around it untouched either way.
+#[test]
+fn a_block_of_encoded_markup_is_edited_decoded() {
+    let src = "<rss>\n  <item>\n    <description><![CDATA[&lt;p&gt;One\n&lt;p&gt;Two]]></description>\n  </item>\n</rss>";
+    let mut s = xml_session(src);
+    s.execute(Command::ViewText);
+    s.grid.cursor = (3, 0);
+
+    let text = s.large_edit_text().expect("a block to edit");
+    assert_eq!(text, "<p>One\n<p>Two", "decoded to read: {text:?}");
+
+    s.commit_large_edit("<p>One\n<p>Three & more");
+    let out = String::from_utf8(s.doc.serialize()).unwrap();
+    assert!(out.contains("&lt;p&gt;Three &amp; more"), "{out}");
+    assert!(out.contains("<![CDATA["), "the wrapper survived: {out}");
+    assert!(out.contains("<description>"), "the tags survived: {out}");
 }
 
 /// Editing a line inside a CDATA section must not encode it: the markup

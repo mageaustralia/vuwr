@@ -1010,6 +1010,11 @@ impl VuwrApp {
             // this window is that the value did not fit anywhere smaller.
             .default_size([860.0, 560.0])
             .min_width(420.0)
+            // Bounded, because the content asks for the space it is given
+            // and is then given the space it asked for: without a ceiling
+            // the window crept wider and taller every frame until Save was
+            // off the bottom of the screen.
+            .max_size(ctx.content_rect().size() * 0.92)
             .show(ctx, |ui| {
                 ui.label(egui::RichText::new(&where_from).weak().small());
                 ui.add_space(6.0);
@@ -1019,17 +1024,21 @@ impl VuwrApp {
                 // more grey.
                 let footer = 34.0;
                 let height = (ui.available_height() - footer).max(120.0);
+                let width = ui.available_width();
                 egui::ScrollArea::vertical()
                     .max_height(height)
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        ui.set_max_width(width);
                         ui.add_sized(
-                            [ui.available_width(), height],
+                            [width, height],
                             egui::TextEdit::multiline(&mut text)
                                 .font(egui::TextStyle::Monospace)
                                 // Wrapped, not scrolled sideways: prose is
-                                // what lands here.
+                                // what lands here. An infinite desired
+                                // width is what made the window grow.
                                 .lock_focus(true)
-                                .desired_width(f32::INFINITY),
+                                .desired_width(width),
                         );
                     });
 

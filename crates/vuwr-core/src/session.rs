@@ -968,7 +968,11 @@ impl Session {
             // that would rewrite the file's own content.
             ViewMode::Text => {
                 let b = self.block_span_read()?;
-                Some(String::from_utf8_lossy(&self.text_bytes[b.start..b.end]).into_owned())
+                let raw =
+                    String::from_utf8_lossy(&self.text_bytes[b.inner.0..b.inner.1]).into_owned();
+                // Decoded to read and to edit, as everywhere else. A value
+                // holding no entity references is already what it says.
+                Some(self.for_display(&raw))
             }
         }
     }
@@ -997,7 +1001,17 @@ impl Session {
                 let Some(b) = self.block_span_read() else {
                     return;
                 };
-                self.splice_source(b.start, b.end, text);
+                // Encoded again only if it arrived encoded: markup a CDATA
+                // section holds literally must stay literal.
+                let raw = String::from_utf8_lossy(&self.text_bytes[b.inner.0..b.inner.1]);
+                let encoded;
+                let value = if self.doc.is_xml() && crate::decode(&raw) != raw {
+                    encoded = crate::encode(text);
+                    encoded.as_str()
+                } else {
+                    text
+                };
+                self.splice_source(b.inner.0, b.inner.1, value);
             }
         }
     }
@@ -1154,6 +1168,7 @@ impl Session {
             last,
             start,
             end,
+            inner: inner_span(&self.text_bytes, start, end),
         })
     }
 
@@ -2089,6 +2104,49 @@ struct Block {
     last: usize,
     start: usize,
     end: usize,
+    /// The value itself: what sits between the tags, with any CDATA
+    /// wrapper taken off. Editing this rather than the whole block means
+    /// the tags cannot be broken by an edit, and lets the text be shown
+    /// decoded — which is only safe because no markup of ours is in it.
+    inner: (usize, usize),
+}
+
+/// What an element actually holds: the offsets between its opening and
+/// closing tags, less a CDATA wrapper when the content is one section.
+///
+/// Feeds put their prose in CDATA, often carrying entity references
+/// inside it. Editing the wrapper is never what anybody means, and it is
+/// what stopped the value from being shown decoded.
+fn inner_span(src: &[u8], start: usize, end: usize) -> (usize, usize) {
+    let Some((open_end, self_closing, _)) = tag_end(src, start) else {
+        return (start, end);
+    };
+    if self_closing {
+        return (open_end, open_end);
+    }
+    let Some(close_start) = src[..end].iter().rposition(|&b| b == b'<') else {
+        return (open_end, end);
+    };
+    if close_start < open_end {
+        return (open_end, end);
+    }
+    let (mut a, mut b) = (open_end, close_start);
+    // Trim whitespace so `<d>\n  <![CDATA[…]]>\n</d>` still counts.
+    while a < b && src[a].is_ascii_whitespace() {
+        a += 1;
+    }
+    while b > a && src[b - 1].is_ascii_whitespace() {
+        b -= 1;
+    }
+    let body = &src[a..b];
+    if body.starts_with(b"<![CDATA[") && body.ends_with(b"]]>") && body.len() >= 12 {
+        // One section and nothing else: the value is what is inside it.
+        let inside = &body[9..body.len() - 3];
+        if !inside.windows(3).any(|w| w == b"]]>") {
+            return (a + 9, b - 3);
+        }
+    }
+    (open_end, close_start)
 }
 
 /// The element the source line `from..to` is part of, as the offsets of
