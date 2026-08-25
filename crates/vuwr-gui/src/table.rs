@@ -234,6 +234,7 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
     }
     let dark = ui.visuals().dark_mode;
     let cursor = session.grid.cursor.0;
+    let editing = session.is_editing_inline();
     let mut action = None;
 
     egui::ScrollArea::both().show(ui, |ui| {
@@ -278,6 +279,13 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
                 }
 
                 ui.label(RichText::new(":").weak().monospace());
+
+                // The value being typed is drawn where the value is, not
+                // echoed at the bottom of the window.
+                if editing && selected {
+                    ui.label(caret_text(session));
+                    return;
+                }
 
                 let value = RichText::new(&row.summary)
                     .monospace()

@@ -544,17 +544,17 @@ impl VuwrApp {
         ui.horizontal(|ui| {
             // An open prompt takes the line, as in the TUI.
             if let Some((sigil, buf)) = session.entry() {
-                // One line, whatever the value: a paragraph here grew the
-                // panel until it swallowed the window.
-                let single: String = buf.chars().take(120).filter(|c| *c != '\n').collect();
-                let ellipsis = if buf.chars().count() > 120 { "…" } else { "" };
-                ui.monospace(format!("{sigil}{single}{ellipsis}▏"));
-                ui.separator();
-                ui.label(
-                    egui::RichText::new("Enter to commit, Esc to cancel")
-                        .weak()
-                        .small(),
-                );
+                // An inline edit is drawn where the value is, so repeating
+                // it here is noise — and a paragraph grew the panel until
+                // it swallowed the window. A `:` or `/` prompt has nowhere
+                // else to live, so that one is still shown.
+                if session.is_editing_inline() {
+                    ui.label("editing — Enter to commit, Esc to cancel");
+                } else {
+                    let single: String = buf.chars().take(120).filter(|c| *c != '\n').collect();
+                    let ellipsis = if buf.chars().count() > 120 { "…" } else { "" };
+                    ui.monospace(format!("{sigil}{single}{ellipsis}▏"));
+                }
                 return;
             }
             ui.monospace(session.position_label());

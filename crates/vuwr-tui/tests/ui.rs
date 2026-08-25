@@ -1206,3 +1206,47 @@ fn table_edits_also_render_in_the_cell() {
     let out = render(&mut app, 60, 8);
     assert!(out.contains("Zed"), "typed text shows in the cell:\n{out}");
 }
+
+/// The tree edits in place too. It was the one view still echoing the
+/// buffer at the bottom while showing the old value in the row.
+#[test]
+fn tree_edits_render_on_the_row_being_edited() {
+    let doc = Document::parse(br#"{"name":"Alice","age":30}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.handle_key(key(KeyCode::Char('c'))); // replace the value
+    for c in "Zed".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+
+    let out = render(&mut app, 60, 8);
+    let first = out.lines().next().unwrap();
+    assert!(
+        first.contains("Zed"),
+        "typed text shows on the row: {first}"
+    );
+    assert!(
+        !first.contains("Alice"),
+        "and replaces the old value rather than sitting beside it: {first}"
+    );
+    assert!(
+        !out.lines().last().unwrap().contains("Zed"),
+        "not duplicated in the hint bar"
+    );
+}
+
+#[test]
+fn tree_edits_commit_to_the_right_node() {
+    let doc = Document::parse(br#"{"name":"Alice","age":30}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.grid.move_to(1, 0, 2, 1); // the age row
+    app.handle_key(key(KeyCode::Char('c')));
+    app.handle_key(key(KeyCode::Char('4')));
+    app.handle_key(key(KeyCode::Char('1')));
+    app.handle_key(key(KeyCode::Enter));
+
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        r#"{"name":"Alice","age":41}"#,
+        "the number stays a number"
+    );
+}

@@ -167,6 +167,7 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let (cursor_row, _) = app.grid.cursor;
     let offset_row = app.grid.offset.0;
     let rows_total = app.tree_rows.len();
+    let editing = app.is_editing_inline();
 
     let mut lines: Vec<Line> = Vec::new();
     for r in offset_row..rows_total.min(offset_row + area.height as usize) {
@@ -196,13 +197,21 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
             Style::default().fg(Color::Cyan),
         ));
         spans.push(Span::raw(": "));
-        spans.push(Span::styled(
-            escape(&row.summary),
-            Style::default().fg(value_color(row.value)),
-        ));
+        // The value being typed is drawn in place of the value, rather
+        // than only in the status line.
+        if editing && r == cursor_row {
+            spans.extend(caret_spans(app));
+        } else {
+            spans.push(Span::styled(
+                escape(&row.summary),
+                Style::default().fg(value_color(row.value)),
+            ));
+        }
 
         let mut line = Line::from(spans);
-        if r == cursor_row {
+        // Reversing the whole row while typing would hide the caret,
+        // which is drawn reversed itself.
+        if r == cursor_row && !editing {
             line = line.style(Style::default().reversed());
         }
         lines.push(line);
