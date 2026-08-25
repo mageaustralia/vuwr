@@ -159,6 +159,7 @@ pub struct Session {
     pub dirty: bool,
     widths: Vec<usize>,
     viewport_rows: usize,
+    viewport_cols: usize,
     /// For table view: the column headers.
     pub tree_keys: Vec<String>,
     /// The flattened tree rows currently visible.
@@ -215,6 +216,7 @@ impl Session {
             dirty: false,
             widths,
             viewport_rows: 10,
+            viewport_cols: 80,
             tree_keys: Vec::new(),
             tree_rows: Vec::new(),
             expansion: Expansion::new(),
@@ -367,6 +369,12 @@ impl Session {
 
     pub fn set_viewport_rows(&mut self, rows: usize) {
         self.viewport_rows = rows.max(1);
+    }
+
+    /// How wide the view is, in characters. Core cannot know, and it is
+    /// what decides whether a value is cut off.
+    pub fn set_viewport_cols(&mut self, cols: usize) {
+        self.viewport_cols = cols.max(1);
     }
 
     /// Run one command. The single entry point for every action, whatever
@@ -714,7 +722,17 @@ impl Session {
                 .get(self.grid.cursor.1)
                 .copied()
                 .unwrap_or(Self::INLINE_LIMIT),
-            _ => Self::INLINE_LIMIT,
+            // A tree row runs to the edge of the view, less its indent and
+            // its key. Measuring the same way as a table keeps the two
+            // views behaving alike, which is the point.
+            ViewMode::Tree => {
+                let row = self.tree_rows.get(self.grid.cursor.0);
+                let used = row
+                    .map(|r| r.depth * 2 + r.label.chars().count() + 4)
+                    .unwrap_or(0);
+                self.viewport_cols.saturating_sub(used).max(8)
+            }
+            ViewMode::Text => usize::MAX,
         };
         text.chars().count() > visible
     }

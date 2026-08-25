@@ -514,14 +514,24 @@ fn a_long_value_opens_the_larger_editor_by_itself() {
     assert!(!s.is_entering_text(), "and not inline");
 }
 
-/// A value that wraps is unreadable inline however the caret behaves.
+/// The rule is whether the value fits the view, not a fixed count: the
+/// same value edits inline in a wide window and opens the box in a narrow
+/// one.
 #[test]
-fn the_threshold_is_about_a_line() {
-    let short = "x".repeat(Session::INLINE_LIMIT);
-    let mut s = xml_session(&format!("<r><d>{short}</d></r>"));
-    s.grid.cursor = (0, 0);
-    assert_eq!(s.execute(Command::EditCell), Effect::None);
-    assert!(s.is_entering_text(), "exactly a line still edits inline");
+fn the_threshold_follows_the_view_width() {
+    let value = "x".repeat(60);
+    let src = format!("<r><d>{value}</d></r>");
+
+    let mut wide = xml_session(&src);
+    wide.set_viewport_cols(200);
+    wide.grid.cursor = (0, 0);
+    assert_eq!(wide.execute(Command::EditCell), Effect::None);
+    assert!(wide.is_entering_text(), "room to edit in place");
+
+    let mut narrow = xml_session(&src);
+    narrow.set_viewport_cols(40);
+    narrow.grid.cursor = (0, 0);
+    assert_eq!(narrow.execute(Command::EditCell), Effect::EditLarge);
 }
 
 #[test]

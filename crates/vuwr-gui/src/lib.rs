@@ -767,9 +767,19 @@ impl VuwrApp {
                         .weak()
                         .small(),
                     );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("Esc closes without saving")
+                                .weak()
+                                .small(),
+                        );
+                    });
                 });
             });
 
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
         if commit {
             if let Some(s) = self.session.as_mut() {
                 s.commit_large_edit(&text);

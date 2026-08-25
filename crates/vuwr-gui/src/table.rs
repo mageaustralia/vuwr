@@ -228,6 +228,8 @@ impl NodeAction {
 
 pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
     session.set_viewport_rows(PAGE_ROWS);
+    // Roughly how many monospace characters fit across the pane.
+    session.set_viewport_cols((ui.available_width() / 7.5) as usize);
     if session.tree_rows.is_empty() {
         ui.label("nothing to show in this view");
         return None;

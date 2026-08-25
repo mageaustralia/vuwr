@@ -250,6 +250,7 @@ fn render_table(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     app.set_viewport_rows(area.height as usize);
+    app.set_viewport_cols(area.width as usize);
     app.grid.ensure_visible(area.height as usize);
 
     let (cursor_row, _) = app.grid.cursor;

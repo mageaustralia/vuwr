@@ -103,8 +103,12 @@ impl App {
                     *caret += next.len_utf8();
                 }
             }
-            KeyCode::Home => *caret = 0,
-            KeyCode::End => *caret = buf.len(),
+            // Home and End work on the current line, not the whole
+            // value: a paragraph has many.
+            KeyCode::Home => *caret = line_start(buf, *caret),
+            KeyCode::End => *caret = line_end(buf, *caret),
+            KeyCode::Up => *caret = move_line(buf, *caret, -1),
+            KeyCode::Down => *caret = move_line(buf, *caret, 1),
             KeyCode::Char(c)
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
@@ -240,4 +244,45 @@ fn paste_from_clipboard() -> Result<String, String> {
     arboard::Clipboard::new()
         .and_then(|mut c| c.get_text())
         .map_err(|e| e.to_string())
+}
+
+/// Start of the line the caret is on.
+fn line_start(buf: &str, caret: usize) -> usize {
+    buf[..caret].rfind('\n').map(|i| i + 1).unwrap_or(0)
+}
+
+/// End of the line the caret is on.
+fn line_end(buf: &str, caret: usize) -> usize {
+    buf[caret..]
+        .find('\n')
+        .map(|i| caret + i)
+        .unwrap_or(buf.len())
+}
+
+/// Move the caret a line up or down, keeping its column where the line is
+/// long enough — the behaviour every editor has.
+fn move_line(buf: &str, caret: usize, delta: isize) -> usize {
+    let start = line_start(buf, caret);
+    let column = buf[start..caret].chars().count();
+
+    let target_start = if delta < 0 {
+        if start == 0 {
+            return caret;
+        }
+        line_start(buf, start - 1)
+    } else {
+        let end = line_end(buf, caret);
+        if end >= buf.len() {
+            return caret;
+        }
+        end + 1
+    };
+
+    let target_end = line_end(buf, target_start);
+    let line = &buf[target_start..target_end];
+    match line.char_indices().nth(column) {
+        Some((offset, _)) => target_start + offset,
+        // Shorter line: land at its end, as editors do.
+        None => target_end,
+    }
 }

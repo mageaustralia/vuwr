@@ -1466,3 +1466,105 @@ fn column_widths_keep_up_with_edits() {
     assert!(!app.editing_large(), "still inline after the value grew");
     assert!(app.is_entering_text());
 }
+
+// --- Moving about inside the larger editor ---
+
+#[test]
+fn arrows_move_the_caret_inside_the_editor() {
+    let doc = Document::parse(b"<r><d>abc</d></r>", FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+
+    app.handle_key(key(KeyCode::Left));
+    app.handle_key(key(KeyCode::Left));
+    app.handle_key(key(KeyCode::Char('X'))); // between a and b
+    app.handle_key(ctrl('s'));
+
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "<r><d>aXbc</d></r>",
+        "inserted at the caret, not appended"
+    );
+}
+
+/// Up and down move between lines, which is the whole point of a value
+/// that needed a box.
+#[test]
+fn up_and_down_move_between_lines() {
+    let doc = Document::parse(b"<r><d>one\ntwo\nthree</d></r>", FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+
+    // Caret starts at the end; go up two lines and to the line start.
+    app.handle_key(key(KeyCode::Up));
+    app.handle_key(key(KeyCode::Up));
+    app.handle_key(key(KeyCode::Home));
+    app.handle_key(key(KeyCode::Char('!')));
+    app.handle_key(ctrl('s'));
+
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "<r><d>!one\ntwo\nthree</d></r>"
+    );
+}
+
+/// Home and End work on the current line, not the whole value.
+#[test]
+fn home_and_end_are_per_line() {
+    let doc = Document::parse(b"<r><d>one\ntwo</d></r>", FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+
+    app.handle_key(key(KeyCode::Up)); // onto line one
+    app.handle_key(key(KeyCode::End)); // its end, not the value's
+    app.handle_key(key(KeyCode::Char('!')));
+    app.handle_key(ctrl('s'));
+
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "<r><d>one!\ntwo</d></r>"
+    );
+}
+
+/// Moving up onto a shorter line lands at its end rather than past it.
+#[test]
+fn moving_onto_a_shorter_line_lands_at_its_end() {
+    let doc = Document::parse(b"<r><d>ab\nlonger line</d></r>", FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+
+    app.handle_key(key(KeyCode::Up)); // from the end of the long line
+    app.handle_key(key(KeyCode::Char('!')));
+    app.handle_key(ctrl('s'));
+
+    assert_eq!(
+        String::from_utf8(app.doc.serialize()).unwrap(),
+        "<r><d>ab!\nlonger line</d></r>"
+    );
+}
+
+/// The editor says how to leave it, at both edges.
+#[test]
+fn the_editor_shows_how_to_leave() {
+    let doc = Document::parse(b"<r><d>x</d></r>", FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    let out = render(&mut app, 70, 14);
+    assert!(out.contains("Ctrl-S"), "how to save:\n{out}");
+    assert!(out.contains("Esc"), "how to leave:\n{out}");
+}
+
+/// The tree opens the box on the same values a table would, rather than
+/// editing a cut-off value in place.
+#[test]
+fn the_tree_opens_the_box_for_a_value_that_does_not_fit() {
+    let url = "https://www.example.com/media/catalog/product/b/a/babolat_ert_300-5.png";
+    let src = format!("<r><g:image_link>{url}</g:image_link></r>");
+    let doc = Document::parse(src.as_bytes(), FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+
+    // A narrow view: the value cannot fit beside its key.
+    let _ = render(&mut app, 50, 10);
+    app.handle_key(key(KeyCode::Char('i')));
+    assert!(app.editing_large(), "the box opened in the tree too");
+}
