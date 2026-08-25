@@ -1,6 +1,6 @@
 //! XML-specific tests: tree structure, table eligibility, roundtrip.
 
-use vuwr_core::{Document, FormatHint, Node};
+use vuwr_core::{Document, FormatHint, Node, PathSeg};
 
 #[test]
 fn xml_auto_detected() {
@@ -417,4 +417,70 @@ fn text_split_around_a_comment_still_reads_whole() {
         d.as_xml().unwrap().table_cell(0, 0).as_deref(),
         Some("onetwo")
     );
+}
+
+// --- Columns are fields, not positions ---
+//
+// Records have optional fields. An item with no `g:sale_price` used to
+// shift every later value one column left, filing gtins under brands.
+
+#[test]
+fn a_missing_field_leaves_a_gap_rather_than_shifting_the_row() {
+    let src = "<rows>\
+        <row><a>1</a><b>2</b><c>3</c></row>\
+        <row><a>4</a><c>6</c></row>\
+        </rows>";
+    let d = xml(src);
+    let x = d.as_xml().unwrap();
+    assert_eq!(x.table_headers(), vec!["a", "b", "c"]);
+    assert_eq!(x.table_cell(1, 0).as_deref(), Some("4"));
+    assert_eq!(
+        x.table_cell(1, 1).as_deref(),
+        Some(""),
+        "b is absent, not shifted"
+    );
+    assert_eq!(x.table_cell(1, 2).as_deref(), Some("6"), "c stays under c");
+}
+
+/// Headers are the union of every row's fields, so a column that only
+/// later rows have is still a column.
+#[test]
+fn headers_cover_fields_the_first_row_lacks() {
+    let d = xml("<rows><row><a>1</a></row><row><a>2</a><z>9</z></row></rows>");
+    assert_eq!(d.as_xml().unwrap().table_headers(), vec!["a", "z"]);
+}
+
+#[test]
+fn editing_finds_the_right_field_when_others_are_missing() {
+    let src = "<rows><row><a>1</a><b>2</b></row><row><b>3</b></row></rows>";
+    let mut d = xml(src);
+    // Column 1 is `b`; on row 1 that is the row's *first* child.
+    d.set_cell(1, 1, "changed").unwrap();
+    assert_eq!(
+        out(&d),
+        "<rows><row><a>1</a><b>2</b></row><row><b>changed</b></row></rows>"
+    );
+    assert!(d.undo());
+    assert_eq!(out(&d), src);
+}
+
+/// Writing to a column the row does not have has nowhere to go, and
+/// saying so beats writing it into the wrong field.
+#[test]
+fn editing_an_absent_field_is_refused() {
+    let mut d = xml("<rows><row><a>1</a><b>2</b></row><row><a>3</a></row></rows>");
+    assert!(d.set_cell(1, 1, "x").is_err());
+}
+
+/// The shape is cached, so an edit that changes it must clear the cache.
+#[test]
+fn adding_a_field_updates_the_columns() {
+    let mut d = xml("<rows><row><a>1</a></row></rows>");
+    assert_eq!(d.as_xml().unwrap().table_headers(), vec!["a"]);
+    d.set_node(
+        &[PathSeg::Index(0), PathSeg::Index(0), PathSeg::Text],
+        vuwr_core::Node::Text("2".into()),
+    )
+    .unwrap();
+    assert_eq!(d.as_xml().unwrap().table_cell(0, 0).as_deref(), Some("2"));
 }

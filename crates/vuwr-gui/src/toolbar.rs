@@ -121,6 +121,15 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
         });
         ui.separator();
 
+        if ui
+            .selectable_label(session.show_detail, "detail")
+            .on_hover_text("Show the selected value in full (V)")
+            .clicked()
+        {
+            clicked = Some(Command::ToggleDetail);
+        }
+        ui.separator();
+
         if button(ui, "undo", "Undo (Ctrl+Z)").clicked() {
             clicked = Some(Command::Undo);
         }

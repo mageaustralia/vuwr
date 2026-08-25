@@ -12,6 +12,25 @@ use crate::node::{Attr, Element, Node, PathSeg, XmlDecl};
 #[derive(Debug, Clone)]
 pub struct XmlDoc {
     children: Vec<Node>,
+    /// The table's shape, worked out once.
+    ///
+    /// Finding it means walking every row — 2,277 of them in a feed — and
+    /// a cell lookup needs it. Recomputing per cell took seven seconds to
+    /// draw one screen. Cleared by [`XmlDoc::root_mut`], which is the only
+    /// way the document changes.
+    shape: std::cell::RefCell<Option<TableShape>>,
+}
+
+/// Where the rows are and what the columns are called.
+#[derive(Debug, Clone)]
+struct TableShape {
+    /// Path from the root to the element whose children are the rows.
+    parent: Vec<PathSeg>,
+    /// Column names: the union of every row's fields, first seen first.
+    headers: Vec<String>,
+    /// Each row's position among the parent's children, so a lookup does
+    /// not re-scan them.
+    row_positions: Vec<usize>,
 }
 
 impl XmlDoc {
@@ -25,7 +44,10 @@ impl XmlDoc {
                 offset: bytes.len(),
             });
         }
-        Ok(XmlDoc { children })
+        Ok(XmlDoc {
+            children,
+            shape: std::cell::RefCell::new(None),
+        })
     }
 
     /// The document element.
@@ -43,6 +65,8 @@ impl XmlDoc {
     }
 
     pub fn root_mut(&mut self) -> &mut Node {
+        // Any edit can add or remove a field, which changes the columns.
+        self.shape.replace(None);
         let idx = self
             .children
             .iter()
@@ -112,68 +136,108 @@ impl XmlDoc {
         }
     }
 
-    /// Column headers for table view: the first row's attribute names,
-    /// then the tags of its child elements.
-    pub fn table_headers(&self) -> Vec<String> {
-        let rows = self.row_elements();
-        let Some(first) = rows.first() else {
-            return Vec::new();
+    /// The table's shape, computed once and cached.
+    fn shape(&self) -> Option<TableShape> {
+        if let Some(shape) = self.shape.borrow().as_ref() {
+            return Some(shape.clone());
+        }
+        let parent_path = self.table_parent_path()?;
+        let Some(Node::Element(parent)) = self.root().get_at(&parent_path) else {
+            return None;
         };
-        let mut headers: Vec<String> = first
-            .attributes
+        let row_positions: Vec<usize> = parent
+            .children
             .iter()
-            .map(|(k, _, _, _)| k.clone())
+            .enumerate()
+            .filter(|(_, c)| matches!(c, Node::Element(_)))
+            .map(|(i, _)| i)
             .collect();
-        headers.extend(first.children.iter().filter_map(|c| match c {
-            Node::Element(e) => Some(e.tag.clone()),
+
+        let mut seen = std::collections::BTreeSet::new();
+        let mut headers = Vec::new();
+        for &i in &row_positions {
+            let Node::Element(row) = &parent.children[i] else {
+                continue;
+            };
+            for (name, _, _, _) in &row.attributes {
+                if seen.insert(name.clone()) {
+                    headers.push(name.clone());
+                }
+            }
+        }
+        for &i in &row_positions {
+            let Node::Element(row) = &parent.children[i] else {
+                continue;
+            };
+            for child in element_children(row) {
+                if seen.insert(child.tag.clone()) {
+                    headers.push(child.tag.clone());
+                }
+            }
+        }
+
+        let shape = TableShape {
+            parent: parent_path,
+            headers,
+            row_positions,
+        };
+        self.shape.replace(Some(shape.clone()));
+        Some(shape)
+    }
+
+    /// The element for one row, without re-scanning the others.
+    fn row_at(&self, row: usize) -> Option<&Element> {
+        let shape = self.shape()?;
+        let position = *shape.row_positions.get(row)?;
+        match self.root().get_at(&shape.parent) {
+            Some(Node::Element(parent)) => match parent.children.get(position) {
+                Some(Node::Element(e)) => Some(e),
+                _ => None,
+            },
             _ => None,
-        }));
-        headers
+        }
+    }
+
+    /// Column headers for table view.
+    ///
+    /// The union of every row's field names, in the order first seen —
+    /// not just the first row's. Records have optional fields: an item
+    /// with no `g:sale_price` would otherwise shift every later value one
+    /// column left, silently filing gtins under brands.
+    pub fn table_headers(&self) -> Vec<String> {
+        self.shape().map(|s| s.headers).unwrap_or_default()
+    }
+
+    /// The value at `(row, col)` under [`XmlDoc::table_headers`], found by
+    /// name rather than position, so a missing field leaves a gap instead
+    /// of shifting the row.
+    pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
+        let shape = self.shape()?;
+        let name = shape.headers.get(col)?;
+        let elem = self.row_at(row)?;
+        Some(field_of(elem, name).unwrap_or_default())
     }
 
     /// The path addressing the cell at `(row, col)`: an attribute of the
     /// row element, or the text of one of its child elements.
     pub fn cell_path(&self, row: usize, col: usize) -> Option<crate::node::NodePath> {
-        let mut prefix = self.table_parent_path()?;
-        let rows = self.row_elements();
-        let elem = rows.get(row)?;
-        if let Some((name, _, _, _)) = elem.attributes.get(col) {
+        let shape = self.shape()?;
+        let name = shape.headers.get(col)?.clone();
+        let mut prefix = shape.parent.clone();
+        let elem = self.row_at(row)?;
+
+        if elem.attributes.iter().any(|(n, _, _, _)| *n == name) {
             prefix.push(PathSeg::Index(row));
-            prefix.push(PathSeg::Attr(name.clone()));
+            prefix.push(PathSeg::Attr(name));
             return Some(prefix);
         }
-        let child_idx = col - elem.attributes.len();
-        // The child must exist for the path to be writable.
-        elem.children
-            .iter()
-            .filter(|c| matches!(c, Node::Element(_)))
-            .nth(child_idx)?;
+        // Fields are addressed by name, so the index is the position of
+        // *this row's* matching child, not the column number.
+        let child_idx = element_children(elem).iter().position(|c| c.tag == name)?;
         prefix.push(PathSeg::Index(row));
         prefix.push(PathSeg::Index(child_idx));
         prefix.push(PathSeg::Text);
         Some(prefix)
-    }
-
-    /// The value at `(row, col)` under [`XmlDoc::table_headers`].
-    /// Attribute columns come first, then child-element text.
-    pub fn table_cell(&self, row: usize, col: usize) -> Option<String> {
-        let rows = self.row_elements();
-        let elem = rows.get(row)?;
-        if let Some((_, value, _, _)) = elem.attributes.get(col) {
-            return Some(value.clone());
-        }
-        let child_idx = col - elem.attributes.len();
-        let child = elem
-            .children
-            .iter()
-            .filter_map(|c| match c {
-                Node::Element(e) => Some(e),
-                _ => None,
-            })
-            .nth(child_idx)?;
-        // An empty element (`<name/>`) has no children at all — indexing
-        // child.children[0] here used to panic.
-        Some(child.text_content())
     }
 
     /// Re-indent the document.
@@ -184,6 +248,7 @@ impl XmlDoc {
     /// *into* the text, changing what the document says. That is why XML
     /// reformatting is conservative where JSON's is not.
     pub fn reformat(&mut self, style: crate::Layout) {
+        self.shape.replace(None);
         let indent = match style {
             crate::Layout::Compact => None,
             crate::Layout::Pretty | crate::Layout::Smart => Some("  "),
@@ -216,6 +281,18 @@ impl XmlDoc {
         }
         out
     }
+}
+
+/// One named field of a record: an attribute, or the text of a child
+/// element with that tag.
+fn field_of(elem: &Element, name: &str) -> Option<String> {
+    if let Some((_, value, _, _)) = elem.attributes.iter().find(|(n, _, _, _)| n == name) {
+        return Some(value.clone());
+    }
+    element_children(elem)
+        .into_iter()
+        .find(|c| c.tag == name)
+        .map(|c| c.text_content())
 }
 
 /// An element's element children, in order.

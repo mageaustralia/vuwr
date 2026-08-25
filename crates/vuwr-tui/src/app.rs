@@ -161,13 +161,6 @@ impl App {
         let was_pending_g = self.pending_g;
         self.pending_g = false;
         match crate::keymap::resolve(key, was_pending_g) {
-            Resolved::Run(Command::EditLarge) => match self.session.large_edit_text() {
-                Some(text) => {
-                    let caret = text.len();
-                    self.large_edit = Some((text, caret));
-                }
-                None => self.session.report("nothing here to edit"),
-            },
             Resolved::Run(cmd) => {
                 let effect = self.session.execute(cmd);
                 self.apply(effect);
@@ -207,6 +200,12 @@ impl App {
                 Ok(text) => self.session.paste(&text),
                 Err(e) => self.session.report(format!("paste failed: {e}")),
             },
+            Effect::EditLarge => {
+                if let Some(text) = self.session.large_edit_text() {
+                    let caret = text.len();
+                    self.large_edit = Some((text, caret));
+                }
+            }
         }
     }
 

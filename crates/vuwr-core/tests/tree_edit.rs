@@ -429,22 +429,16 @@ fn untouched_values_keep_their_original_escaping() {
     assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
 }
 
-/// The inline editor cannot show a paragraph, and filling the status bar
-/// with one is how it used to fail.
+/// The inline editor cannot show a paragraph. It used to refuse and tell
+/// the user to press F2; now it opens the editor that can hold it.
 #[test]
-fn a_long_value_refuses_the_inline_editor_and_says_why() {
+fn a_long_value_hands_over_to_the_larger_editor() {
     let long = "line one\nline two\nline three";
     let mut s = xml_session(&format!("<r><d>{long}</d></r>"));
     s.grid.cursor = (0, 0);
     assert!(s.value_is_multiline());
-
-    s.execute(Command::EditCell);
+    assert_eq!(s.execute(Command::EditCell), Effect::EditLarge);
     assert!(!s.is_entering_text(), "the inline editor must not open");
-    assert!(
-        s.status.contains("F2"),
-        "and it points at the one that can: {}",
-        s.status
-    );
 }
 
 #[test]
@@ -505,4 +499,50 @@ fn copying_a_container_still_yields_json() {
         Effect::Copy(text) => assert_eq!(text, r#"{"x":1}"#),
         other => panic!("got {other:?}"),
     }
+}
+
+// --- Long values open the editor that can hold them ---
+
+/// Anything past a line's worth opens the larger editor rather than
+/// telling the user to go and find F2.
+#[test]
+fn a_long_value_opens_the_larger_editor_by_itself() {
+    let long = "x".repeat(Session::INLINE_LIMIT + 1);
+    let mut s = xml_session(&format!("<r><d>{long}</d></r>"));
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.execute(Command::EditCell), Effect::EditLarge);
+    assert!(!s.is_entering_text(), "and not inline");
+}
+
+/// A value that wraps is unreadable inline however the caret behaves.
+#[test]
+fn the_threshold_is_about_a_line() {
+    let short = "x".repeat(Session::INLINE_LIMIT);
+    let mut s = xml_session(&format!("<r><d>{short}</d></r>"));
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.execute(Command::EditCell), Effect::None);
+    assert!(s.is_entering_text(), "exactly a line still edits inline");
+}
+
+#[test]
+fn anything_with_a_newline_opens_the_larger_editor() {
+    let mut s = xml_session("<r><d>one\ntwo</d></r>");
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.execute(Command::EditCell), Effect::EditLarge);
+}
+
+/// F2 asks for it directly, and says so when there is nothing to edit.
+#[test]
+fn asking_for_the_larger_editor_on_a_container_reports_why() {
+    let mut s = session(r#"{"o":{"x":1}}"#);
+    assert_eq!(s.execute(Command::EditLarge), Effect::None);
+    assert!(s.status.contains("nothing here"), "{}", s.status);
+}
+
+#[test]
+fn replace_also_routes_long_values_to_the_larger_editor() {
+    let long = "x".repeat(200);
+    let mut s = xml_session(&format!("<r><d>{long}</d></r>"));
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.execute(Command::ReplaceCell), Effect::EditLarge);
 }

@@ -79,6 +79,7 @@ pub enum Command {
     Help,
     /// Show or hide the hint bar.
     ToggleHints,
+    ToggleDetail,
 }
 
 impl Command {
@@ -137,6 +138,7 @@ impl Command {
         Command::OpenPalette,
         Command::Help,
         Command::ToggleHints,
+        Command::ToggleDetail,
     ];
 
     /// The stable name used by the `:` palette and by help.
@@ -195,6 +197,7 @@ impl Command {
             Command::OpenPalette => "palette",
             Command::Help => "help",
             Command::ToggleHints => "toggle-hints",
+            Command::ToggleDetail => "detail",
         }
     }
 
@@ -254,6 +257,7 @@ impl Command {
             Command::OpenPalette => "open the command line",
             Command::Help => "show this help",
             Command::ToggleHints => "show or hide the hint bar",
+            Command::ToggleDetail => "show the selected value in full",
         }
     }
 
@@ -314,6 +318,7 @@ impl Command {
             Command::OpenPalette => "command",
             Command::Help => "help",
             Command::ToggleHints => "hints",
+            Command::ToggleDetail => "detail",
         }
     }
 
@@ -366,7 +371,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 53, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 54, "update ALL when adding a command");
     }
 
     #[test]

@@ -1376,3 +1376,75 @@ fn the_larger_editor_decodes_and_encodes() {
         "and encoded on the way back"
     );
 }
+
+/// Editing a long value opens the overlay by itself, in the terminal too.
+#[test]
+fn a_long_value_opens_the_overlay_without_f2() {
+    let long = "x".repeat(120);
+    let src = format!("<r><d>{long}</d></r>");
+    let doc = Document::parse(src.as_bytes(), FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+
+    app.handle_key(key(KeyCode::Char('i')));
+    assert!(app.editing_large(), "the overlay opened on its own");
+    assert!(!app.is_entering_text(), "and not the inline editor");
+}
+
+// --- The detail pane ---
+
+/// A table column is far narrower than a description, so most of a feed
+/// is behind a truncation. The pane shows the selected value in full.
+#[test]
+fn the_detail_pane_shows_the_selected_value_whole() {
+    let long = "a very long description that a narrow column cannot possibly show in full";
+    let src = format!("<rows><row><d>{long}</d></row></rows>");
+    let doc = Document::parse(src.as_bytes(), FormatHint::Xml).unwrap();
+    let mut app = App::new(PathBuf::from("t.xml"), doc);
+    app.handle_key(key(KeyCode::Char('1'))); // table view
+
+    let before = render(&mut app, 40, 14);
+    assert!(
+        !before.contains("cannot possibly show"),
+        "truncated in the column"
+    );
+
+    app.handle_key(key(KeyCode::Char('V')));
+    let after = render(&mut app, 40, 14);
+    assert!(
+        after.contains("cannot possibly"),
+        "the pane wraps it into view:\n{after}"
+    );
+}
+
+#[test]
+fn the_detail_pane_toggles_off_again() {
+    let mut app = app("a,b\nlong value here,2\n");
+    app.handle_key(key(KeyCode::Char('V')));
+    assert!(app.show_detail);
+    app.handle_key(key(KeyCode::Char('V')));
+    assert!(!app.show_detail);
+}
+
+/// It names what it is showing, so a wide table stays legible.
+#[test]
+fn the_detail_pane_names_the_column() {
+    let mut app = app("name,age\nAlice,30\n");
+    app.grid.move_to(1, 1, 2, 2);
+    app.handle_key(key(KeyCode::Char('V')));
+    let out = render(&mut app, 50, 14);
+    assert!(
+        out.contains("age"),
+        "the column name is on the pane:\n{out}"
+    );
+}
+
+/// It follows the cursor, in the tree as well.
+#[test]
+fn the_detail_pane_follows_the_selection() {
+    let doc = Document::parse(br#"{"a":"first","b":"second"}"#, FormatHint::Auto).unwrap();
+    let mut app = App::new(PathBuf::from("t.json"), doc);
+    app.handle_key(key(KeyCode::Char('V')));
+    assert_eq!(app.detail_text().as_deref(), Some("first"));
+    app.handle_key(key(KeyCode::Down));
+    assert_eq!(app.detail_text().as_deref(), Some("second"));
+}

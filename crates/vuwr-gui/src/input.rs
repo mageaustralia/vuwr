@@ -53,6 +53,7 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
         // Shift-guarded arms come first: a plain `Key::H` arm would match
         // Shift+H too and swallow it.
         Key::H if mods.shift => Command::ToggleHints,
+        Key::V if mods.shift => Command::ToggleDetail,
         Key::ArrowLeft | Key::H => Command::MoveLeft,
         Key::ArrowRight | Key::L => Command::MoveRight,
         Key::ArrowUp | Key::K => Command::MoveUp,
@@ -159,6 +160,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::OpenPalette => ":",
         Command::Help => "?",
         Command::ToggleHints => "H",
+        Command::ToggleDetail => "V",
     }
 }
 

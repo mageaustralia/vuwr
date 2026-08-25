@@ -18,8 +18,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Vec::new()
     };
     let hint_rows = if hints.is_empty() { 0 } else { 1 };
+    // The detail pane takes a few lines, capped so it never crowds out
+    // the view it is describing.
+    let detail = app.show_detail.then(|| app.detail_text()).flatten();
+    // Two borders plus a few lines of text: enough for a paragraph
+    // without crowding out the view it describes.
+    let detail_rows = match &detail {
+        Some(_) => (frame.area().height / 3).clamp(4, 12),
+        None => 0,
+    };
     let chunks = Layout::vertical([
         Constraint::Min(1),
+        Constraint::Length(detail_rows),
         Constraint::Length(1),
         Constraint::Length(hint_rows),
     ])
@@ -29,9 +39,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ViewMode::Tree => render_tree(frame, app, chunks[0]),
         ViewMode::Text => render_text(frame, app, chunks[0]),
     }
-    render_status(frame, app, chunks[1]);
+    if let Some(text) = detail {
+        render_detail(frame, app, &text, chunks[1]);
+    }
+    render_status(frame, app, chunks[2]);
     if hint_rows == 1 {
-        render_hints(frame, &hints, chunks[2]);
+        render_hints(frame, &hints, chunks[3]);
     }
     if app.editing_large() {
         render_large_edit(frame, app, frame.area());
@@ -39,6 +52,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.show_help {
         render_help(frame, frame.area());
     }
+}
+
+/// The selected value in full, wrapped — a spreadsheet's formula bar.
+///
+/// A table column is far narrower than a description, so most of the file
+/// is otherwise behind a truncation.
+fn render_detail(frame: &mut Frame, app: &App, text: &str, area: Rect) {
+    let block = Block::bordered()
+        .title(format!(" {} ", app.detail_label()))
+        .border_style(Style::default().dim());
+    frame.render_widget(
+        Paragraph::new(text.to_string())
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 /// The larger editor, for a value that will not fit on one line.

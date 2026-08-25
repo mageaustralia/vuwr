@@ -101,6 +101,9 @@ pub enum Effect {
     Copy(String),
     /// Read the clipboard and hand it back via [`Session::paste`].
     Paste,
+    /// Open the larger editor on [`Session::large_edit_text`]. Core has no
+    /// window and no overlay, so the frontend puts it somewhere.
+    EditLarge,
 }
 
 pub enum Mode {
@@ -180,6 +183,10 @@ pub struct Session {
     /// Vertical scroll offset of text view, so a frontend can keep a fixed
     /// gutter in step with the content beside it.
     pub text_scroll: f32,
+    /// Show the whole value of the selected cell, wrapped, the way a
+    /// spreadsheet's formula bar does. A table column is far narrower
+    /// than a description, and truncation hides most of the file.
+    pub show_detail: bool,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
     /// The exact bytes those lines came from, and each line's byte span
@@ -218,6 +225,7 @@ impl Session {
             sort: None,
             renaming: false,
             text_scroll: 0.0,
+            show_detail: false,
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -461,9 +469,9 @@ impl Session {
                 if !editable {
                     self.status = "this view is not editable".into();
                 } else if self.value_is_multiline() {
-                    // A paragraph cannot be edited on one line, and the
-                    // inline editor would fill the status bar with it.
-                    self.status = "too long to edit inline — press F2".into();
+                    // Too long for one line, so open the editor that can
+                    // hold it rather than making the user find F2.
+                    return Effect::EditLarge;
                 } else if cmd == Command::ReplaceCell {
                     self.mode = Mode::Edit {
                         buf: String::new(),
@@ -474,9 +482,14 @@ impl Session {
                 }
             }
             Command::RenameKey => self.start_rename(),
-            // The large editor needs somewhere to put a window, so the
-            // frontend handles it; a terminal falls back to inline.
-            Command::EditLarge => return self.execute(Command::EditCell),
+            Command::EditLarge => {
+                return if self.large_edit_text().is_some() {
+                    Effect::EditLarge
+                } else {
+                    self.status = "nothing here to edit".into();
+                    Effect::None
+                };
+            }
             Command::Copy => match self.value_text_at_cursor() {
                 Some(text) if !text.is_empty() => return Effect::Copy(text),
                 _ => self.status = "nothing to copy here".into(),
@@ -591,6 +604,12 @@ impl Session {
 
             Command::OpenPalette => self.mode = Mode::Command { buf: String::new() },
             Command::Help => self.show_help = !self.show_help,
+            Command::ToggleDetail => {
+                self.show_detail = !self.show_detail;
+                if self.show_detail && self.detail_text().is_none() {
+                    self.status = "nothing selected to show".into();
+                }
+            }
             Command::ToggleHints => self.show_hints = !self.show_hints,
         }
         Effect::None
@@ -669,12 +688,46 @@ impl Session {
         }
     }
 
+    /// Longest value still worth editing on one line.
+    ///
+    /// Beyond this it wraps, and a wrapped value in a single-line editor
+    /// is unreadable however the caret behaves. Roughly a terminal line,
+    /// which is the width people think in.
+    pub const INLINE_LIMIT: usize = 80;
+
     /// True when the value under the cursor will not fit an inline edit.
     pub fn value_is_multiline(&self) -> bool {
         self.view != ViewMode::Text
             && self
                 .large_edit_text()
-                .is_some_and(|t| t.contains('\n') || t.chars().count() > 200)
+                .is_some_and(|t| t.contains('\n') || t.chars().count() > Self::INLINE_LIMIT)
+    }
+
+    /// The selected value in full, decoded, for the detail pane.
+    ///
+    /// The same text the editor would open on, so what you read is what
+    /// you would change.
+    pub fn detail_text(&self) -> Option<String> {
+        match self.view {
+            ViewMode::Text => self.text_lines.get(self.grid.cursor.0).cloned(),
+            _ => self.large_edit_text(),
+        }
+    }
+
+    /// What the detail pane should call the thing it is showing.
+    pub fn detail_label(&self) -> String {
+        match self.view {
+            ViewMode::Tree => self
+                .tree_rows
+                .get(self.grid.cursor.0)
+                .map(|r| r.label.clone())
+                .unwrap_or_default(),
+            ViewMode::Table => {
+                let (headers, _, _) = self.table_dims();
+                headers.get(self.grid.cursor.1).cloned().unwrap_or_default()
+            }
+            ViewMode::Text => format!("line {}", self.grid.cursor.0 + 1),
+        }
     }
 
     /// The value under the cursor, for editing somewhere with room.

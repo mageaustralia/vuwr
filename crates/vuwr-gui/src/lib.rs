@@ -271,13 +271,6 @@ impl VuwrApp {
             }
             _ => {}
         }
-        if cmd == Command::EditLarge {
-            self.large_edit = self.session.as_ref().and_then(|s| s.large_edit_text());
-            if self.large_edit.is_none() {
-                self.report_status("nothing here to edit");
-            }
-            return;
-        }
         let Some(session) = self.session.as_mut() else {
             return;
         };
@@ -322,6 +315,9 @@ impl VuwrApp {
             // egui delivers the clipboard as an event rather than on
             // demand, so ask for it and take it next frame.
             Effect::Paste => self.want_paste = true,
+            Effect::EditLarge => {
+                self.large_edit = self.session.as_ref().and_then(|s| s.large_edit_text());
+            }
             Effect::Output(text) => {
                 // A GUI has no stdout worth writing to, so the marked rows
                 // go to the clipboard, which is the same idea in this
@@ -428,6 +424,12 @@ impl eframe::App for VuwrApp {
                 self.run(cmd, ctx);
             }
         });
+        if self.session.as_ref().is_some_and(|s| s.show_detail) {
+            egui::TopBottomPanel::bottom("detail")
+                .resizable(true)
+                .default_height(140.0)
+                .show(ctx, |ui| self.detail_pane(ui));
+        }
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             self.diagnostics_bar(ui, ctx);
             self.status_bar(ui);
@@ -570,6 +572,45 @@ impl VuwrApp {
         });
     }
 
+    /// The selected value in full, wrapped and selectable — a
+    /// spreadsheet's formula bar. A table column is far narrower than a
+    /// description, so most of the file is otherwise truncated away.
+    fn detail_pane(&mut self, ui: &mut egui::Ui) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let label = session.detail_label();
+        let text = session.detail_text();
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(&label).strong().monospace());
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} characters",
+                    text.as_deref().map(|t| t.chars().count()).unwrap_or(0)
+                ))
+                .weak()
+                .small(),
+            );
+        });
+        ui.separator();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| match text {
+                // Selectable, so it can be copied out with the mouse the
+                // way any other text can.
+                Some(text) => {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(text).monospace())
+                            .wrap()
+                            .selectable(true),
+                    );
+                }
+                None => {
+                    ui.label(egui::RichText::new("nothing selected").weak());
+                }
+            });
+    }
+
     /// Problems that are legal but probably wrong, with somewhere to go.
     ///
     /// A warning without a position leaves you hunting, so each one names
@@ -672,31 +713,43 @@ impl VuwrApp {
         let mut open = true;
         let mut commit = false;
         let mut cancel = false;
+        let where_from = self
+            .session
+            .as_ref()
+            .map(|s| s.position_label())
+            .unwrap_or_default();
 
         egui::Window::new("Edit value")
             .open(&mut open)
             .resizable(true)
-            .default_size([680.0, 420.0])
+            .collapsible(false)
+            // Room to read a paragraph without scrolling: the point of
+            // this window is that the value did not fit anywhere smaller.
+            .default_size([860.0, 560.0])
+            .min_width(420.0)
             .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(
-                        self.session
-                            .as_ref()
-                            .map(|s| s.position_label())
-                            .unwrap_or_default(),
-                    )
-                    .weak()
-                    .small(),
-                );
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut text)
-                            .code_editor()
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(18),
-                    );
-                });
+                ui.label(egui::RichText::new(&where_from).weak().small());
+                ui.add_space(6.0);
+
+                // The editor fills the window, leaving a strip for the
+                // buttons, so resizing it gives you more text rather than
+                // more grey.
+                let footer = 34.0;
+                let height = (ui.available_height() - footer).max(120.0);
+                egui::ScrollArea::vertical()
+                    .max_height(height)
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            [ui.available_width(), height],
+                            egui::TextEdit::multiline(&mut text)
+                                .font(egui::TextStyle::Monospace)
+                                // Wrapped, not scrolled sideways: prose is
+                                // what lands here.
+                                .lock_focus(true)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
@@ -706,9 +759,13 @@ impl VuwrApp {
                         cancel = true;
                     }
                     ui.label(
-                        egui::RichText::new(format!("{} characters", text.chars().count()))
-                            .weak()
-                            .small(),
+                        egui::RichText::new(format!(
+                            "{} characters, {} lines",
+                            text.chars().count(),
+                            text.lines().count().max(1)
+                        ))
+                        .weak()
+                        .small(),
                     );
                 });
             });
