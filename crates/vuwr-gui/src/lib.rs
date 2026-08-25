@@ -451,8 +451,10 @@ fn format_label(session: &Session) -> String {
 /// The inspector's width, and the width of its key column.
 const INSPECTOR_WIDTH: f32 = 356.0;
 const KEY_COLUMN: f32 = 132.0;
-/// Height of one field row.
+/// Height of one field row, and the inset its text sits at — the same
+/// 14px the panel's header and footer use.
 const FIELD_ROW: f32 = 22.0;
+const FIELD_PAD: f32 = 14.0;
 
 /// A rule along the top of the frame being drawn.
 fn edge_top(ui: &egui::Ui) {
@@ -518,7 +520,10 @@ impl eframe::App for VuwrApp {
             )
             .show_separator_line(false)
             .show(ctx, |ui| {
-                self.menu_bar(ui, ctx);
+                // Centred in the row rather than sitting at the top of
+                // it: a 40px bar with 20px of menu at the top reads as a
+                // mistake, because it is one.
+                ui.horizontal_centered(|ui| self.menu_bar(ui, ctx));
                 edge_bottom(ui);
             });
         egui::TopBottomPanel::top("toolbar")
@@ -942,8 +947,11 @@ impl VuwrApp {
                         KEY_COLUMN - 8.0,
                     );
                     let y = row.center().y - key.size().y / 2.0;
+                    // Inset like the header above it: the names were
+                    // flush against the panel's edge, which reads as the
+                    // list having fallen off it.
                     ui.painter().with_clip_rect(clip).galley(
-                        egui::pos2(row.left(), y),
+                        egui::pos2(row.left() + FIELD_PAD, y),
                         key,
                         theme::text_muted(),
                     );
@@ -956,7 +964,7 @@ impl VuwrApp {
                     );
                     let y = row.center().y - value.size().y / 2.0;
                     ui.painter().with_clip_rect(clip).galley(
-                        egui::pos2(row.left() + KEY_COLUMN, y),
+                        egui::pos2(row.left() + FIELD_PAD + KEY_COLUMN, y),
                         value,
                         colour,
                     );

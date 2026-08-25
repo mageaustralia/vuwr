@@ -51,10 +51,13 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
             theme::divider(ui);
         }
 
-        // Layout. Not CSV: its shape is its content, with nothing to
-        // re-indent.
-        let can_format = session.doc.is_json() || session.doc.is_xml();
-        ui.add_enabled_ui(can_format, |ui| {
+        // Layout. Not CSV, whose shape is its content, and not while a
+        // table is on screen: re-indenting the source changes nothing you
+        // can see from there. A control that does nothing where it is
+        // shown is worse than one that is not shown.
+        let can_format = (session.doc.is_json() || session.doc.is_xml())
+            && session.view_mode() != ViewMode::Table;
+        if can_format {
             if button(ui, "Format", "Re-indent: one value per line (Ctrl+I)").clicked() {
                 clicked = Some(Command::FormatPretty);
             }
@@ -70,13 +73,13 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
             if button(ui, "Compact", "Remove all whitespace (Ctrl+Shift+I)").clicked() {
                 clicked = Some(Command::FormatCompact);
             }
-        });
+            theme::divider(ui);
+        }
 
-        theme::divider(ui);
-
-        // Sort, filter, search — the table verbs.
-        let table = session.doc.sheet().is_some();
-        ui.add_enabled_ui(table, |ui| {
+        // Sorting is a table verb: it reorders rows, and rows are what a
+        // table has.
+        let table = session.view_mode() == ViewMode::Table && session.doc.sheet().is_some();
+        if table {
             // Say which way the current column is sorted, in words: an
             // arrow glyph renders as an empty box in egui's fonts.
             let arrow = match session.sort_spec() {
@@ -95,33 +98,33 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
             if button(ui, "Nat", "Sort naturally: file2 before file10").clicked() {
                 clicked = Some(Command::SortNatural);
             }
-            let label = match session.visible_count() {
-                Some(n) => format!("Filter · {n}"),
-                None => "Filter".to_string(),
-            };
-            if filter_button(ui, &label, session.is_filtered()).clicked() {
-                clicked = Some(Command::Filter);
+        }
+
+        // Finding and filtering are not table verbs: you look for a value
+        // wherever you are.
+        let label = match session.visible_count() {
+            Some(n) => format!("Filter · {n}"),
+            None => "Filter".to_string(),
+        };
+        if filter_button(ui, &label, session.is_filtered()).clicked() {
+            clicked = Some(Command::Filter);
+        }
+        if button(ui, "Find", "Search (Ctrl+F)").clicked() {
+            clicked = Some(Command::Find);
+        }
+        // Only offer the undo of a view change when there is one.
+        let filtered = session.is_filtered() || session.sort_spec().is_some();
+        ui.add_enabled_ui(filtered, |ui| {
+            if button(ui, "Clear", "Clear the filter and sort").clicked() {
+                clicked = Some(Command::ClearFilter);
             }
-            if button(ui, "Find", "Search (Ctrl+F)").clicked() {
-                clicked = Some(Command::Find);
-            }
-            // Only offer the undo of a view change when there is one.
-            let filtered = session.is_filtered() || session.sort_spec().is_some();
-            ui.add_enabled_ui(filtered, |ui| {
-                if button(ui, "Clear", "Clear the filter and sort").clicked() {
-                    clicked = Some(Command::ClearFilter);
-                }
-            });
         });
 
         theme::divider(ui);
 
-        ui.add_enabled_ui(table, |ui| {
-            if button(ui, "Copy row", "Copy the selected row").clicked() {
-                clicked = Some(Command::CopyRow);
-            }
-        });
-        theme::divider(ui);
+        if table && button(ui, "Copy row", "Copy the selected row").clicked() {
+            clicked = Some(Command::CopyRow);
+        }
 
         // Asked for, not automatic: the scan re-reads the whole document,
         // which is a visible hitch on a large one after every edit.
