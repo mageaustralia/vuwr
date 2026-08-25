@@ -290,3 +290,92 @@ fn save_answers_to_both_vocabularies() {
     assert_eq!(Command::from_name("save-as"), Some(Command::SaveAs));
     assert_eq!(Command::from_name("open"), Some(Command::Open));
 }
+
+// --- Editing an XML element's text from the tree ---
+//
+// The large-value editor opened empty on a `<description>` holding a
+// paragraph of escaped HTML, and saving would have replaced the element
+// with a bare string, losing the tag.
+
+fn xml_session(src: &str) -> Session {
+    Session::new(Document::parse(src.as_bytes(), FormatHint::Xml).unwrap())
+}
+
+#[test]
+fn an_elements_text_is_what_the_editor_opens_on() {
+    let mut s = xml_session("<r><description><![CDATA[Some long text]]></description></r>");
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.large_edit_text().as_deref(), Some("Some long text"));
+}
+
+#[test]
+fn plain_text_elements_open_too() {
+    let mut s = xml_session("<r><title>Racquet</title></r>");
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.large_edit_text().as_deref(), Some("Racquet"));
+}
+
+/// The element must survive: writing the node itself replaced the whole
+/// `<description>` with a string.
+#[test]
+fn saving_changes_the_text_and_keeps_the_element() {
+    let mut s = xml_session("<r><description>old</description></r>");
+    s.grid.cursor = (0, 0);
+    s.commit_large_edit("new");
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "<r><description>new</description></r>"
+    );
+}
+
+#[test]
+fn saving_keeps_a_cdata_section_a_cdata_section() {
+    let mut s = xml_session("<r><d><![CDATA[old]]></d></r>");
+    s.grid.cursor = (0, 0);
+    s.commit_large_edit("new &lt;p&gt;markup&lt;/p&gt;");
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "<r><d><![CDATA[new &lt;p&gt;markup&lt;/p&gt;]]></d></r>",
+        "rewriting it as plain text would change how the document escapes"
+    );
+}
+
+#[test]
+fn editing_an_elements_text_undoes_exactly() {
+    let src = "<r><d><![CDATA[old]]></d></r>";
+    let mut s = xml_session(src);
+    s.grid.cursor = (0, 0);
+    s.commit_large_edit("new");
+    assert!(s.doc.undo());
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+}
+
+/// The inline editor reads the same value, so `i` and F2 agree.
+#[test]
+fn the_inline_editor_sees_the_same_text() {
+    let mut s = xml_session("<r><d>hello</d></r>");
+    s.grid.cursor = (0, 0);
+    s.execute(Command::EditCell);
+    assert_eq!(s.entry().map(|(_, b)| b.to_string()), Some("hello".into()));
+}
+
+/// A container has no single value, so the editor declines rather than
+/// opening on nothing.
+#[test]
+fn a_container_has_nothing_to_open() {
+    let mut s = xml_session("<r><group><a/></group></r>");
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.large_edit_text(), None);
+}
+
+/// Multi-line text is exactly what this editor is for.
+#[test]
+fn multi_line_text_round_trips_through_the_editor() {
+    let mut s = xml_session("<r><d><![CDATA[one]]></d></r>");
+    s.grid.cursor = (0, 0);
+    s.commit_large_edit("one\ntwo\nthree");
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "<r><d><![CDATA[one\ntwo\nthree]]></d></r>"
+    );
+}

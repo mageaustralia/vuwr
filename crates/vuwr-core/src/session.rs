@@ -989,18 +989,25 @@ impl Session {
 
     /// Write a value into the tree node under the cursor.
     fn commit_tree_edit(&mut self, row: usize, value: &str) {
-        let Some(path) = self.tree_rows.get(row).map(|r| r.path.clone()) else {
+        let Some(mut path) = self.tree_rows.get(row).map(|r| r.path.clone()) else {
             return;
         };
         let old = self
             .tree_root()
             .and_then(|root| root.get_at(&path).cloned());
-        // XML text and attributes are strings; JSON keeps its own type
-        // where the new text still fits it.
-        let replacement = if self.doc.is_xml() {
-            crate::Node::Str(value.to_string())
-        } else {
-            crate::sheet::typed_replacement(old.as_ref(), value)
+
+        // Writing to an element must change its *text*, not replace the
+        // element: setting the node itself would turn `<description>…`
+        // into a bare string and lose the tag entirely.
+        let replacement = match &old {
+            Some(Node::Element(_)) => {
+                path.push(crate::PathSeg::Text);
+                crate::Node::Text(value.to_string())
+            }
+            // XML attributes and text are strings; JSON keeps its own
+            // type where the new text still fits it.
+            _ if self.doc.is_xml() => crate::Node::Str(value.to_string()),
+            _ => crate::sheet::typed_replacement(old.as_ref(), value),
         };
         match self.doc.set_node(&path, replacement) {
             Ok(()) => {
@@ -1558,7 +1565,18 @@ fn node_to_edit_string(node: &Node) -> String {
         Node::Bool(b) => b.to_string(),
         Node::Number(s) => s.clone(),
         Node::Str(s) => s.clone(),
-        Node::Text(s) => s.clone(),
+        Node::Text(s) | Node::CData(s) => s.clone(),
+        // An element that holds only text *is* its text as far as editing
+        // goes: `<description>` shows its content in the tree, so the
+        // editor has to open on the same thing.
+        Node::Element(e) => e
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                Node::Text(t) | Node::CData(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect(),
         _ => String::new(),
     }
 }
