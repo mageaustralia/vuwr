@@ -64,6 +64,8 @@ pub struct VuwrApp {
     load_error: Option<String>,
     /// The Acknowledgements window.
     show_licenses: bool,
+    /// Light or dark ground. Starts from what the system asks for.
+    dark: bool,
     /// Which diagnostic the bar is showing.
     diagnostic_index: usize,
     /// A paste was asked for and the clipboard has not arrived yet.
@@ -86,11 +88,17 @@ impl VuwrApp {
         doc: Option<Document>,
     ) -> VuwrApp {
         fonts::install(ctx);
+        theme::set_dark(matches!(
+            ctx.system_theme(),
+            Some(eframe::egui::Theme::Dark)
+        ));
         theme::install(ctx);
-        match doc {
+        let mut app = match doc {
             Some(doc) => VuwrApp::new(path, doc),
             None => VuwrApp::empty(),
-        }
+        };
+        app.dark = theme::is_dark();
+        app
     }
 
     pub fn new(path: Option<PathBuf>, doc: Document) -> VuwrApp {
@@ -101,6 +109,7 @@ impl VuwrApp {
             pending_g: false,
             load_error: None,
             show_licenses: false,
+            dark: false,
             diagnostic_index: 0,
             want_paste: false,
             large_edit: None,
@@ -118,6 +127,7 @@ impl VuwrApp {
             pending_g: false,
             load_error: None,
             show_licenses: false,
+            dark: false,
             diagnostic_index: 0,
             want_paste: false,
             large_edit: None,
@@ -414,7 +424,7 @@ fn edge_bottom(ui: &egui::Ui) {
     ui.painter().hline(
         ui.clip_rect().x_range(),
         rect.bottom().round() + 0.5,
-        egui::Stroke::new(1.0_f32, theme::BORDER),
+        egui::Stroke::new(1.0_f32, theme::border()),
     );
 }
 
@@ -433,9 +443,9 @@ fn format_label(session: &Session) -> String {
 /// with Save.
 fn quiet_action(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
     let colour = if enabled {
-        theme::TEXT_CONTROL
+        theme::text_control()
     } else {
-        theme::TEXT_DISABLED
+        theme::text_disabled()
     };
     let button = egui::Button::new(egui::RichText::new(label).color(colour))
         .fill(egui::Color32::TRANSPARENT)
@@ -445,6 +455,10 @@ fn quiet_action(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response
 
 impl eframe::App for VuwrApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if theme::is_dark() != self.dark {
+            theme::set_dark(self.dark);
+            theme::install(ctx);
+        }
         self.drain_file_dialogs(ctx);
         input::handle(self, ctx);
 
@@ -455,7 +469,7 @@ impl eframe::App for VuwrApp {
             .exact_height(TITLE_HEIGHT)
             .frame(
                 egui::Frame::new()
-                    .fill(theme::SURFACE_CHROME)
+                    .fill(theme::surface_chrome())
                     .inner_margin(egui::Margin::symmetric(14, 0)),
             )
             .show_separator_line(false)
@@ -466,7 +480,7 @@ impl eframe::App for VuwrApp {
         egui::TopBottomPanel::top("toolbar")
             .frame(
                 egui::Frame::new()
-                    .fill(theme::SURFACE_SUNK)
+                    .fill(theme::surface_sunk())
                     .inner_margin(egui::Margin::symmetric(14, 9)),
             )
             .show_separator_line(false)
@@ -487,19 +501,19 @@ impl eframe::App for VuwrApp {
         // the keys on another, so the hints read as a legend rather than
         // as more state.
         egui::TopBottomPanel::bottom("status")
-            .frame(egui::Frame::new().fill(theme::SURFACE_HEADER))
+            .frame(egui::Frame::new().fill(theme::surface_header()))
             .show_separator_line(false)
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 self.diagnostics_bar(ui, ctx);
                 egui::Frame::new()
-                    .fill(theme::SURFACE_HEADER)
+                    .fill(theme::surface_header())
                     .inner_margin(egui::Margin::symmetric(14, 7))
                     .show(ui, |ui| {
                         self.status_bar(ui);
                     });
                 egui::Frame::new()
-                    .fill(theme::SURFACE_HINT)
+                    .fill(theme::surface_hint())
                     .inner_margin(egui::Margin::symmetric(14, 7))
                     .show(ui, |ui| {
                         self.hint_bar(ui);
@@ -596,6 +610,14 @@ impl VuwrApp {
                         ui.close();
                     }
                 }
+                ui.separator();
+                ui.label(egui::RichText::new("Appearance").weak());
+                for (label, dark) in [("Light", false), ("Dark", true)] {
+                    if ui.selectable_label(self.dark == dark, label).clicked() {
+                        self.dark = dark;
+                        ui.close();
+                    }
+                }
             });
             ui.menu_button("Help", |ui| {
                 if ui.button("Keys").clicked() {
@@ -608,56 +630,83 @@ impl VuwrApp {
                 }
             });
 
-            // Centre: what is open, whether it is saved, and where it
-            // came from. The dot only appears when there are changes, so
-            // amber always means something.
+            // Right: the actions, laid out into the space that is left
+            // rather than into a nested layout — nesting one inside the
+            // other allocated a second, empty row under the title.
             let dirty = self.session.as_ref().is_some_and(|s| s.dirty);
             let name = self.file_name();
             let path = self.parent_path();
-            ui.add_space(6.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::primary(ui, "Save", "⌘S").clicked() {
-                    self.run(Command::Save, ctx);
-                }
-                theme::divider(ui);
-                let can_redo = self.session.as_ref().is_some_and(|s| s.doc.can_redo());
-                let can_undo = self.session.as_ref().is_some_and(|s| s.doc.can_undo());
-                if quiet_action(ui, "Redo", can_redo).clicked() {
-                    self.run(Command::Redo, ctx);
-                }
-                if quiet_action(ui, "Undo", can_undo).clicked() {
-                    self.run(Command::Undo, ctx);
-                }
+            let rest = ui.available_rect_before_wrap();
+            ui.allocate_ui_with_layout(
+                rest.size(),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    ui.add_space(2.0);
+                    if theme::primary(ui, "Save")
+                        .on_hover_text("Save the file (Ctrl/Cmd+S)")
+                        .clicked()
+                    {
+                        self.run(Command::Save, ctx);
+                    }
+                    theme::divider(ui);
+                    let can_redo = self.session.as_ref().is_some_and(|s| s.doc.can_redo());
+                    let can_undo = self.session.as_ref().is_some_and(|s| s.doc.can_undo());
+                    if quiet_action(ui, "Redo", can_redo).clicked() {
+                        self.run(Command::Redo, ctx);
+                    }
+                    if quiet_action(ui, "Undo", can_undo).clicked() {
+                        self.run(Command::Undo, ctx);
+                    }
 
-                // Centred by taking the middle of what is left.
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    let width = ui.available_width();
-                    ui.add_space((width / 2.0 - 90.0).max(0.0));
-                    ui.label(
-                        egui::RichText::new(name)
-                            .monospace()
-                            .color(theme::TEXT_BODY),
-                    )
-                    .on_hover_text(self.full_path());
-                    if dirty {
-                        let (dot, _) =
-                            ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
-                        ui.painter().circle_filled(dot.center(), 2.5, theme::WARN);
-                        ui.label(
-                            egui::RichText::new("unsaved")
-                                .text_style(theme::meta())
-                                .color(theme::WARN),
-                        );
-                    }
-                    if !path.is_empty() {
-                        ui.label(
-                            egui::RichText::new(path)
-                                .text_style(theme::meta())
-                                .color(theme::TEXT_DIM),
-                        );
-                    }
-                });
-            });
+                    // What is open sits in the middle of what is left,
+                    // measured rather than guessed.
+                    let centre = ui.available_rect_before_wrap();
+                    ui.allocate_ui_with_layout(
+                        centre.size(),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let text = ui
+                                .painter()
+                                .layout_no_wrap(
+                                    name.clone(),
+                                    egui::TextStyle::Monospace.resolve(ui.style()),
+                                    theme::text_body(),
+                                )
+                                .size()
+                                .x;
+                            let extras = if dirty { 74.0 } else { 0.0 }
+                                + if path.is_empty() { 0.0 } else { 90.0 };
+                            let inset = ((centre.width() - text - extras) / 2.0).max(0.0);
+                            ui.add_space(inset);
+                            ui.label(
+                                egui::RichText::new(&name)
+                                    .monospace()
+                                    .color(theme::text_body()),
+                            )
+                            .on_hover_text(self.full_path());
+                            if dirty {
+                                let (dot, _) = ui.allocate_exact_size(
+                                    egui::vec2(9.0, 9.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().circle_filled(dot.center(), 2.5, theme::warn());
+                                ui.label(
+                                    egui::RichText::new("unsaved")
+                                        .text_style(theme::meta())
+                                        .color(theme::warn()),
+                                );
+                            }
+                            if !path.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(&path)
+                                        .text_style(theme::meta())
+                                        .color(theme::text_dim()),
+                                );
+                            }
+                        },
+                    );
+                },
+            );
         });
     }
 
@@ -719,13 +768,13 @@ impl VuwrApp {
             ui.label(
                 egui::RichText::new(session.position_label())
                     .text_style(theme::meta())
-                    .color(theme::TEXT_BODY),
+                    .color(theme::text_body()),
             );
             if let Some(n) = session.visible_count() {
                 ui.label(
                     egui::RichText::new(format!("filtered {n}"))
                         .text_style(theme::meta())
-                        .color(theme::ACCENT_TEXT),
+                        .color(theme::accent_text()),
                 );
             }
             // The right-hand end is what the document is, not where you
@@ -735,14 +784,14 @@ impl VuwrApp {
                     ui.label(
                         egui::RichText::new(label)
                             .text_style(theme::meta())
-                            .color(theme::TEXT_MUTED),
+                            .color(theme::text_muted()),
                     );
                 }
                 if !session.status.is_empty() {
                     ui.label(
                         egui::RichText::new(&session.status)
                             .text_style(theme::meta())
-                            .color(theme::TEXT_MUTED),
+                            .color(theme::text_muted()),
                     );
                 }
             });
@@ -762,7 +811,7 @@ impl VuwrApp {
             ui.label(
                 egui::RichText::new(&label)
                     .text_style(theme::heading())
-                    .color(theme::TEXT),
+                    .color(theme::text()),
             );
             ui.label(
                 egui::RichText::new(format!(
@@ -807,11 +856,11 @@ impl VuwrApp {
 
         let shown = self.diagnostic_index.min(diagnostics.len() - 1);
         let d = &diagnostics[shown];
-        let fg = theme::WARN_TEXT;
+        let fg = theme::warn_text();
 
         egui::Frame::new()
-            .fill(theme::WARN_TINT)
-            .stroke(egui::Stroke::new(1.0_f32, theme::WARN_BORDER))
+            .fill(theme::warn_tint())
+            .stroke(egui::Stroke::new(1.0_f32, theme::warn_border()))
             .inner_margin(egui::Margin::symmetric(14, 8))
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -878,24 +927,48 @@ impl VuwrApp {
         if hints.is_empty() {
             return;
         }
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            for cmd in hints {
-                theme::keycap(ui, input::keys_for(cmd));
-                ui.label(
-                    egui::RichText::new(cmd.short_label())
-                        .text_style(theme::meta())
-                        .color(theme::TEXT_MUTED),
-                );
-                ui.add_space(12.0);
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new("? all shortcuts")
-                        .text_style(theme::meta())
-                        .color(theme::TEXT_DIM),
-                );
-            });
+            // The legend's tail is claimed first; what is left is what the
+            // keys get. Laying both into the same space drew one over the
+            // other once the row filled up.
+            let full = ui.available_rect_before_wrap();
+            let tail = 110.0_f32.min(full.width());
+            let keys = egui::Rect::from_min_size(
+                full.min,
+                egui::vec2((full.width() - tail).max(0.0), full.height()),
+            );
+            ui.allocate_ui_with_layout(
+                keys.size(),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.set_clip_rect(keys);
+                    for cmd in hints {
+                        theme::keycap(ui, input::keys_for(cmd));
+                        ui.label(
+                            egui::RichText::new(cmd.short_label())
+                                .text_style(theme::meta())
+                                .color(theme::text_muted()),
+                        );
+                        ui.add_space(12.0);
+                    }
+                },
+            );
+            // Whatever is left over, laid out from the right edge: sizing
+            // the tail by hand left it wherever the keys happened to end.
+            let rest = ui.available_rect_before_wrap();
+            ui.allocate_ui_with_layout(
+                rest.size(),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    ui.label(
+                        egui::RichText::new("? all shortcuts")
+                            .text_style(theme::meta())
+                            .color(theme::text_dim()),
+                    );
+                },
+            );
         });
     }
 

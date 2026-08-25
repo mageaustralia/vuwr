@@ -5,73 +5,147 @@
 //! reads as tinted, one accent blue for *active* and *selected*, and amber
 //! reserved for unsaved and warnings so it means something when it appears.
 //!
-//! The OKLCH values are kept in the comments rather than converted at
-//! runtime: they are what a ramp would be regenerated from, and the hex is
-//! what egui takes.
+//! Each colour is a pair. The light values are the design's; the dark ones
+//! are its terminal surface, which is the same palette seen against a dark
+//! ground — so switching mode changes the ground, not the vocabulary.
+//!
+//! Colours are functions rather than constants because the mode is chosen
+//! at runtime. The OKLCH values are kept in the comments: they are what a
+//! ramp would be regenerated from, and the hex is what egui takes.
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui::{self, Color32, CornerRadius, Stroke};
+
+static DARK: AtomicBool = AtomicBool::new(false);
+
+/// Whether the dark ground is in use.
+pub fn is_dark() -> bool {
+    DARK.load(Ordering::Relaxed)
+}
+
+/// Choose the ground. The caller re-runs [`install`] afterwards.
+pub fn set_dark(on: bool) {
+    DARK.store(on, Ordering::Relaxed);
+}
 
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
 
+/// The light value, or the dark one when the dark ground is in use.
+fn pick(light: u32, dark: u32) -> Color32 {
+    if is_dark() { rgb(dark) } else { rgb(light) }
+}
+
 // Neutrals — surfaces.
 /// Panel and table background. `0.995 0.001 250`
-pub const SURFACE: Color32 = rgb(0xFDFDFE);
-/// Toolbar, inspector. `0.985 0.002 250`
-pub const SURFACE_SUNK: Color32 = rgb(0xF9FAFB);
-/// Column headers, status line. `0.975 0.002 250`
-pub const SURFACE_HEADER: Color32 = rgb(0xF6F7F8);
+pub fn surface() -> Color32 {
+    pick(0xFDFDFE, 0x13161A)
+}
+/// Toolbar and inspector. `0.985 0.002 250`
+pub fn surface_sunk() -> Color32 {
+    pick(0xF9FAFB, 0x181C21)
+}
+/// Column headers and the status line. `0.975 0.002 250`
+pub fn surface_header() -> Color32 {
+    pick(0xF6F7F8, 0x1B2027)
+}
 /// Title bar. `0.965 0.003 250`
-pub const SURFACE_CHROME: Color32 = rgb(0xF3F4F6);
+pub fn surface_chrome() -> Color32 {
+    pick(0xF3F4F6, 0x1E242B)
+}
 /// Keyboard hint row, segmented track. `0.955 0.003 250`
-pub const SURFACE_HINT: Color32 = rgb(0xF0F1F3);
+pub fn surface_hint() -> Color32 {
+    pick(0xF0F1F3, 0x22282F)
+}
 /// Panel dividers, 1px rules. `0.9 0.006 250`
-pub const BORDER: Color32 = rgb(0xDFE1E5);
+pub fn border() -> Color32 {
+    pick(0xDFE1E5, 0x3C4147)
+}
 /// Outlined button edges. `0.89 0.006 250`
-pub const BORDER_CONTROL: Color32 = rgb(0xDCDFE3);
+pub fn border_control() -> Color32 {
+    pick(0xDCDFE3, 0x454B52)
+}
 /// Row separators. `0.96 0.003 250`
-pub const BORDER_FAINT: Color32 = rgb(0xF4F5F6);
+pub fn border_faint() -> Color32 {
+    pick(0xF4F5F6, 0x272D35)
+}
 
 // Neutrals — text.
 /// Headings only. `0.24 0.012 250`
-pub const TEXT: Color32 = rgb(0x292D33);
+pub fn text() -> Color32 {
+    pick(0x292D33, 0xF2F4F6)
+}
 /// Data cells, filename. `0.3 0.012 250`
-pub const TEXT_BODY: Color32 = rgb(0x383D44);
+pub fn text_body() -> Color32 {
+    pick(0x383D44, 0xE6E8EB)
+}
 /// Button labels. `0.35 0.012 250`
-pub const TEXT_CONTROL: Color32 = rgb(0x454B52);
+pub fn text_control() -> Color32 {
+    pick(0x454B52, 0xC9CED4)
+}
 /// Column headers, secondary meta. `0.5 0.012 250`
-pub const TEXT_MUTED: Color32 = rgb(0x6B7280);
+pub fn text_muted() -> Color32 {
+    pick(0x6B7280, 0xABB1BA)
+}
 /// Hint labels, path. `0.6 0.012 250`
-pub const TEXT_DIM: Color32 = rgb(0x868D97);
+pub fn text_dim() -> Color32 {
+    pick(0x868D97, 0x8D939C)
+}
 /// Redo when there is nothing to redo. `0.72 0.008 250`
-pub const TEXT_DISABLED: Color32 = rgb(0xABB1BA);
+pub fn text_disabled() -> Color32 {
+    pick(0xABB1BA, 0x5C636B)
+}
 
 // Accent — one blue, three roles.
 /// Save fill, selected row bar. `0.5 0.13 250`
-pub const ACCENT: Color32 = rgb(0x1E6FBF);
-/// Active segment label, paths, IDs. `0.42 0.13 250`
-pub const ACCENT_TEXT: Color32 = rgb(0x17568F);
+pub fn accent() -> Color32 {
+    pick(0x1E6FBF, 0x2E7BC9)
+}
+/// Active segment label, paths, identifiers. `0.42 0.13 250`
+pub fn accent_text() -> Color32 {
+    pick(0x17568F, 0x6EA2E0)
+}
 /// Active filter fill. `0.96 0.03 250`
-pub const ACCENT_TINT: Color32 = rgb(0xE8F0FB);
+pub fn accent_tint() -> Color32 {
+    pick(0xE8F0FB, 0x1B2B3E)
+}
 /// Active filter edge. `0.72 0.09 250`
-pub const ACCENT_BORDER: Color32 = rgb(0x7FA8D8);
-/// Selected table row. `0.955 0.02 250`
-pub const ROW_SELECTED: Color32 = rgb(0xE9EFF8);
+pub fn accent_border() -> Color32 {
+    pick(0x7FA8D8, 0x35506F)
+}
+/// The row the cursor is on. `0.955 0.02 250`
+pub fn row_selected() -> Color32 {
+    pick(0xE9EFF8, 0x1C2636)
+}
 
 // State.
 /// Unsaved dot, outlier marker. `0.7 0.13 75`
-pub const WARN: Color32 = rgb(0xC9891F);
+pub fn warn() -> Color32 {
+    pick(0xC9891F, 0xD9A23C)
+}
 /// Issue bar fill. `0.97 0.025 75`
-pub const WARN_TINT: Color32 = rgb(0xFBF3E3);
+pub fn warn_tint() -> Color32 {
+    pick(0xFBF3E3, 0x2A2317)
+}
 /// Issue bar edge. `0.85 0.06 75`
-pub const WARN_BORDER: Color32 = rgb(0xE0C48F);
+pub fn warn_border() -> Color32 {
+    pick(0xE0C48F, 0x5A4A2E)
+}
 /// Issue bar label and actions. `0.45 0.11 55`
-pub const WARN_TEXT: Color32 = rgb(0x8A5A1E);
-/// The 2px focus ring on the cell being edited. `0.6 0.14 55`
-pub const EDIT_RING: Color32 = rgb(0xB4671F);
-/// The white a filled control's label sits in.
-pub const ON_ACCENT: Color32 = rgb(0xFCFCFD);
+pub fn warn_text() -> Color32 {
+    pick(0x8A5A1E, 0xE0B970)
+}
+/// The 2px ring on the cell being edited. `0.6 0.14 55`
+pub fn edit_ring() -> Color32 {
+    pick(0xB4671F, 0xD98A3F)
+}
+
+/// The colour a filled control's label sits in.
+pub fn on_accent() -> Color32 {
+    rgb(0xFCFCFD)
+}
 
 /// Named text styles, so a size never appears at a call site.
 ///
@@ -112,9 +186,13 @@ pub const CONTROL_HEIGHT: f32 = 26.0;
 pub fn install(ctx: &egui::Context) {
     let mut s = (*ctx.style()).clone();
 
-    // The design is a light theme throughout; following the system into
-    // dark mode would leave half these colours illegible.
-    s.visuals = egui::Visuals::light();
+    // egui's own visuals decide the parts we do not paint ourselves —
+    // menus, tooltips, scrollbars — so they follow the same ground.
+    s.visuals = if is_dark() {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
 
     let sans = egui::FontFamily::Proportional;
     let mono = egui::FontFamily::Monospace;
@@ -139,14 +217,14 @@ pub fn install(ctx: &egui::Context) {
     s.spacing.menu_margin = egui::Margin::symmetric(6, 6);
 
     let v = &mut s.visuals;
-    v.panel_fill = SURFACE;
-    v.window_fill = SURFACE;
-    v.extreme_bg_color = SURFACE_SUNK;
-    v.faint_bg_color = SURFACE_HEADER;
-    v.override_text_color = Some(TEXT_CONTROL);
-    v.selection.bg_fill = ROW_SELECTED;
-    v.selection.stroke = Stroke::new(1.0_f32, ACCENT_TEXT);
-    v.window_stroke = Stroke::new(1.0_f32, BORDER);
+    v.panel_fill = surface();
+    v.window_fill = surface();
+    v.extreme_bg_color = surface_sunk();
+    v.faint_bg_color = surface_header();
+    v.override_text_color = Some(text_control());
+    v.selection.bg_fill = row_selected();
+    v.selection.stroke = Stroke::new(1.0_f32, accent_text());
+    v.window_stroke = Stroke::new(1.0_f32, border());
 
     // Actions are outlined, not filled: the filled treatment belongs to
     // Save alone, and a toolbar of filled boxes has nothing to say.
@@ -156,17 +234,17 @@ pub fn install(ctx: &egui::Context) {
         &mut v.widgets.active,
     ] {
         w.corner_radius = CornerRadius::same(5);
-        w.bg_stroke = Stroke::new(1.0_f32, BORDER_CONTROL);
-        w.fg_stroke = Stroke::new(1.0_f32, TEXT_CONTROL);
+        w.bg_stroke = Stroke::new(1.0_f32, border_control());
+        w.fg_stroke = Stroke::new(1.0_f32, text_control());
         w.expansion = 0.0;
     }
-    v.widgets.inactive.weak_bg_fill = SURFACE;
-    v.widgets.hovered.weak_bg_fill = SURFACE_HEADER;
-    v.widgets.active.weak_bg_fill = SURFACE_HINT;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT_MUTED);
+    v.widgets.inactive.weak_bg_fill = surface();
+    v.widgets.hovered.weak_bg_fill = surface_header();
+    v.widgets.active.weak_bg_fill = surface_hint();
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, border());
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, text_muted());
     // Disabled drops to a lighter fill rather than the same box greyed.
-    v.widgets.noninteractive.weak_bg_fill = SURFACE_HEADER;
+    v.widgets.noninteractive.weak_bg_fill = surface_header();
 
     ctx.set_style(s);
 }
@@ -180,20 +258,20 @@ pub fn keycap(ui: &mut egui::Ui, key: &str) {
             .get(&micro())
             .cloned()
             .unwrap_or_default(),
-        TEXT_CONTROL,
+        text_control(),
     );
     let size = egui::vec2(galley.size().x + 12.0, galley.size().y + 4.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     ui.painter()
-        .rect_filled(rect, CornerRadius::same(4), SURFACE);
+        .rect_filled(rect, CornerRadius::same(4), surface());
     ui.painter().rect_stroke(
         rect,
         CornerRadius::same(4),
-        Stroke::new(1.0_f32, BORDER_CONTROL),
+        Stroke::new(1.0_f32, border_control()),
         egui::StrokeKind::Inside,
     );
     let at = rect.center() - galley.size() / 2.0;
-    ui.painter().galley(at, galley, TEXT_CONTROL);
+    ui.painter().galley(at, galley, text_control());
 }
 
 /// One segment of a segmented control. Returns true when it was clicked.
@@ -202,9 +280,9 @@ pub fn keycap(ui: &mut egui::Ui, key: &str) {
 /// has no per-widget shadow, and at this size it is not missed.
 pub fn segment(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
     let (fill, fg) = if active {
-        (SURFACE, ACCENT_TEXT)
+        (surface(), accent_text())
     } else {
-        (Color32::TRANSPARENT, TEXT_CONTROL)
+        (Color32::TRANSPARENT, text_control())
     };
     let button = egui::Button::new(egui::RichText::new(label).color(fg))
         .fill(fill)
@@ -217,7 +295,7 @@ pub fn segment(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
 /// The track a group of segments sits in.
 pub fn segmented<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
-        .fill(SURFACE_HINT)
+        .fill(surface_hint())
         .corner_radius(CornerRadius::same(7))
         .inner_margin(egui::Margin::same(2))
         .show(ui, |ui| {
@@ -229,15 +307,19 @@ pub fn segmented<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> 
 
 /// An outlined action. The default treatment for everything but Save.
 pub fn action(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
-    let colour = if enabled { TEXT_CONTROL } else { TEXT_DISABLED };
+    let colour = if enabled {
+        text_control()
+    } else {
+        text_disabled()
+    };
     let button = egui::Button::new(egui::RichText::new(label).color(colour))
-        .fill(if enabled { SURFACE } else { SURFACE_HEADER })
+        .fill(if enabled { surface() } else { surface_header() })
         .stroke(Stroke::new(
             1.0_f32,
             if enabled {
-                BORDER_CONTROL
+                border_control()
             } else {
-                BORDER_FAINT
+                border_faint()
             },
         ))
         .corner_radius(CornerRadius::same(5));
@@ -245,33 +327,17 @@ pub fn action(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
 }
 
 /// The one filled control: Save.
-pub fn primary(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
-    let mut job = egui::text::LayoutJob::default();
-    let body = ui
-        .style()
-        .text_styles
-        .get(&egui::TextStyle::Button)
-        .cloned()
-        .unwrap_or_default();
-    let key = ui
-        .style()
-        .text_styles
-        .get(&micro())
-        .cloned()
-        .unwrap_or_default();
-    job.append(label, 0.0, egui::TextFormat::simple(body, ON_ACCENT));
-    if !shortcut.is_empty() {
-        job.append(
-            shortcut,
-            7.0,
-            egui::TextFormat::simple(key, ON_ACCENT.gamma_multiply(0.7)),
-        );
-    }
+///
+/// The shortcut lives on hover rather than inside the button: two type
+/// sizes in a 60-pixel control is a badge, not a label.
+pub fn primary(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let text = egui::RichText::new(label).color(on_accent());
     ui.add(
-        egui::Button::new(job)
-            .fill(ACCENT)
+        egui::Button::new(text)
+            .fill(accent())
             .stroke(Stroke::NONE)
-            .corner_radius(CornerRadius::same(6)),
+            .corner_radius(CornerRadius::same(6))
+            .min_size(egui::vec2(64.0, 24.0)),
     )
 }
 
@@ -279,6 +345,9 @@ pub fn primary(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response
 pub fn divider(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(9.0, 18.0), egui::Sense::hover());
     let x = rect.center().x.round();
-    ui.painter()
-        .vline(x, rect.top()..=rect.bottom(), Stroke::new(1.0_f32, BORDER));
+    ui.painter().vline(
+        x,
+        rect.top()..=rect.bottom(),
+        Stroke::new(1.0_f32, border()),
+    );
 }

@@ -77,16 +77,16 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         ui.painter()
-            .rect_filled(header_rect, 0.0, theme::SURFACE_HEADER);
+            .rect_filled(header_rect, 0.0, theme::surface_header());
         ui.painter().hline(
             header_rect.x_range(),
             header_rect.bottom() - 0.5,
-            egui::Stroke::new(1.0_f32, theme::BORDER),
+            egui::Stroke::new(1.0_f32, theme::border()),
         );
         header.set_clip_rect(header_rect.intersect(ui.clip_rect()));
         header.spacing_mut().item_spacing.x = 0.0;
         header.add_space(GUTTER);
-        let head_colour = theme::TEXT_MUTED;
+        let head_colour = theme::text_muted();
         let head_font = header
             .style()
             .text_styles
@@ -149,14 +149,14 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                             egui::vec2(ui.available_width(), row_height),
                         );
                         if on_row {
-                            ui.painter().rect_filled(strip, 0.0, theme::ROW_SELECTED);
+                            ui.painter().rect_filled(strip, 0.0, theme::row_selected());
                         }
                         // A marker down the left edge: accent for where
                         // you are, amber for a row you flagged.
                         let marker = if on_row {
-                            Some(theme::ACCENT)
+                            Some(theme::accent())
                         } else if marked {
-                            Some(theme::WARN)
+                            Some(theme::warn())
                         } else {
                             None
                         };
@@ -173,7 +173,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                         ui.painter().hline(
                             strip.x_range(),
                             strip.bottom() - 0.5,
-                            egui::Stroke::new(1.0_f32, theme::BORDER_FAINT),
+                            egui::Stroke::new(1.0_f32, theme::border_faint()),
                         );
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.allocate_exact_size(
@@ -201,14 +201,14 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                             // laying the rest out costs time to draw
                             // nothing.
                             let text = truncate(&raw, chars + 1);
-                            let mut colour = theme::TEXT_BODY;
+                            let mut colour = theme::text_body();
                             // The first column is an identifier: the
                             // accent marks it, as it marks a path.
                             if c == 0 || c < frozen {
-                                colour = theme::ACCENT_TEXT;
+                                colour = theme::accent_text();
                             }
                             if search.as_ref().is_some_and(|s| s.matches(&raw)) {
-                                colour = theme::WARN_TEXT;
+                                colour = theme::warn_text();
                             }
                             let response = cell_aligned(
                                 ui,
@@ -355,9 +355,13 @@ fn cell_aligned(
     // slightly stronger tint, so the cursor reads without the row turning
     // into a block of colour.
     if selected {
-        ui.painter().rect_filled(rect, 3.0, theme::ACCENT_TINT);
+        ui.painter().rect_filled(rect, 3.0, theme::accent_tint());
     }
-    let colour = if selected { theme::ACCENT_TEXT } else { colour };
+    let colour = if selected {
+        theme::accent_text()
+    } else {
+        colour
+    };
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font.clone(), colour);
@@ -384,14 +388,14 @@ const PAD: f32 = theme::CELL_PAD_X;
 /// filled background and a focus ring, which is what a field looks like.
 fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
-    ui.painter().rect_filled(rect, 5.0, theme::SURFACE);
+    ui.painter().rect_filled(rect, 5.0, theme::surface());
     // Two pixels of the edit colour: a cell being typed into is not the
     // same thing as a cell that is merely selected, and blue would say it
     // was.
     ui.painter().rect_stroke(
         rect,
         5.0,
-        egui::Stroke::new(2.0_f32, theme::EDIT_RING),
+        egui::Stroke::new(2.0_f32, theme::edit_ring()),
         egui::StrokeKind::Inside,
     );
     let job = caret_text(session);
@@ -399,7 +403,7 @@ fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) -> 
     let y = rect.center().y - galley.size().y / 2.0;
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .galley(egui::pos2(rect.left() + PAD, y), galley, theme::TEXT_BODY);
+        .galley(egui::pos2(rect.left() + PAD, y), galley, theme::text_body());
     response
 }
 
@@ -467,7 +471,7 @@ pub fn caret_text(session: &Session) -> egui::text::LayoutJob {
     job.append(
         before,
         0.0,
-        TextFormat::simple(font.clone(), theme::TEXT_BODY),
+        TextFormat::simple(font.clone(), theme::text_body()),
     );
     let mut chars = after.chars();
     let under = chars.next();
@@ -477,12 +481,12 @@ pub fn caret_text(session: &Session) -> egui::text::LayoutJob {
         0.0,
         TextFormat {
             font_id: font.clone(),
-            color: theme::ON_ACCENT,
-            background: theme::EDIT_RING,
+            color: theme::on_accent(),
+            background: theme::edit_ring(),
             ..Default::default()
         },
     );
-    job.append(&rest, 0.0, TextFormat::simple(font, theme::TEXT_BODY));
+    job.append(&rest, 0.0, TextFormat::simple(font, theme::text_body()));
     job
 }
 
@@ -538,6 +542,7 @@ fn disclosure(ui: &mut egui::Ui, expanded: bool) -> egui::Response {
 
 /// Colour by value type, so the shape of the data reads at a glance.
 pub fn value_color(kind: ValueKind, dark: bool) -> Color32 {
+    let dark = dark || theme::is_dark();
     use ValueKind as V;
     if dark {
         match kind {

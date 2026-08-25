@@ -1010,3 +1010,12 @@ fn numeric_detection_allows_units_and_rejects_words() {
     s.execute(Command::ViewTable);
     assert!(!s.column_is_numeric(1));
 }
+
+/// A date starts with digits and is not a number: scanning only the
+/// leading digits right-aligned every date column.
+#[test]
+fn a_date_column_is_not_numeric() {
+    let mut s = csv_session("sku,updated\nA-1,2026-08-19\nB-2,2026-08-21\n");
+    s.execute(Command::ViewTable);
+    assert!(!s.column_is_numeric(1));
+}

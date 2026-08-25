@@ -20,7 +20,7 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
         return None;
     };
 
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         // View mode, as a segmented control: the current mode is visible
         // rather than something you deduce.
@@ -134,17 +134,24 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Option<Command> {
 
         // Right-hand end: how XML text is being read.
         if session.doc.is_xml() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                theme::segmented(ui, |ui| {
-                    if theme::segment(ui, "Raw", !session.decoded_text) && session.decoded_text {
-                        clicked = Some(Command::ToggleDecoded);
-                    }
-                    if theme::segment(ui, "Decoded", session.decoded_text) && !session.decoded_text
-                    {
-                        clicked = Some(Command::ToggleDecoded);
-                    }
-                });
-            });
+            let rest = ui.available_rect_before_wrap();
+            ui.allocate_ui_with_layout(
+                rest.size(),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    theme::segmented(ui, |ui| {
+                        if theme::segment(ui, "Raw", !session.decoded_text) && session.decoded_text
+                        {
+                            clicked = Some(Command::ToggleDecoded);
+                        }
+                        if theme::segment(ui, "Decoded", session.decoded_text)
+                            && !session.decoded_text
+                        {
+                            clicked = Some(Command::ToggleDecoded);
+                        }
+                    });
+                },
+            );
         }
     });
 
@@ -159,9 +166,9 @@ fn filter_button(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response
         return theme::action(ui, label, ui.is_enabled());
     }
     ui.add(
-        egui::Button::new(RichText::new(label).color(theme::ACCENT_TEXT))
-            .fill(theme::ACCENT_TINT)
-            .stroke(egui::Stroke::new(1.0_f32, theme::ACCENT_BORDER))
+        egui::Button::new(RichText::new(label).color(theme::accent_text()))
+            .fill(theme::accent_tint())
+            .stroke(egui::Stroke::new(1.0_f32, theme::accent_border()))
             .corner_radius(egui::CornerRadius::same(5)),
     )
 }

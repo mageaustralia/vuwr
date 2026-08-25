@@ -453,13 +453,16 @@ impl Session {
             if text.is_empty() {
                 continue;
             }
-            // Thousands separators and a trailing unit are still numbers
-            // to a reader; anything else is not.
-            let head: String = text
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',' || *c == '-')
-                .collect();
-            if head.is_empty() || !head.chars().any(|c| c.is_ascii_digit()) {
+            // A number may carry thousands separators and a trailing unit
+            // — `1,099.00 AUD` — but it has to be a number underneath.
+            // Scanning only the leading digits called `2026-08-19` a
+            // number, and right-aligned every date column.
+            let head = text
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .replace(',', "");
+            if head.parse::<f64>().is_err() {
                 return false;
             }
             seen += 1;

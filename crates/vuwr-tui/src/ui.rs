@@ -33,6 +33,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(detail_rows),
+        // A line of air: the last row of data sat against the status line
+        // with nothing between them, and read as part of it.
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(hint_rows),
     ])
@@ -45,9 +48,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if let Some(text) = detail {
         render_detail(frame, app, &text, chunks[1]);
     }
-    render_status(frame, app, chunks[2]);
+    render_status(frame, app, chunks[3]);
     if hint_rows == 1 {
-        render_hints(frame, &hints, chunks[3]);
+        render_hints(frame, &hints, chunks[4]);
     }
     if app.editing_large() {
         render_large_edit(frame, app, frame.area());
@@ -349,14 +352,15 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 fn value_color(kind: vuwr_core::ValueKind) -> Color {
     use vuwr_core::ValueKind as V;
     match kind {
-        V::Null => Color::DarkGray,
-        V::Bool => Color::Magenta,
-        V::Number => Color::Green,
-        V::String => Color::Yellow,
-        V::Array | V::Object => Color::Blue,
-        V::Element => Color::Blue,
-        V::Comment => Color::DarkGray,
-        V::Text | V::Other => Color::Gray,
+        // A container's summary is a placeholder, not content: it says
+        // there is more inside, and should not compete with the values
+        // that are actually on screen.
+        V::Array | V::Object | V::Element => palette::placeholder(),
+        // Nothing to read: say so quietly.
+        V::Null | V::Comment => palette::faint(),
+        // Everything else is the file's own content, and content is what
+        // the eye should land on first.
+        V::Bool | V::Number | V::String | V::Text | V::Other => palette::text(),
     }
 }
 

@@ -47,23 +47,32 @@ pub fn faint() -> Color {
 }
 
 /// Paths, identifiers, and the views you are not in.
+///
+/// The indexed fallback is *light* blue: plain `Blue` is near-black on a
+/// dark terminal, which is where a terminal application spends its life.
 pub fn accent() -> Color {
-    pick(Color::Rgb(0x6E, 0xA2, 0xE0), Color::Blue)
+    pick(Color::Rgb(0x6E, 0xA2, 0xE0), Color::LightBlue)
 }
 
 /// Unsaved, outliers, anything the user should look at.
 pub fn warn() -> Color {
-    pick(Color::Rgb(0xD9, 0xA2, 0x3C), Color::Yellow)
+    pick(Color::Rgb(0xD9, 0xA2, 0x3C), Color::LightYellow)
 }
 
 /// A problem, as opposed to a caution.
 pub fn bad() -> Color {
-    pick(Color::Rgb(0xD1, 0x6B, 0x5A), Color::Red)
+    pick(Color::Rgb(0xD1, 0x6B, 0x5A), Color::LightRed)
 }
 
 /// The background of the row the cursor is on.
 pub fn row_selected() -> Color {
     pick(Color::Rgb(0x1C, 0x26, 0x36), Color::Blue)
+}
+
+/// A value that is really a placeholder — `<item>`, `{…}` — rather than
+/// content. Meta, so it recedes behind the values around it.
+pub fn placeholder() -> Color {
+    dim()
 }
 
 /// The border of the cell being edited.
