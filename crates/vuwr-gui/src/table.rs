@@ -766,6 +766,7 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 // Explicitly vertical: this sits inside a horizontal
                 // layout, and without it every row lands on one line.
                 ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
                     ui.set_width(gutter_width);
                     for n in range {
                         ui.label(
@@ -789,7 +790,16 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 ui.vertical(|ui| {
                     // Lines extend rather than wrap, so the gutter stays
                     // in step and long lines scroll sideways instead of
-                    // folding.
+                    // folding. Zero vertical spacing for the same reason:
+                    // a gap per line and the numbers drift.
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    // A selectable label is a button, and the theme gives
+                    // buttons room to be clicked: 4px of padding and a 26px
+                    // minimum. Either makes a line taller than the gutter's,
+                    // and the numbers drift a further line out with every
+                    // row. Here a line is exactly a line.
+                    ui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
+                    ui.spacing_mut().interact_size.y = row_height;
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     for n in range {
                         let inside = block.is_some_and(|(a, b)| (a..=b).contains(&n));
