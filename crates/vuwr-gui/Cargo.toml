@@ -7,8 +7,9 @@ license.workspace = true
 
 [dependencies]
 vuwr-core = { path = "../vuwr-core" }
-# `default-features = false` drops the persistence and accesskit extras we
-# do not use; glow is the renderer that works on both native and the web.
+# Default features, deliberately. Turning them off builds, renders and
+# responds to the mouse — but keyboard input never reaches the app on the
+# web, and nothing reports an error. See web/README.md.
 eframe = "0.33"
 egui = "0.33"
 # Native and web file dialogs. On the web it drives a file input, so
