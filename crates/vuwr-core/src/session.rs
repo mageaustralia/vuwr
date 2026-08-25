@@ -111,9 +111,14 @@ pub enum Mode {
     /// Inline edit of whatever the cursor is on. `caret` is a byte index
     /// into `buf`: an edit without a movable caret is a text field you can
     /// only append to, which is not editing.
+    ///
+    /// `anchor` is where a selection started, so `anchor..caret` — in
+    /// either order — is what is selected. Equal to `caret` means nothing
+    /// is selected, which is the usual state.
     Edit {
         buf: String,
         caret: usize,
+        anchor: usize,
     },
     /// The `:` command line.
     Command {
@@ -592,6 +597,7 @@ impl Session {
                     self.mode = Mode::Edit {
                         buf: String::new(),
                         caret: 0,
+                        anchor: 0,
                     };
                 } else {
                     self.start_edit();
@@ -1110,7 +1116,11 @@ impl Session {
         self.renaming = true;
         let buf = row.label.clone();
         let caret = buf.len();
-        self.mode = Mode::Edit { buf, caret };
+        self.mode = Mode::Edit {
+            buf,
+            caret,
+            anchor: caret,
+        };
     }
 
     /// True while a key is being renamed.
@@ -1329,29 +1339,109 @@ impl Session {
         }
     }
 
-    /// Insert a character at the caret.
+    /// Insert a character at the caret, replacing the selection if there
+    /// is one — which is what typing over selected text means everywhere.
     pub fn input_char(&mut self, c: char) {
         match &mut self.mode {
             Mode::Normal => {}
-            Mode::Edit { buf, caret } => {
-                let at = (*caret).min(buf.len());
-                buf.insert(at, c);
-                *caret = at + c.len_utf8();
+            Mode::Edit { .. } => {
+                self.delete_selection();
+                if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
+                    let at = (*caret).min(buf.len());
+                    buf.insert(at, c);
+                    *caret = at + c.len_utf8();
+                    *anchor = *caret;
+                }
             }
             Mode::Command { buf } | Mode::Prompt { buf, .. } => buf.push(c),
         }
+    }
+
+    /// Insert text at the caret: a paste, or anything else arriving whole.
+    pub fn input_text(&mut self, text: &str) {
+        for c in text.chars() {
+            self.input_char(c);
+        }
+    }
+
+    /// The selected range, or `None` when nothing is selected.
+    fn selection(&self) -> Option<(usize, usize)> {
+        match &self.mode {
+            Mode::Edit { caret, anchor, .. } if caret != anchor => {
+                Some((*caret.min(anchor), *caret.max(anchor)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The selected text, for a copy.
+    pub fn selected_text(&self) -> Option<String> {
+        let (a, b) = self.selection()?;
+        match &self.mode {
+            Mode::Edit { buf, .. } => Some(buf[a..b].to_string()),
+            _ => None,
+        }
+    }
+
+    /// What a copy or cut should take: the selection, or the whole value
+    /// when there is none — the same rule a browser address bar follows.
+    pub fn entry_text(&self) -> Option<String> {
+        match &self.mode {
+            Mode::Edit { buf, .. } => Some(self.selected_text().unwrap_or_else(|| buf.clone())),
+            _ => None,
+        }
+    }
+
+    /// Remove the selection, leaving the caret where it was.
+    fn delete_selection(&mut self) -> bool {
+        let Some((a, b)) = self.selection() else {
+            return false;
+        };
+        if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
+            buf.replace_range(a..b, "");
+            *caret = a;
+            *anchor = a;
+            return true;
+        }
+        false
+    }
+
+    /// Cut the selection to the caller, which puts it on the clipboard.
+    pub fn input_cut(&mut self) -> Option<String> {
+        let text = self.selected_text()?;
+        self.delete_selection();
+        Some(text)
+    }
+
+    /// Select everything being edited.
+    pub fn select_all(&mut self) {
+        if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
+            *anchor = 0;
+            *caret = buf.len();
+        }
+    }
+
+    /// The selection, as byte offsets, for a frontend to draw.
+    pub fn entry_selection(&self) -> Option<(usize, usize)> {
+        self.selection()
     }
 
     /// Delete the character before the caret.
     pub fn input_backspace(&mut self) {
         match &mut self.mode {
             Mode::Normal => {}
-            Mode::Edit { buf, caret } => {
-                let at = (*caret).min(buf.len());
-                if let Some(prev) = buf[..at].chars().next_back() {
-                    let start = at - prev.len_utf8();
-                    buf.remove(start);
-                    *caret = start;
+            Mode::Edit { .. } => {
+                if self.delete_selection() {
+                    return;
+                }
+                if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
+                    let at = (*caret).min(buf.len());
+                    if let Some(prev) = buf[..at].chars().next_back() {
+                        let start = at - prev.len_utf8();
+                        buf.remove(start);
+                        *caret = start;
+                        *anchor = start;
+                    }
                 }
             }
             Mode::Command { buf } | Mode::Prompt { buf, .. } => {
@@ -1362,7 +1452,10 @@ impl Session {
 
     /// Delete the character at the caret.
     pub fn input_delete(&mut self) {
-        if let Mode::Edit { buf, caret } = &mut self.mode {
+        if self.delete_selection() {
+            return;
+        }
+        if let Mode::Edit { buf, caret, .. } = &mut self.mode {
             let at = (*caret).min(buf.len());
             if at < buf.len() {
                 buf.remove(at);
@@ -1370,33 +1463,82 @@ impl Session {
         }
     }
 
-    /// Move the caret one character left.
+    /// Move the caret one character left, dropping any selection.
     pub fn input_left(&mut self) {
-        if let Mode::Edit { buf, caret } = &mut self.mode
-            && let Some(prev) = buf[..(*caret).min(buf.len())].chars().next_back()
-        {
-            *caret -= prev.len_utf8();
-        }
+        self.move_caret(Move::Left, false);
     }
 
-    /// Move the caret one character right.
+    /// Move the caret one character right, dropping any selection.
     pub fn input_right(&mut self) {
-        if let Mode::Edit { buf, caret } = &mut self.mode
-            && let Some(next) = buf[(*caret).min(buf.len())..].chars().next()
-        {
-            *caret += next.len_utf8();
-        }
+        self.move_caret(Move::Right, false);
     }
 
     pub fn input_home(&mut self) {
-        if let Mode::Edit { caret, .. } = &mut self.mode {
-            *caret = 0;
-        }
+        self.move_caret(Move::Start, false);
     }
 
     pub fn input_end(&mut self) {
-        if let Mode::Edit { buf, caret } = &mut self.mode {
-            *caret = buf.len();
+        self.move_caret(Move::End, false);
+    }
+
+    /// The same four moves, extending the selection rather than dropping
+    /// it — shift-arrow, as everywhere else.
+    pub fn input_select_left(&mut self) {
+        self.move_caret(Move::Left, true);
+    }
+
+    pub fn input_select_right(&mut self) {
+        self.move_caret(Move::Right, true);
+    }
+
+    pub fn input_select_home(&mut self) {
+        self.move_caret(Move::Start, true);
+    }
+
+    pub fn input_select_end(&mut self) {
+        self.move_caret(Move::End, true);
+    }
+
+    fn move_caret(&mut self, how: Move, extend: bool) {
+        // An arrow with something selected collapses to that end rather
+        // than stepping from the caret: pressing Left after selecting a
+        // word puts you before the word, not one character into it.
+        if !extend
+            && let Some((a, b)) = self.selection()
+            && let Mode::Edit { caret, anchor, .. } = &mut self.mode
+        {
+            match how {
+                Move::Left => {
+                    *caret = a;
+                    *anchor = a;
+                    return;
+                }
+                Move::Right => {
+                    *caret = b;
+                    *anchor = b;
+                    return;
+                }
+                Move::Start | Move::End => {}
+            }
+        }
+        if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
+            match how {
+                Move::Left => {
+                    if let Some(prev) = buf[..(*caret).min(buf.len())].chars().next_back() {
+                        *caret -= prev.len_utf8();
+                    }
+                }
+                Move::Right => {
+                    if let Some(next) = buf[(*caret).min(buf.len())..].chars().next() {
+                        *caret += next.len_utf8();
+                    }
+                }
+                Move::Start => *caret = 0,
+                Move::End => *caret = buf.len(),
+            }
+            if !extend {
+                *anchor = *caret;
+            }
         }
     }
 
@@ -1406,12 +1548,13 @@ impl Session {
     /// Clicking where you want to type is how every other editor works;
     /// without it a typo halfway along a line means retyping the rest.
     pub fn set_entry_caret(&mut self, byte: usize) {
-        if let Mode::Edit { buf, caret } = &mut self.mode {
+        if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
             let mut at = byte.min(buf.len());
             while at > 0 && !buf.is_char_boundary(at) {
                 at -= 1;
             }
             *caret = at;
+            *anchor = at;
         }
     }
 
@@ -2141,7 +2284,11 @@ impl Session {
         };
         // Start at the end, the way a rename or a tweak usually wants.
         let caret = buf.len();
-        self.mode = Mode::Edit { buf, caret };
+        self.mode = Mode::Edit {
+            buf,
+            caret,
+            anchor: caret,
+        };
     }
 
     fn clamp_cursor(&mut self) {
@@ -2188,6 +2335,15 @@ pub enum FieldKind {
     Text,
     Number,
     Url,
+}
+
+/// How the caret moves, so extending and not extending share one path.
+#[derive(Debug, Clone, Copy)]
+enum Move {
+    Left,
+    Right,
+    Start,
+    End,
 }
 
 /// Where the value under the cursor begins and ends, as lines and as

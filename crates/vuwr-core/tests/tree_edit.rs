@@ -1080,3 +1080,77 @@ fn the_inspector_falls_back_to_the_value_under_the_cursor() {
     assert_eq!(it.fields.len(), 1);
     assert_eq!(it.fields[0].key, "b");
 }
+
+// --- Selection while editing ---
+
+fn editing(src: &str) -> Session {
+    let mut s = csv_session(src);
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (1, 1);
+    s.execute(Command::EditCell);
+    s
+}
+
+/// Select all, then type: the value is replaced, not appended to. Without
+/// a selection there is nothing for ⌘A, ⌘C or ⌘X to act on.
+#[test]
+fn selecting_everything_and_typing_replaces_the_value() {
+    let mut s = editing("a,b\n1,old value\n");
+    s.select_all();
+    assert_eq!(s.selected_text().as_deref(), Some("old value"));
+    s.input_char('n');
+    assert_eq!(s.entry().unwrap().1, "n");
+    assert!(s.selected_text().is_none(), "typing collapses it");
+}
+
+/// Copy takes the selection; with none, it takes the whole value — the
+/// rule an address bar follows.
+#[test]
+fn copy_takes_the_selection_or_the_whole_value() {
+    let mut s = editing("a,b\n1,hello\n");
+    assert_eq!(s.entry_text().as_deref(), Some("hello"));
+    s.input_home();
+    s.input_select_right();
+    s.input_select_right();
+    assert_eq!(s.entry_text().as_deref(), Some("he"));
+}
+
+#[test]
+fn cutting_removes_the_selection_and_hands_it_back() {
+    let mut s = editing("a,b\n1,hello\n");
+    s.input_home();
+    s.input_select_right();
+    s.input_select_right();
+    assert_eq!(s.input_cut().as_deref(), Some("he"));
+    assert_eq!(s.entry().unwrap().1, "llo");
+    assert_eq!(s.entry_caret(), 0);
+}
+
+/// A paste lands at the caret, over whatever was selected.
+#[test]
+fn pasting_replaces_the_selection() {
+    let mut s = editing("a,b\n1,hello\n");
+    s.select_all();
+    s.input_text("goodbye");
+    assert_eq!(s.entry().unwrap().1, "goodbye");
+}
+
+/// Backspace with a selection deletes the selection, not one character.
+#[test]
+fn backspace_deletes_the_selection() {
+    let mut s = editing("a,b\n1,hello\n");
+    s.input_select_home();
+    s.input_backspace();
+    assert_eq!(s.entry().unwrap().1, "");
+}
+
+/// A plain move drops the selection; a shifted one extends it.
+#[test]
+fn moving_collapses_the_selection_and_shift_extends_it() {
+    let mut s = editing("a,b\n1,hello\n");
+    s.select_all();
+    s.input_left();
+    assert!(s.selected_text().is_none());
+    s.input_select_end();
+    assert_eq!(s.selected_text().as_deref(), Some("hello"));
+}

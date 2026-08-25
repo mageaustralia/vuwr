@@ -251,14 +251,45 @@ pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
         for event in events {
             match event {
+                // A paste arrives whole, not as keystrokes.
+                egui::Event::Paste(text) => app.session_mut().input_text(&text),
+                egui::Event::Copy => {
+                    if let Some(text) = app.session().entry_text() {
+                        ctx.copy_text(text);
+                    }
+                }
+                egui::Event::Cut => {
+                    let cut = app.session_mut().input_cut();
+                    match cut {
+                        Some(text) => ctx.copy_text(text),
+                        // Nothing selected: cut the whole value, which is
+                        // what an empty selection means for copy too.
+                        None => {
+                            if let Some(text) = app.session().entry_text() {
+                                ctx.copy_text(text);
+                            }
+                            app.session_mut().select_all();
+                            app.session_mut().input_cut();
+                        }
+                    }
+                }
                 egui::Event::Text(text) => {
                     for c in text.chars() {
                         app.session_mut().input_char(c);
                     }
                 }
                 egui::Event::Key {
-                    key, pressed: true, ..
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
                 } => match key {
+                    // Select all, the way every text field does.
+                    Key::A if modifiers.command => app.session_mut().select_all(),
+                    Key::ArrowLeft if modifiers.shift => app.session_mut().input_select_left(),
+                    Key::ArrowRight if modifiers.shift => app.session_mut().input_select_right(),
+                    Key::Home if modifiers.shift => app.session_mut().input_select_home(),
+                    Key::End if modifiers.shift => app.session_mut().input_select_end(),
                     Key::Enter => {
                         let effect = app.session_mut().input_submit();
                         app.apply_effect(effect, ctx);

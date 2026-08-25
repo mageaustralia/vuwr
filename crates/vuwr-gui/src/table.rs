@@ -401,9 +401,18 @@ fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) -> 
     let job = caret_text(session);
     let galley = ui.painter().layout_job(job);
     let y = rect.center().y - galley.size().y / 2.0;
-    ui.painter()
-        .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .galley(egui::pos2(rect.left() + PAD, y), galley, theme::text_body());
+    let clip = rect.intersect(ui.clip_rect());
+    ui.painter().with_clip_rect(clip).galley(
+        egui::pos2(rect.left() + PAD, y),
+        galley,
+        theme::text_body(),
+    );
+    draw_caret(
+        ui,
+        rect.left() + PAD + caret_offset(ui, session),
+        rect.top(),
+        rect.height(),
+    );
     response
 }
 
@@ -465,29 +474,57 @@ pub fn caret_text(session: &Session) -> egui::text::LayoutJob {
         return job;
     };
     let caret = session.entry_caret().min(buf.len());
-    let (before, after) = buf.split_at(caret);
-    let font = egui::FontId::monospace(13.0);
+    let font = egui::FontId::monospace(12.0);
+    let plain = TextFormat::simple(font.clone(), theme::text_body());
+    let selected = TextFormat {
+        font_id: font.clone(),
+        color: theme::accent_text(),
+        background: theme::accent_tint(),
+        ..Default::default()
+    };
 
-    job.append(
-        before,
-        0.0,
-        TextFormat::simple(font.clone(), theme::text_body()),
-    );
-    let mut chars = after.chars();
-    let under = chars.next();
-    let rest: String = chars.collect();
-    job.append(
-        &under.map(|c| c.to_string()).unwrap_or_else(|| " ".into()),
-        0.0,
-        TextFormat {
-            font_id: font.clone(),
-            color: theme::on_accent(),
-            background: theme::edit_ring(),
-            ..Default::default()
-        },
-    );
-    job.append(&rest, 0.0, TextFormat::simple(font, theme::text_body()));
+    // A block over the next character reads as "this letter is selected",
+    // which is what it means everywhere else. The caret is a rule between
+    // characters; a selection is the thing with a background.
+    match session.entry_selection() {
+        Some((a, b)) => {
+            job.append(&buf[..a], 0.0, plain.clone());
+            job.append(&buf[a..b], 0.0, selected);
+            job.append(&buf[b..], 0.0, plain);
+        }
+        None => {
+            job.append(&buf[..caret], 0.0, plain.clone());
+            job.append(&buf[caret..], 0.0, plain);
+        }
+    }
     job
+}
+
+/// Where the caret sits within a laid-out buffer, as an offset from the
+/// text's left edge — so it can be drawn as a rule rather than as a box
+/// over a character.
+pub fn caret_offset(ui: &egui::Ui, session: &Session) -> f32 {
+    let Some((_, buf)) = session.entry() else {
+        return 0.0;
+    };
+    let caret = session.entry_caret().min(buf.len());
+    ui.painter()
+        .layout_no_wrap(
+            buf[..caret].to_owned(),
+            egui::FontId::monospace(12.0),
+            egui::Color32::PLACEHOLDER,
+        )
+        .size()
+        .x
+}
+
+/// Draw the caret as a thin rule at `x`, the height of a line.
+pub fn draw_caret(ui: &egui::Ui, x: f32, top: f32, height: f32) {
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(egui::pos2(x, top + 2.0), egui::vec2(1.5, height - 4.0)),
+        0.0,
+        theme::accent_text(),
+    );
 }
 
 /// A small filled circle marking a repeated key. Painted for the same
@@ -876,6 +913,7 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                         ui.interact(row, ui.id().with(("edit", n)), egui::Sense::click());
                     let left = at.x;
                     ui.painter().galley(at, galley, theme::text_body());
+                    draw_caret(ui, left + caret_offset(ui, session), top, row_height);
                     place_caret(session, &response, ui, left);
                     continue;
                 }
