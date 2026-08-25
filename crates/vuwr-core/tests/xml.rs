@@ -321,3 +321,56 @@ fn whitespace_inside_a_tag_survives() {
         assert_eq!(out(&xml(src)), src, "{src}");
     }
 }
+
+// --- Finding the rows in a nested document ---
+//
+// A Google feed wraps its records: `<rss><channel><item>…`. Looking only
+// at the document element's children made a 2,277-item feed one row of
+// 2,277 columns all called "item".
+
+#[test]
+fn a_wrapped_feed_finds_its_items() {
+    let src = "<rss><channel>\
+        <item><id>1</id><title>One</title></item>\
+        <item><id>2</id><title>Two</title></item>\
+        <item><id>3</id><title>Three</title></item>\
+        </channel></rss>";
+    let d = xml(src);
+    let x = d.as_xml().unwrap();
+    assert_eq!(x.row_elements().len(), 3, "three items, not one channel");
+    assert_eq!(x.table_headers(), vec!["id", "title"]);
+    assert_eq!(x.table_cell(1, 1).as_deref(), Some("Two"));
+    assert!(d.xml_table_eligible());
+}
+
+#[test]
+fn deeper_wrapping_still_finds_the_rows() {
+    let src = "<a><b><c><row><v>1</v></row><row><v>2</v></row></c></b></a>";
+    let d = xml(src);
+    assert_eq!(d.as_xml().unwrap().row_elements().len(), 2);
+}
+
+/// The shallowest repeating level wins: `<rows><row><name>` is rows of
+/// `row`, not rows of `name`.
+#[test]
+fn the_shallowest_repeating_level_is_the_table() {
+    let d = xml("<rows><row><name>Alice</name><age>30</age></row></rows>");
+    let x = d.as_xml().unwrap();
+    assert_eq!(x.row_elements().len(), 1);
+    assert_eq!(x.table_headers(), vec!["name", "age"]);
+    assert_eq!(x.table_cell(0, 0).as_deref(), Some("Alice"));
+}
+
+/// Editing must reach the right node once the rows are nested.
+#[test]
+fn editing_a_cell_in_a_wrapped_feed_writes_the_right_element() {
+    let src = "<rss><channel><item><id>1</id></item><item><id>2</id></item></channel></rss>";
+    let mut d = xml(src);
+    d.set_cell(1, 0, "99").unwrap();
+    assert_eq!(
+        out(&d),
+        "<rss><channel><item><id>1</id></item><item><id>99</id></item></channel></rss>"
+    );
+    assert!(d.undo());
+    assert_eq!(out(&d), src);
+}

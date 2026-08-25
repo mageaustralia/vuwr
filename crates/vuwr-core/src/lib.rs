@@ -9,6 +9,7 @@
 mod command;
 mod csv;
 mod diagnostics;
+mod entities;
 pub mod json;
 pub mod node;
 mod ops;
@@ -24,6 +25,7 @@ mod xml;
 pub use command::Command;
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
 pub use diagnostics::{Diagnostic, Severity, scan_json};
+pub use entities::{decode, encode};
 pub use json::{JsonDoc, Layout};
 pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};
 pub use ops::EditOp;

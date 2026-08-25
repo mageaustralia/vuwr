@@ -319,6 +319,10 @@ fn caret_spans(app: &App) -> Vec<Span<'static>> {
     let Some((_, buf)) = app.entry() else {
         return Vec::new();
     };
+    // A terminal row is one line; a value containing newlines would break
+    // the layout, and such values go to the larger editor anyway.
+    let buf = buf.replace('\n', "⏎");
+    let buf = buf.as_str();
     let caret = app.entry_caret().min(buf.len());
     let (before, after) = buf.split_at(caret);
     let mut after_chars = after.chars();

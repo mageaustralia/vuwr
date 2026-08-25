@@ -379,3 +379,78 @@ fn multi_line_text_round_trips_through_the_editor() {
         "<r><d><![CDATA[one\ntwo\nthree]]></d></r>"
     );
 }
+
+// --- Escaped markup is decoded for editing ---
+//
+// A feed's description is escaped HTML. Reading `&lt;p&gt;` is unpleasant
+// and editing it is worse, so it is decoded for the editor and re-encoded
+// on the way back.
+
+#[test]
+fn escaped_markup_is_decoded_for_editing() {
+    let mut s = xml_session("<r><d>&lt;p&gt;Hello&lt;/p&gt;</d></r>");
+    s.grid.cursor = (0, 0);
+    assert_eq!(s.large_edit_text().as_deref(), Some("<p>Hello</p>"));
+}
+
+#[test]
+fn typing_markup_is_encoded_on_the_way_back() {
+    let mut s = xml_session("<r><d>&lt;p&gt;old&lt;/p&gt;</d></r>");
+    s.grid.cursor = (0, 0);
+    s.commit_large_edit("<p>new & improved</p>");
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "<r><d>&lt;p&gt;new &amp; improved&lt;/p&gt;</d></r>"
+    );
+}
+
+/// A CDATA section is already literal, so encoding it would double the
+/// escaping.
+#[test]
+fn cdata_content_is_not_double_encoded() {
+    let mut s = xml_session("<r><d><![CDATA[&lt;p&gt;old&lt;/p&gt;]]></d></r>");
+    s.grid.cursor = (0, 0);
+    let shown = s.large_edit_text().unwrap();
+    assert_eq!(shown, "<p>old</p>", "decoded for reading");
+    s.commit_large_edit(&shown);
+    assert_eq!(
+        String::from_utf8(s.doc.serialize()).unwrap(),
+        "<r><d><![CDATA[<p>old</p>]]></d></r>",
+        "a CDATA section holds it literally, without escaping"
+    );
+}
+
+/// A value nobody edits keeps its exact bytes: decoding is a display
+/// concern, not a rewrite.
+#[test]
+fn untouched_values_keep_their_original_escaping() {
+    let src = "<r><a>it&#039;s</a><b>&lt;x&gt;</b></r>";
+    let s = xml_session(src);
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), src);
+}
+
+/// The inline editor cannot show a paragraph, and filling the status bar
+/// with one is how it used to fail.
+#[test]
+fn a_long_value_refuses_the_inline_editor_and_says_why() {
+    let long = "line one\nline two\nline three";
+    let mut s = xml_session(&format!("<r><d>{long}</d></r>"));
+    s.grid.cursor = (0, 0);
+    assert!(s.value_is_multiline());
+
+    s.execute(Command::EditCell);
+    assert!(!s.is_entering_text(), "the inline editor must not open");
+    assert!(
+        s.status.contains("F2"),
+        "and it points at the one that can: {}",
+        s.status
+    );
+}
+
+#[test]
+fn a_short_value_still_edits_inline() {
+    let mut s = xml_session("<r><d>short</d></r>");
+    s.grid.cursor = (0, 0);
+    s.execute(Command::EditCell);
+    assert!(s.is_entering_text());
+}

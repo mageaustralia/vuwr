@@ -544,7 +544,17 @@ impl VuwrApp {
         ui.horizontal(|ui| {
             // An open prompt takes the line, as in the TUI.
             if let Some((sigil, buf)) = session.entry() {
-                ui.monospace(format!("{sigil}{buf}▏"));
+                // One line, whatever the value: a paragraph here grew the
+                // panel until it swallowed the window.
+                let single: String = buf.chars().take(120).filter(|c| *c != '\n').collect();
+                let ellipsis = if buf.chars().count() > 120 { "…" } else { "" };
+                ui.monospace(format!("{sigil}{single}{ellipsis}▏"));
+                ui.separator();
+                ui.label(
+                    egui::RichText::new("Enter to commit, Esc to cancel")
+                        .weak()
+                        .small(),
+                );
                 return;
             }
             ui.monospace(session.position_label());

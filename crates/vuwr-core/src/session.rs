@@ -456,6 +456,10 @@ impl Session {
                 };
                 if !editable {
                     self.status = "this view is not editable".into();
+                } else if self.value_is_multiline() {
+                    // A paragraph cannot be edited on one line, and the
+                    // inline editor would fill the status bar with it.
+                    self.status = "too long to edit inline — press F2".into();
                 } else if cmd == Command::ReplaceCell {
                     self.mode = Mode::Edit {
                         buf: String::new(),
@@ -661,6 +665,14 @@ impl Session {
         }
     }
 
+    /// True when the value under the cursor will not fit an inline edit.
+    pub fn value_is_multiline(&self) -> bool {
+        self.view != ViewMode::Text
+            && self
+                .large_edit_text()
+                .is_some_and(|t| t.contains('\n') || t.chars().count() > 200)
+    }
+
     /// The value under the cursor, for editing somewhere with room.
     ///
     /// A cell holding a paragraph of escaped HTML cannot be edited on one
@@ -675,7 +687,9 @@ impl Session {
                     return None;
                 }
                 let root = self.tree_root()?;
-                Some(node_to_edit_string(root.get_at(&row.path)?))
+                // Escaped markup is unreadable as written, so it is
+                // decoded for editing and re-encoded on the way back.
+                Some(crate::decode(&node_to_edit_string(root.get_at(&row.path)?)))
             }
             ViewMode::Table => {
                 let sheet = self.doc.sheet()?;
@@ -1002,7 +1016,16 @@ impl Session {
         let replacement = match &old {
             Some(Node::Element(_)) => {
                 path.push(crate::PathSeg::Text);
-                crate::Node::Text(value.to_string())
+                // A CDATA section is already literal, so encoding it would
+                // double the escaping; plain text needs it.
+                let holds_cdata = matches!(&old, Some(Node::Element(e))
+                    if e.children.iter().any(|c| matches!(c, Node::CData(_))));
+                let text = if holds_cdata {
+                    value.to_string()
+                } else {
+                    crate::encode(value)
+                };
+                crate::Node::Text(text)
             }
             // XML attributes and text are strings; JSON keeps its own
             // type where the new text still fits it.

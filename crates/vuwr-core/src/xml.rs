@@ -6,7 +6,7 @@
 //! (`<br></br>`).
 
 use crate::Error;
-use crate::node::{Attr, Element, Node, XmlDecl};
+use crate::node::{Attr, Element, Node, PathSeg, XmlDecl};
 
 /// A parsed XML document.
 #[derive(Debug, Clone)]
@@ -51,20 +51,63 @@ impl XmlDoc {
         &mut self.children[idx]
     }
 
-    /// The rows of table view: the element children of the document
-    /// element. Whitespace between elements parses as `Text` nodes, and
-    /// comments as `Comment`; neither is a row, so both are skipped —
-    /// otherwise a pretty-printed file's rows are all off by one.
+    /// The path from the root to the element whose children are the rows.
+    ///
+    /// Feeds wrap their records: `<rss><channel><item>…` puts the
+    /// repeating part two levels down. Looking only at the document
+    /// element's children made such a file one row of 2,277 columns all
+    /// called `item`. So descend through single-child wrappers and take
+    /// the level that actually repeats.
+    pub fn table_parent_path(&self) -> Option<Vec<PathSeg>> {
+        let Node::Element(root) = self.root() else {
+            return None;
+        };
+        let mut path = Vec::new();
+        let mut current = root;
+        // The deepest level seen that could be a table, in case nothing
+        // below it repeats: a one-record feed is still a table.
+        let mut fallback = None;
+
+        loop {
+            let kids = element_children(current);
+            let uniform = !kids.is_empty() && kids.iter().all(|k| k.tag == kids[0].tag);
+            // Something that repeats is the table, and the shallowest such
+            // level wins.
+            if uniform && kids.len() > 1 {
+                return Some(path);
+            }
+            // One uniform child that carries fields of its own is a table
+            // of one row — but keep looking deeper first, in case the real
+            // repetition is further down. The shallowest candidate is
+            // kept, so `<rows><row><name>…` gives rows of `row`, not of
+            // `name`.
+            if uniform
+                && fallback.is_none()
+                && (!element_children(kids[0]).is_empty() || !kids[0].attributes.is_empty())
+            {
+                fallback = Some(path.clone());
+            }
+            // Only a lone child is a wrapper; several different tags are
+            // the record itself, and there is nowhere further to go.
+            if kids.len() != 1 {
+                return fallback;
+            }
+            path.push(PathSeg::Index(0));
+            current = kids[0];
+        }
+    }
+
+    /// The rows of table view.
+    ///
+    /// Whitespace between elements parses as `Text` nodes, and comments as
+    /// `Comment`; neither is a row, so both are skipped — otherwise a
+    /// pretty-printed file's rows are all off by one.
     pub fn row_elements(&self) -> Vec<&Element> {
-        match self.root() {
-            Node::Element(root) => root
-                .children
-                .iter()
-                .filter_map(|c| match c {
-                    Node::Element(e) => Some(e),
-                    _ => None,
-                })
-                .collect(),
+        let Some(path) = self.table_parent_path() else {
+            return Vec::new();
+        };
+        match self.root().get_at(&path) {
+            Some(Node::Element(parent)) => element_children(parent),
             _ => Vec::new(),
         }
     }
@@ -91,11 +134,13 @@ impl XmlDoc {
     /// The path addressing the cell at `(row, col)`: an attribute of the
     /// row element, or the text of one of its child elements.
     pub fn cell_path(&self, row: usize, col: usize) -> Option<crate::node::NodePath> {
-        use crate::node::PathSeg;
+        let mut prefix = self.table_parent_path()?;
         let rows = self.row_elements();
         let elem = rows.get(row)?;
         if let Some((name, _, _, _)) = elem.attributes.get(col) {
-            return Some(vec![PathSeg::Index(row), PathSeg::Attr(name.clone())]);
+            prefix.push(PathSeg::Index(row));
+            prefix.push(PathSeg::Attr(name.clone()));
+            return Some(prefix);
         }
         let child_idx = col - elem.attributes.len();
         // The child must exist for the path to be writable.
@@ -103,11 +148,10 @@ impl XmlDoc {
             .iter()
             .filter(|c| matches!(c, Node::Element(_)))
             .nth(child_idx)?;
-        Some(vec![
-            PathSeg::Index(row),
-            PathSeg::Index(child_idx),
-            PathSeg::Text,
-        ])
+        prefix.push(PathSeg::Index(row));
+        prefix.push(PathSeg::Index(child_idx));
+        prefix.push(PathSeg::Text);
+        Some(prefix)
     }
 
     /// The value at `(row, col)` under [`XmlDoc::table_headers`].
@@ -181,6 +225,17 @@ impl XmlDoc {
         }
         out
     }
+}
+
+/// An element's element children, in order.
+fn element_children(e: &Element) -> Vec<&Element> {
+    e.children
+        .iter()
+        .filter_map(|c| match c {
+            Node::Element(child) => Some(child),
+            _ => None,
+        })
+        .collect()
 }
 
 /// True for a text node that is only whitespace — layout, not content.
