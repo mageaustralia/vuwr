@@ -84,6 +84,7 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
         Key::M if mods.shift => Command::ClearMarks,
         Key::M => Command::ToggleMark,
         Key::F => Command::FreezeColumns,
+        Key::Equals => Command::AutoSizeColumns,
         Key::S if mods.shift => Command::SortNatural,
         Key::S => Command::Sort,
         Key::Q => Command::Quit,
@@ -100,6 +101,8 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
 pub fn command_for_char(c: char) -> Option<Command> {
     match c {
         '&' => Some(Command::Filter),
+        '>' => Some(Command::WidenColumn),
+        '<' => Some(Command::NarrowColumn),
         _ => None,
     }
 }
@@ -152,6 +155,9 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::ClearMarks => "M",
         Command::PrintMarks => "Ctrl-E",
         Command::FreezeColumns => "f",
+        Command::WidenColumn => "drag / >",
+        Command::NarrowColumn => "drag / <",
+        Command::AutoSizeColumns => "=",
         Command::Open => "Ctrl-O",
         Command::Save => "Ctrl-S",
         Command::SaveAs => "Ctrl-Shift-S",

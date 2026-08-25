@@ -33,12 +33,15 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         .max(6.0);
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
     let search = session.search.clone();
+    let editing = session.is_editing_inline();
     let widths: Vec<usize> = (0..cols).map(|c| column_chars(session, c)).collect();
 
     // A header outside the scroll area, so it stays put while the rows
     // move under it.
+    let mut grip = Grip::None;
     if separate_header {
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(GUTTER);
             for (c, name) in headers.iter().take(cols).enumerate() {
                 // Indexed by column, not by the header's own length —
@@ -53,6 +56,10 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                     ui.visuals().strong_text_color(),
                     false,
                 );
+                match resize_grip(ui, c, widths[c], char_width, row_height) {
+                    Grip::None => {}
+                    other => grip = other,
+                }
             }
         });
         ui.separator();
@@ -63,14 +70,21 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     let visible = ((ui.available_height() / row_height) as usize).max(1);
     session.set_viewport_rows(visible);
 
+    // Filling the pane matters for more than looks: a shrunk-to-fit
+    // scroll area puts its scrollbars against the *content*, so on a wide
+    // window they sit somewhere in the middle of the screen — or, with
+    // content narrower than the pane, appear to be missing.
+    ui.style_mut().spacing.scroll.floating = false;
     egui::ScrollArea::both()
         .id_salt("sheet")
+        .auto_shrink([false; 2])
         .show_rows(ui, row_height, rows, |ui, range| {
             ui.vertical(|ui| {
                 for r in range {
                     let source = session.grid.source_row(r);
                     let marked = session.grid.marks.contains(&source);
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
                         ui.allocate_exact_size(
                             egui::vec2(GUTTER, row_height),
                             egui::Sense::hover(),
@@ -84,6 +98,18 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                             );
                         }
                         for (c, chars) in widths.iter().enumerate() {
+                            // Editing happens in the cell, drawn as a
+                            // field, so it is obvious which value you are
+                            // typing into.
+                            if editing && (r, c) == cursor {
+                                edit_field(
+                                    ui,
+                                    session,
+                                    *chars as f32 * char_width + GRIP,
+                                    row_height,
+                                );
+                                continue;
+                            }
                             let raw = session.table_cell(r, c).unwrap_or_default();
                             // Cut to what the column can show: a
                             // description is thousands of characters, and
@@ -100,7 +126,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                             let response = cell(
                                 ui,
                                 &text,
-                                *chars as f32 * char_width,
+                                *chars as f32 * char_width + GRIP,
                                 row_height,
                                 &font,
                                 colour,
@@ -118,6 +144,11 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 }
             });
         });
+    match grip {
+        Grip::None => {}
+        Grip::Width(col, chars) => session.set_column_width(col, chars),
+        Grip::AutoSize(col) => session.auto_size_column(col),
+    }
     edit
 }
 
@@ -131,7 +162,52 @@ fn column_chars(session: &Session, col: usize) -> usize {
         .get(col)
         .copied()
         .unwrap_or(12)
-        .clamp(3, 40)
+        .clamp(3, Session::MAX_COLUMN)
+}
+
+/// Width of the strip you grab to resize a column.
+const GRIP: f32 = 5.0;
+
+/// The draggable boundary on a column's right edge.
+///
+/// Returns the new width in characters when it moves. Dragging is the
+/// obvious gesture for this, but it is only ever a shortcut for
+/// `set_column_width`, which the `<`/`>` keys and the palette also reach —
+/// so a resize means the same thing however it was asked for.
+fn resize_grip(ui: &mut egui::Ui, col: usize, chars: usize, char_width: f32, height: f32) -> Grip {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(GRIP, height), egui::Sense::click_and_drag());
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(rect.center().x - 1.0, rect.top()),
+                egui::vec2(2.0, rect.height()),
+            ),
+            0.0,
+            ui.visuals().selection.bg_fill,
+        );
+    }
+    // Double-click on the boundary fits the column to its contents, the
+    // way a spreadsheet does.
+    if response.double_clicked() {
+        return Grip::AutoSize(col);
+    }
+    if response.dragged() {
+        let delta = response.drag_delta().x / char_width;
+        let wanted = (chars as f32 + delta).round().max(3.0) as usize;
+        if wanted != chars {
+            return Grip::Width(col, wanted);
+        }
+    }
+    Grip::None
+}
+
+/// What a drag on a column boundary asked for.
+enum Grip {
+    None,
+    Width(usize, usize),
+    AutoSize(usize),
 }
 
 /// One cell: fixed width, text left-aligned and clipped to it.
@@ -167,6 +243,30 @@ fn cell(
         .with_clip_rect(rect.intersect(ui.clip_rect()))
         .galley(egui::pos2(rect.left() + 3.0, y), galley, colour);
     response
+}
+
+/// The cell being typed into, drawn as an input field.
+///
+/// A plain highlight left it looking like any other selected cell, so it
+/// was not obvious the keyboard was going somewhere. This gives it a
+/// filled background and a focus ring, which is what a field looks like.
+fn edit_field(ui: &mut egui::Ui, session: &Session, width: f32, height: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let visuals = ui.visuals();
+    ui.painter()
+        .rect_filled(rect, 2.0, visuals.extreme_bg_color);
+    ui.painter().rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.5, visuals.selection.stroke.color),
+        egui::StrokeKind::Inside,
+    );
+    let job = caret_text(session);
+    let galley = ui.painter().layout_job(job);
+    let y = rect.center().y - galley.size().y / 2.0;
+    ui.painter()
+        .with_clip_rect(rect.intersect(ui.clip_rect()))
+        .galley(egui::pos2(rect.left() + 3.0, y), galley, Color32::GRAY);
 }
 
 /// Cut a value down to what a cell can show, marking that there is more.
@@ -343,82 +443,84 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
     let editing = session.is_editing_inline();
     let mut action = None;
 
-    egui::ScrollArea::both().show(ui, |ui| {
-        for (i, row) in session.tree_rows.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.add_space(row.depth as f32 * 14.0);
+    egui::ScrollArea::both()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            for (i, row) in session.tree_rows.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add_space(row.depth as f32 * 14.0);
 
-                // The disclosure triangle, and nothing where a leaf sits,
-                // so the columns still line up.
-                match row.kind {
-                    RowKind::Container { expanded } => {
-                        if disclosure(ui, expanded).clicked() {
-                            action = Some(TreeAction::Toggle(row.path.clone()));
+                    // The disclosure triangle, and nothing where a leaf sits,
+                    // so the columns still line up.
+                    match row.kind {
+                        RowKind::Container { expanded } => {
+                            if disclosure(ui, expanded).clicked() {
+                                action = Some(TreeAction::Toggle(row.path.clone()));
+                            }
+                        }
+                        RowKind::Scalar => {
+                            ui.add_space(DISCLOSURE);
                         }
                     }
-                    RowKind::Scalar => {
-                        ui.add_space(DISCLOSURE);
-                    }
-                }
 
-                if row.duplicate {
-                    duplicate_dot(ui).on_hover_text(
-                        "This key appears more than once. Most parsers keep only \
+                    if row.duplicate {
+                        duplicate_dot(ui).on_hover_text(
+                            "This key appears more than once. Most parsers keep only \
                              the last one, so the other value is silently discarded.",
-                    );
-                }
+                        );
+                    }
 
-                let key = RichText::new(&row.label).monospace().color(if dark {
-                    Color32::from_rgb(130, 190, 240)
-                } else {
-                    Color32::from_rgb(20, 90, 160)
-                });
-                let selected = i == cursor;
-                let response = ui.selectable_label(selected, key);
-                if response.clicked() {
-                    action = Some(TreeAction::Select(i));
-                }
-                // Double-clicking a key renames it; double-clicking the
-                // value edits the value. Each edits what you clicked.
-                if response.double_clicked() {
-                    action = Some(TreeAction::RenameKey(i));
-                }
-
-                ui.label(RichText::new(":").weak().monospace());
-
-                // The value being typed is drawn where the value is, not
-                // echoed at the bottom of the window.
-                if editing && selected {
-                    ui.label(caret_text(session));
-                    return;
-                }
-
-                let value = RichText::new(&row.summary)
-                    .monospace()
-                    .color(value_color(row.value, dark));
-                let value_response = ui.selectable_label(selected, value);
-                if value_response.clicked() {
-                    action = Some(TreeAction::Select(i));
-                }
-                if value_response.double_clicked() {
-                    action = Some(TreeAction::Edit(i));
-                }
-
-                // Right-click anywhere on the row opens the node menu.
-                for r in [&response, &value_response] {
-                    r.context_menu(|ui| {
-                        if let Some(chosen) = node_menu(ui, row.is_container()) {
-                            action = Some(TreeAction::Context {
-                                row: i,
-                                action: chosen,
-                            });
-                            ui.close();
-                        }
+                    let key = RichText::new(&row.label).monospace().color(if dark {
+                        Color32::from_rgb(130, 190, 240)
+                    } else {
+                        Color32::from_rgb(20, 90, 160)
                     });
-                }
-            });
-        }
-    });
+                    let selected = i == cursor;
+                    let response = ui.selectable_label(selected, key);
+                    if response.clicked() {
+                        action = Some(TreeAction::Select(i));
+                    }
+                    // Double-clicking a key renames it; double-clicking the
+                    // value edits the value. Each edits what you clicked.
+                    if response.double_clicked() {
+                        action = Some(TreeAction::RenameKey(i));
+                    }
+
+                    ui.label(RichText::new(":").weak().monospace());
+
+                    // The value being typed is drawn where the value is, not
+                    // echoed at the bottom of the window.
+                    if editing && selected {
+                        ui.label(caret_text(session));
+                        return;
+                    }
+
+                    let value = RichText::new(&row.summary)
+                        .monospace()
+                        .color(value_color(row.value, dark));
+                    let value_response = ui.selectable_label(selected, value);
+                    if value_response.clicked() {
+                        action = Some(TreeAction::Select(i));
+                    }
+                    if value_response.double_clicked() {
+                        action = Some(TreeAction::Edit(i));
+                    }
+
+                    // Right-click anywhere on the row opens the node menu.
+                    for r in [&response, &value_response] {
+                        r.context_menu(|ui| {
+                            if let Some(chosen) = node_menu(ui, row.is_container()) {
+                                action = Some(TreeAction::Context {
+                                    row: i,
+                                    action: chosen,
+                                });
+                                ui.close();
+                            }
+                        });
+                    }
+                });
+            }
+        });
 
     action
 }
@@ -498,11 +600,10 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
 
         ui.separator();
 
-        let content = egui::ScrollArea::both().id_salt("text-content").show_rows(
-            ui,
-            row_height,
-            lines,
-            |ui, range| {
+        let content = egui::ScrollArea::both()
+            .id_salt("text-content")
+            .auto_shrink([false; 2])
+            .show_rows(ui, row_height, lines, |ui, range| {
                 // Explicitly vertical: this sits inside a horizontal
                 // layout, and without it every line lands on one row.
                 ui.vertical(|ui| {
@@ -527,8 +628,7 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                         }
                     }
                 });
-            },
-        );
+            });
         // Feed the content's position back to the gutter. A frame behind,
         // which is imperceptible, and far simpler than linking them.
         session.text_scroll = content.state.offset.y;

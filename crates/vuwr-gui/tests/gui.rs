@@ -275,6 +275,7 @@ fn help_never_claims_a_binding_the_gui_does_not_have() {
         Key::Slash,
         Key::Colon,
         Key::Questionmark,
+        Key::Equals,
     ];
     let mods = [
         Modifiers::NONE,
@@ -294,7 +295,7 @@ fn help_never_claims_a_binding_the_gui_does_not_have() {
         }
     }
     // Punctuation with no Key variant arrives as text.
-    for c in ['&', '/', ':', '?'] {
+    for c in ['&', '/', ':', '?', '<', '>'] {
         if let Some(cmd) = vuwr_gui::command_for_char(c) {
             reachable.insert(cmd);
         }

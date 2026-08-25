@@ -188,6 +188,12 @@ pub struct Session {
     /// spreadsheet's formula bar does. A table column is far narrower
     /// than a description, and truncation hides most of the file.
     pub show_detail: bool,
+    /// Column widths the user chose, in characters.
+    ///
+    /// Kept apart from the measured ones so that re-measuring after an
+    /// edit does not undo a column somebody widened on purpose.
+    manual_widths: std::collections::BTreeMap<usize, usize>,
+
     /// Diagnostics, worked out once per change.
     ///
     /// Finding them means serialising the whole document — seven
@@ -242,6 +248,7 @@ impl Session {
             text_scroll: 0.0,
             show_detail: false,
             decoded_text: false,
+            manual_widths: std::collections::BTreeMap::new(),
             diagnostics: std::cell::RefCell::new(None),
             text_lines: Vec::new(),
             text_bytes: Vec::new(),
@@ -375,6 +382,46 @@ impl Session {
     /// True if Tab can cycle to another view mode.
     pub fn can_cycle_view(&self) -> bool {
         self.doc.is_json() || self.doc.is_xml()
+    }
+
+    /// Widest a column may be, in characters. Wide enough for a URL, and
+    /// short of a description, which belongs in the detail pane.
+    pub const MAX_COLUMN: usize = 200;
+
+    /// Set a column's width, in characters. Survives re-measuring.
+    pub fn set_column_width(&mut self, col: usize, chars: usize) {
+        self.manual_widths
+            .insert(col, chars.clamp(1, Self::MAX_COLUMN));
+        self.rebuild_table_widths();
+    }
+
+    /// Give a column back to the measurer.
+    pub fn auto_size_column(&mut self, col: usize) {
+        self.manual_widths.remove(&col);
+        self.rebuild_table_widths();
+    }
+
+    /// Give every column back to the measurer.
+    pub fn auto_size_all_columns(&mut self) {
+        self.manual_widths.clear();
+        self.rebuild_table_widths();
+    }
+
+    /// True when this column's width was chosen rather than measured.
+    pub fn column_is_manual(&self, col: usize) -> bool {
+        self.manual_widths.contains_key(&col)
+    }
+
+    /// Widen or narrow the cursor's column by `delta` characters.
+    pub fn resize_cursor_column(&mut self, delta: isize) {
+        if self.view != ViewMode::Table {
+            return;
+        }
+        let col = self.grid.cursor.1;
+        let current = self.widths.get(col).copied().unwrap_or(12);
+        let next = (current as isize + delta).clamp(1, Self::MAX_COLUMN as isize) as usize;
+        self.set_column_width(col, next);
+        self.status = format!("column {} is {next} wide", col + 1);
     }
 
     /// Rendered width of each column (table mode only).
@@ -593,6 +640,12 @@ impl Session {
                 Some(text) => return Effect::Output(text),
                 None => self.status = "no rows marked — press m to mark one".into(),
             },
+            Command::WidenColumn => self.resize_cursor_column(4),
+            Command::NarrowColumn => self.resize_cursor_column(-4),
+            Command::AutoSizeColumns => {
+                self.auto_size_all_columns();
+                self.status = "columns sized to their contents".into();
+            }
             Command::FreezeColumns => {
                 // Pin everything left of the cursor, or unpin if already
                 // pinned there — one key both ways.
@@ -1716,6 +1769,13 @@ impl Session {
                 }
             }
         }
+        // A width the user chose wins over the measured one, so an edit
+        // that re-measures does not undo a column they widened.
+        for (col, chars) in &self.manual_widths {
+            if let Some(w) = widths.get_mut(*col) {
+                *w = *chars;
+            }
+        }
         self.widths = widths;
         self.tree_keys = headers;
     }
@@ -1822,10 +1882,43 @@ fn node_to_edit_string(node: &Node) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::{FormatHint, PathSeg};
 
     fn session(src: &str) -> Session {
         Session::new(Document::parse(src.as_bytes(), FormatHint::Auto).unwrap())
+    }
+
+    /// A width somebody chose has to survive the re-measure that follows
+    /// an edit, or every keystroke undoes their resize.
+    #[test]
+    fn a_chosen_column_width_survives_editing() {
+        let mut s = session("a,b\n1,2\n");
+        s.set_column_width(0, 30);
+        assert_eq!(s.widths()[0], 30);
+        assert!(s.column_is_manual(0));
+
+        s.grid.cursor = (0, 0);
+        let _ = s.execute(Command::EditCell);
+        s.input_char('x');
+        let _ = s.input_submit();
+        assert_eq!(s.widths()[0], 30, "the resize was undone by the edit");
+
+        s.auto_size_column(0);
+        assert!(!s.column_is_manual(0));
+        assert!(s.widths()[0] < 30);
+    }
+
+    #[test]
+    fn resizing_the_cursor_column_is_bounded() {
+        let mut s = session("a,b\n1,2\n");
+        s.grid.cursor = (0, 1);
+        s.resize_cursor_column(-100);
+        assert!(s.widths()[1] >= 1);
+        s.resize_cursor_column(100_000);
+        assert_eq!(s.widths()[1], Session::MAX_COLUMN);
+        s.auto_size_all_columns();
+        assert!(!s.column_is_manual(1));
     }
 
     /// Summaries are now counts rather than key lists, which sidesteps

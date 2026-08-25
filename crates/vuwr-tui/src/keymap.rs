@@ -85,6 +85,9 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         (KeyCode::Char('M'), false) => Command::ClearMarks,
         (KeyCode::Char('e'), true) => Command::PrintMarks,
         (KeyCode::Char('f'), false) => Command::FreezeColumns,
+        (KeyCode::Char('>'), false) => Command::WidenColumn,
+        (KeyCode::Char('<'), false) => Command::NarrowColumn,
+        (KeyCode::Char('='), false) => Command::AutoSizeColumns,
         // Sorting: `s` cycles direction, capital variants pick a
         // comparison. csvlens uses Shift-Down; `s` is easier to reach.
         (KeyCode::Char('s'), false) => Command::Sort,
@@ -144,6 +147,9 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::ClearMarks => "M",
         Command::PrintMarks => "Ctrl-E",
         Command::FreezeColumns => "f",
+        Command::WidenColumn => ">",
+        Command::NarrowColumn => "<",
+        Command::AutoSizeColumns => "=",
         Command::EditCell => "i  Enter",
         Command::ReplaceCell => "c",
         Command::RenameKey => "R",

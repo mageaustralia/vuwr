@@ -54,6 +54,9 @@ pub enum Command {
     /// Print the marked rows to stdout and exit.
     PrintMarks,
     FreezeColumns,
+    WidenColumn,
+    NarrowColumn,
+    AutoSizeColumns,
 
     // --- Editing ---
     EditCell,
@@ -121,6 +124,9 @@ impl Command {
         Command::ClearMarks,
         Command::PrintMarks,
         Command::FreezeColumns,
+        Command::WidenColumn,
+        Command::NarrowColumn,
+        Command::AutoSizeColumns,
         Command::EditCell,
         Command::ReplaceCell,
         Command::RenameKey,
@@ -181,6 +187,9 @@ impl Command {
             Command::ClearMarks => "clear-marks",
             Command::PrintMarks => "print-marks",
             Command::FreezeColumns => "freeze-columns",
+            Command::WidenColumn => "widen-column",
+            Command::NarrowColumn => "narrow-column",
+            Command::AutoSizeColumns => "auto-size-columns",
             Command::EditCell => "edit-cell",
             Command::ReplaceCell => "replace-cell",
             Command::RenameKey => "rename-key",
@@ -242,6 +251,9 @@ impl Command {
             Command::ClearMarks => "clear all marks",
             Command::PrintMarks => "print marked rows to stdout and exit",
             Command::FreezeColumns => "pin columns left of the cursor",
+            Command::WidenColumn => "widen this column",
+            Command::NarrowColumn => "narrow this column",
+            Command::AutoSizeColumns => "size every column to its contents again",
             Command::EditCell => "edit the selected cell",
             Command::ReplaceCell => "replace the selected cell",
             Command::RenameKey => "rename the selected key",
@@ -304,6 +316,9 @@ impl Command {
             Command::ClearMarks => "unmark all",
             Command::PrintMarks => "print marked",
             Command::FreezeColumns => "freeze",
+            Command::WidenColumn => "wider",
+            Command::NarrowColumn => "narrower",
+            Command::AutoSizeColumns => "auto width",
             Command::EditCell => "edit",
             Command::ReplaceCell => "replace",
             Command::RenameKey => "rename",
@@ -376,7 +391,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 55, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 58, "update ALL when adding a command");
     }
 
     #[test]
