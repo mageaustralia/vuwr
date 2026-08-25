@@ -131,6 +131,104 @@ pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
     out
 }
 
+/// Values that disagree with the rest of their column.
+///
+/// A column of two thousand numbers and one `129,00` is telling you
+/// something: that row will sort wrong, and whatever wrote it had a
+/// different idea of the format. This *reports* those; it does not offer
+/// to fix them, because the fix is a guess about what somebody meant and
+/// rewriting data on a guess is what this tool exists not to do.
+///
+/// Only where a column is overwhelmingly one shape — nine in ten, with at
+/// least ten values to go on — so a genuinely mixed column says nothing.
+pub fn scan_columns(sheet: &dyn crate::Sheet) -> Vec<Diagnostic> {
+    let (rows, cols) = sheet.dims();
+    let first = usize::from(sheet.header_is_first_row());
+    let headers = sheet.headers();
+    let mut out = Vec::new();
+
+    for col in 0..cols {
+        let mut numeric = 0usize;
+        let mut odd: Vec<(usize, String)> = Vec::new();
+        for row in first..rows {
+            let Some(value) = sheet.cell(row, col) else {
+                continue;
+            };
+            let text = value.trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            if reads_as_number(&text) {
+                numeric += 1;
+            } else {
+                odd.push((row, text));
+            }
+        }
+        let total = numeric + odd.len();
+        if total < 10 || odd.is_empty() {
+            continue;
+        }
+        // Nine in ten, and no more than a handful disagreeing: past that
+        // it is a mixed column, which is a choice rather than a mistake.
+        if numeric * 10 < total * 9 || odd.len() > total / 10 {
+            continue;
+        }
+        let name = headers
+            .get(col)
+            .cloned()
+            .unwrap_or_else(|| format!("column {}", col + 1));
+        for (row, value) in odd.into_iter().take(20) {
+            out.push(Diagnostic {
+                severity: Severity::Warning,
+                message: format!(
+                    "{name} reads as a number in {numeric} of {total} rows, but row {} is {value:?} \
+                     — it will not sort as a number",
+                    row + 1
+                ),
+                offset: 0,
+                line: row + 1,
+                column: col + 1,
+            });
+        }
+    }
+    out
+}
+
+/// Whether a value reads as a number.
+///
+/// Digits, an optional minus, an optional decimal part, and commas only
+/// where they group digits in threes. That last rule is the point: with
+/// commas simply stripped, `129,00` becomes `12900` and reads as a
+/// number — which is exactly the row worth flagging, and exactly the row
+/// that would then be right-aligned as though it were fine.
+pub(crate) fn reads_as_number(text: &str) -> bool {
+    let head = text.split_whitespace().next().unwrap_or_default();
+    let head = head.strip_prefix('-').unwrap_or(head);
+    if head.is_empty() {
+        return false;
+    }
+    let (int, frac) = match head.split_once('.') {
+        Some((a, b)) => (a, Some(b)),
+        None => (head, None),
+    };
+    if let Some(frac) = frac
+        && (frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()))
+    {
+        return false;
+    }
+    let groups: Vec<&str> = int.split(',').collect();
+    if groups
+        .iter()
+        .any(|g| g.is_empty() || !g.chars().all(|c| c.is_ascii_digit()))
+    {
+        return false;
+    }
+    if groups.len() > 1 && (groups[0].len() > 3 || groups[1..].iter().any(|g| g.len() != 3)) {
+        return false;
+    }
+    true
+}
+
 /// Read the string starting at `at`, returning its contents and the offset
 /// just past the closing quote. Escapes are skipped, not decoded: only the
 /// identity of the key matters here.

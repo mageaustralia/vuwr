@@ -24,7 +24,7 @@ mod xml;
 
 pub use command::Command;
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
-pub use diagnostics::{Diagnostic, Severity, scan_json};
+pub use diagnostics::{Diagnostic, Severity, scan_columns, scan_json};
 pub use entities::{decode, encode};
 pub use json::{JsonDoc, Layout};
 pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};
@@ -444,10 +444,16 @@ impl Document {
     /// Problems that are legal but probably wrong — duplicate keys and
     /// the like. Empty for formats that have none.
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
-        match &self.kind {
+        let mut found = match &self.kind {
             Kind::Json(_) => diagnostics::scan_json(&self.serialize()),
             _ => Vec::new(),
+        };
+        // Whatever the format, a column that is numbers except for three
+        // rows is worth knowing about.
+        if let Some(sheet) = self.sheet() {
+            found.extend(diagnostics::scan_columns(sheet));
         }
+        found
     }
 
     /// Re-lay-out the document, undoably.

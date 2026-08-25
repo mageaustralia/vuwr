@@ -21,8 +21,11 @@ file meant a text editor plus `jq` or `xmllint`.
 - Search, filter, marks, frozen columns
 - Validates: `vuwr --check` replaces `jq empty` and `xmllint --noout`, and
   covers CSV too. It also reports what a parser lets through — a trailing
-  comma (which vuwr itself reads, so the file can be opened and fixed) and
-  duplicate JSON keys. `--strict` makes warnings fail too.
+  comma (which vuwr itself reads, so the file can be opened and fixed),
+  duplicate JSON keys, and a value that disagrees with its column — a
+  price column of numbers with one `129,00` in it. It reports those and
+  never rewrites them: the fix is a guess about what somebody meant.
+  `--strict` makes warnings fail too.
 - A **lint** button in the window, and `:lint` in the terminal. Asked for
   rather than run as you type: the scan re-reads the whole document, which
   is 150 ms on a 15 MB file — a hitch after every edit, paid whether or

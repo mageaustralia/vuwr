@@ -1241,3 +1241,55 @@ fn the_last_column_stays() {
     assert_eq!(s.table_dims().2, 1);
     assert!(s.status.contains("last column"), "{}", s.status);
 }
+
+// --- Outliers, reported and never rewritten ---
+
+/// A column of numbers with one `129,00` in it will sort wrong, and
+/// whatever wrote that row had a different idea of the format. Lint says
+/// so; nothing is changed.
+#[test]
+fn a_value_that_disagrees_with_its_column_is_reported() {
+    let mut rows = String::from("sku,price\n");
+    for i in 0..20 {
+        rows.push_str(&format!("SKU-{i},{}.00\n", 100 + i));
+    }
+    rows.push_str("SKU-99,\"129,00\"\n");
+    let before = rows.clone();
+
+    let mut s = csv_session(&rows);
+    s.execute(Command::ViewTable);
+    s.execute(Command::Lint);
+    let found = s.lint_results().expect("linted");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].message.contains("price reads as a number"));
+    assert!(found[0].message.contains("129,00"));
+    assert_eq!(found[0].line, 22, "the row it is on");
+
+    // Reporting is not rewriting.
+    assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), before);
+}
+
+/// A column that is genuinely mixed is a choice, not a mistake.
+#[test]
+fn a_mixed_column_says_nothing() {
+    let mut rows = String::from("sku,note\n");
+    for i in 0..20 {
+        rows.push_str(&format!(
+            "SKU-{i},{}\n",
+            if i % 2 == 0 { "12" } else { "n/a" }
+        ));
+    }
+    let mut s = csv_session(&rows);
+    s.execute(Command::ViewTable);
+    s.execute(Command::Lint);
+    assert_eq!(s.lint_results(), Some(&[][..]));
+}
+
+/// Too few rows to have an opinion about.
+#[test]
+fn a_short_column_says_nothing() {
+    let mut s = csv_session("sku,price\nA,1.00\nB,2.00\nC,\"3,00\"\n");
+    s.execute(Command::ViewTable);
+    s.execute(Command::Lint);
+    assert_eq!(s.lint_results(), Some(&[][..]));
+}
