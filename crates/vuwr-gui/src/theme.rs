@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use eframe::egui::{self, Color32, CornerRadius, Stroke};
 
 static DARK: AtomicBool = AtomicBool::new(false);
+static SCHEME: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Whether the dark ground is in use.
 pub fn is_dark() -> bool {
@@ -27,6 +28,46 @@ pub fn is_dark() -> bool {
 /// Choose the ground. The caller re-runs [`install`] afterwards.
 pub fn set_dark(on: bool) {
     DARK.store(on, Ordering::Relaxed);
+}
+
+/// The scheme the document's own text is coloured by.
+pub fn scheme() -> vuwr_core::Scheme {
+    let i = SCHEME.load(Ordering::Relaxed);
+    vuwr_core::Scheme::ALL
+        .get(i)
+        .copied()
+        .unwrap_or(vuwr_core::Scheme::Vuwr)
+}
+
+/// Choose the scheme. A scheme that wants a particular ground gets it,
+/// since Gruvbox's yellows are unreadable on white and Solarized light's
+/// are unreadable on black.
+pub fn set_scheme(chosen: vuwr_core::Scheme) {
+    let i = vuwr_core::Scheme::ALL
+        .iter()
+        .position(|s| *s == chosen)
+        .unwrap_or(0);
+    SCHEME.store(i, Ordering::Relaxed);
+    match chosen.ground() {
+        Some(vuwr_core::Ground::Dark) => set_dark(true),
+        Some(vuwr_core::Ground::Light) => set_dark(false),
+        None => {}
+    }
+}
+
+/// A colour from core's table, in egui's type.
+pub fn from_rgb(c: vuwr_core::Rgb) -> Color32 {
+    Color32::from_rgb(c.0, c.1, c.2)
+}
+
+/// The colour for one syntax token, under the chosen scheme.
+pub fn token(token: vuwr_core::Token) -> Color32 {
+    from_rgb(scheme().token(token, is_dark()))
+}
+
+/// The colour for a tree value of a given kind.
+pub fn value(kind: vuwr_core::ValueKind) -> Color32 {
+    from_rgb(scheme().value(kind, is_dark()))
 }
 
 const fn rgb(hex: u32) -> Color32 {

@@ -22,7 +22,9 @@ file meant a text editor plus `jq` or `xmllint`.
   **Columns** list for putting the ones you are not reading away
 - An **inspector** beside the table: the whole record read downwards, for
   when a row is twenty-three columns wide and the window shows five
-- Light and dark, under View → Appearance
+- Light and dark, under View → Appearance, and a few colour schemes for
+  the document's own text: Gruvbox, Solarized, Nord, Monokai, or ours.
+  `:scheme gruvbox-dark` in the terminal
 - Validates: `vuwr --check` replaces `jq empty` and `xmllint --noout`, and
   covers CSV too. It also reports what a parser lets through — a trailing
   comma (which vuwr itself reads, so the file can be opened and fixed),

@@ -331,7 +331,7 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             spans.push(Span::styled(
                 escape(&row.summary),
-                Style::default().fg(value_color(row.value)),
+                Style::default().fg(palette::value(row.value)),
             ));
         }
 
@@ -345,23 +345,6 @@ fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     frame.render_widget(Paragraph::new(lines), area);
-}
-
-/// Colour by value type, the way a JSON editor does: the shape of the data
-/// is visible without reading it.
-fn value_color(kind: vuwr_core::ValueKind) -> Color {
-    use vuwr_core::ValueKind as V;
-    match kind {
-        // A container's summary is a placeholder, not content: it says
-        // there is more inside, and should not compete with the values
-        // that are actually on screen.
-        V::Array | V::Object | V::Element => palette::placeholder(),
-        // Nothing to read: say so quietly.
-        V::Null | V::Comment => palette::faint(),
-        // Everything else is the file's own content, and content is what
-        // the eye should land on first.
-        V::Bool | V::Number | V::String | V::Text | V::Other => palette::text(),
-    }
 }
 
 /// The hint bar, nano-style: the keys worth knowing, spelled out along the
@@ -508,35 +491,22 @@ fn highlighted(line: &str, grammar: vuwr_core::Grammar) -> Vec<Span<'static>> {
         if span.start > at {
             out.push(Span::styled(
                 line[at..span.start].to_string(),
-                Style::default().fg(token_color(vuwr_core::Token::Plain)),
+                Style::default().fg(palette::token(vuwr_core::Token::Plain)),
             ));
         }
         out.push(Span::styled(
             line[span.start..span.end].to_string(),
-            Style::default().fg(token_color(span.token)),
+            Style::default().fg(palette::token(span.token)),
         ));
         at = span.end;
     }
     if at < line.len() {
         out.push(Span::styled(
             line[at..].to_string(),
-            Style::default().fg(token_color(vuwr_core::Token::Plain)),
+            Style::default().fg(palette::token(vuwr_core::Token::Plain)),
         ));
     }
     out
-}
-
-/// A token's colour, drawn from the same five the rest of the terminal
-/// uses: structure in the accent, content bright, punctuation receding.
-fn token_color(token: vuwr_core::Token) -> Color {
-    use vuwr_core::Token as T;
-    match token {
-        T::Key | T::Tag | T::Keyword => palette::accent(),
-        T::Comment => palette::faint(),
-        T::Escape => palette::warn(),
-        T::Punctuation => palette::dim(),
-        T::Str | T::Number | T::Plain => palette::text(),
-    }
 }
 
 /// The text being typed, split around the caret so the caret sits where

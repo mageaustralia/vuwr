@@ -204,6 +204,7 @@ impl App {
                 Ok(text) => self.session.paste(&text),
                 Err(e) => self.session.report(format!("paste failed: {e}")),
             },
+            Effect::SchemeChanged(scheme) => crate::palette::set_scheme(scheme),
             Effect::EditLarge => {
                 if let Some(text) = self.session.large_edit_text() {
                     let caret = text.len();

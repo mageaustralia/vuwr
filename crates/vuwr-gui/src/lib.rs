@@ -338,6 +338,10 @@ impl VuwrApp {
             // egui delivers the clipboard as an event rather than on
             // demand, so ask for it and take it next frame.
             Effect::Paste => self.want_paste = true,
+            Effect::SchemeChanged(scheme) => {
+                theme::set_scheme(scheme);
+                self.dark = theme::is_dark();
+            }
             Effect::EditLarge => {
                 self.large_edit = self.session.as_ref().and_then(|s| s.large_edit_text());
             }
@@ -750,6 +754,20 @@ impl VuwrApp {
                 for (label, dark) in [("Light", false), ("Dark", true)] {
                     if ui.selectable_label(self.dark == dark, label).clicked() {
                         self.dark = dark;
+                        // A ground chosen by hand outranks the one the
+                        // scheme asked for.
+                        theme::set_dark(dark);
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                ui.label(egui::RichText::new("Colours").weak());
+                for scheme in vuwr_core::Scheme::ALL {
+                    let on = theme::scheme() == *scheme;
+                    if ui.selectable_label(on, scheme.name()).clicked() {
+                        theme::set_scheme(*scheme);
+                        // A scheme that names a ground brings it with it.
+                        self.dark = theme::is_dark();
                         ui.close();
                     }
                 }

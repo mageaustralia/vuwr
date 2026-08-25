@@ -618,30 +618,8 @@ fn disclosure(ui: &mut egui::Ui, expanded: bool) -> egui::Response {
 }
 
 /// Colour by value type, so the shape of the data reads at a glance.
-pub fn value_color(kind: ValueKind, dark: bool) -> Color32 {
-    let dark = dark || theme::is_dark();
-    use ValueKind as V;
-    if dark {
-        match kind {
-            V::Null => Color32::from_rgb(140, 140, 150),
-            V::Bool => Color32::from_rgb(120, 170, 255),
-            V::Number => Color32::from_rgb(150, 210, 130),
-            V::String => Color32::from_rgb(230, 160, 120),
-            V::Array | V::Object | V::Element => Color32::from_rgb(200, 200, 210),
-            V::Comment => Color32::from_rgb(120, 120, 130),
-            V::Text | V::Other => Color32::from_rgb(210, 210, 215),
-        }
-    } else {
-        match kind {
-            V::Null => Color32::from_rgb(110, 110, 120),
-            V::Bool => Color32::from_rgb(30, 90, 200),
-            V::Number => Color32::from_rgb(30, 120, 40),
-            V::String => Color32::from_rgb(170, 70, 20),
-            V::Array | V::Object | V::Element => Color32::from_rgb(60, 60, 70),
-            V::Comment => Color32::from_rgb(130, 130, 140),
-            V::Text | V::Other => Color32::from_rgb(40, 40, 50),
-        }
-    }
+pub fn value_color(kind: ValueKind) -> Color32 {
+    theme::value(kind)
 }
 
 /// What the tree wants done, decided while drawing and applied after, so
@@ -696,7 +674,6 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
         ui.label("nothing to show in this view");
         return None;
     }
-    let dark = ui.visuals().dark_mode;
     let cursor = session.grid.cursor.0;
     let editing = session.is_editing_inline();
     let mut action = None;
@@ -772,7 +749,7 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
 
                     let value = RichText::new(&row.summary)
                         .monospace()
-                        .color(value_color(row.value, dark));
+                        .color(value_color(row.value));
                     let value_response =
                         ui.add(egui::Label::new(value).sense(egui::Sense::click()));
                     if value_response.clicked() {
@@ -846,7 +823,6 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
     let cursor_row = session.grid.cursor.0;
     let editing = session.is_editing_inline();
     let grammar = session.grammar();
-    let dark = ui.visuals().dark_mode;
     let mut edit = false;
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
 
@@ -934,9 +910,9 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 }
 
                 let line = session.table_cell(n, 0).unwrap_or_default();
-                let galley =
-                    ui.painter()
-                        .layout_job(coloured_line(&line, grammar, dark, font.clone()));
+                let galley = ui
+                    .painter()
+                    .layout_job(coloured_line(&line, grammar, font.clone()));
                 ui.painter().galley(
                     egui::pos2(row.left() + indent, top),
                     galley,
@@ -987,7 +963,6 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
 fn coloured_line(
     line: &str,
     grammar: vuwr_core::Grammar,
-    dark: bool,
     font: egui::FontId,
 ) -> egui::text::LayoutJob {
     use egui::text::{LayoutJob, TextFormat};
@@ -999,7 +974,7 @@ fn coloured_line(
         job.append(
             line,
             0.0,
-            TextFormat::simple(font, token_color(vuwr_core::Token::Plain, dark)),
+            TextFormat::simple(font, token_color(vuwr_core::Token::Plain)),
         );
         return job;
     }
@@ -1009,13 +984,13 @@ fn coloured_line(
             job.append(
                 &line[at..span.start],
                 0.0,
-                TextFormat::simple(font.clone(), token_color(vuwr_core::Token::Plain, dark)),
+                TextFormat::simple(font.clone(), token_color(vuwr_core::Token::Plain)),
             );
         }
         job.append(
             &line[span.start..span.end],
             0.0,
-            TextFormat::simple(font.clone(), token_color(span.token, dark)),
+            TextFormat::simple(font.clone(), token_color(span.token)),
         );
         at = span.end;
     }
@@ -1023,37 +998,12 @@ fn coloured_line(
         job.append(
             &line[at..],
             0.0,
-            TextFormat::simple(font, token_color(vuwr_core::Token::Plain, dark)),
+            TextFormat::simple(font, token_color(vuwr_core::Token::Plain)),
         );
     }
     job
 }
 
-fn token_color(token: vuwr_core::Token, dark: bool) -> Color32 {
-    use vuwr_core::Token as T;
-    if dark {
-        match token {
-            T::Key => Color32::from_rgb(130, 190, 240),
-            T::Str => Color32::from_rgb(230, 160, 120),
-            T::Number => Color32::from_rgb(150, 210, 130),
-            T::Keyword => Color32::from_rgb(190, 150, 240),
-            T::Tag => Color32::from_rgb(130, 190, 240),
-            T::Comment => Color32::from_rgb(120, 120, 130),
-            T::Escape => Color32::from_rgb(220, 200, 120),
-            T::Punctuation => Color32::from_rgb(150, 150, 160),
-            T::Plain => Color32::from_rgb(210, 210, 215),
-        }
-    } else {
-        match token {
-            T::Key => Color32::from_rgb(20, 90, 160),
-            T::Str => Color32::from_rgb(170, 70, 20),
-            T::Number => Color32::from_rgb(30, 120, 40),
-            T::Keyword => Color32::from_rgb(110, 50, 170),
-            T::Tag => Color32::from_rgb(20, 90, 160),
-            T::Comment => Color32::from_rgb(130, 130, 140),
-            T::Escape => Color32::from_rgb(150, 110, 10),
-            T::Punctuation => Color32::from_rgb(110, 110, 120),
-            T::Plain => Color32::from_rgb(40, 40, 50),
-        }
-    }
+fn token_color(token: vuwr_core::Token) -> Color32 {
+    theme::token(token)
 }

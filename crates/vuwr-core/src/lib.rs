@@ -13,6 +13,7 @@ mod entities;
 pub mod json;
 pub mod node;
 mod ops;
+mod scheme;
 mod search;
 mod session;
 mod sheet;
@@ -29,6 +30,7 @@ pub use entities::{decode, encode};
 pub use json::{JsonDoc, Layout};
 pub use node::{Array, Element, Map, Node, NodePath, PathSeg, XmlDecl};
 pub use ops::EditOp;
+pub use scheme::{Ground, Rgb, Scheme};
 pub use search::Search;
 pub use session::{
     Effect, Field, FieldKind, Inspector, Mode, NewNode, PromptKind, Session, SortSpec, ViewMode,

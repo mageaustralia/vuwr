@@ -1293,3 +1293,35 @@ fn a_short_column_says_nothing() {
     s.execute(Command::Lint);
     assert_eq!(s.lint_results(), Some(&[][..]));
 }
+
+/// `:scheme` with no name says what there is; with one, it takes.
+#[test]
+fn the_scheme_command_lists_and_chooses() {
+    let mut s = session(r#"{"a":1}"#);
+    s.execute(Command::OpenPalette);
+    for c in "scheme".chars() {
+        s.input_char(c);
+    }
+    s.input_submit();
+    assert!(s.status.contains("Gruvbox dark"), "{}", s.status);
+    assert_eq!(s.scheme(), vuwr_core::Scheme::Vuwr, "listing changes nothing");
+
+    s.execute(Command::OpenPalette);
+    for c in "scheme gruvbox-dark".chars() {
+        s.input_char(c);
+    }
+    let effect = s.input_submit();
+    assert_eq!(s.scheme(), vuwr_core::Scheme::GruvboxDark);
+    assert!(
+        matches!(effect, vuwr_core::Effect::SchemeChanged(_)),
+        "the frontend has to be told: {effect:?}"
+    );
+
+    s.execute(Command::OpenPalette);
+    for c in "scheme nope".chars() {
+        s.input_char(c);
+    }
+    s.input_submit();
+    assert!(s.status.contains("no scheme"), "{}", s.status);
+    assert_eq!(s.scheme(), vuwr_core::Scheme::GruvboxDark, "unchanged");
+}

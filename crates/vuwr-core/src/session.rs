@@ -104,6 +104,9 @@ pub enum Effect {
     /// Open the larger editor on [`Session::large_edit_text`]. Core has no
     /// window and no overlay, so the frontend puts it somewhere.
     EditLarge,
+    /// The colour scheme changed. Core keeps the choice; a frontend that
+    /// caches colours or installs a style has to hear about it.
+    SchemeChanged(crate::Scheme),
 }
 
 pub enum Mode {
@@ -165,6 +168,8 @@ pub struct Session {
     widths: Vec<usize>,
     /// The value the cursor sits inside, worked out once per cursor line.
     block: Option<(usize, Option<Block>)>,
+    /// The colour scheme the document's own text is drawn in.
+    scheme: crate::Scheme,
     /// Columns the user has put away, by their index in the document.
     ///
     /// Hiding is a view: the column is still there, still saved, still
@@ -266,6 +271,7 @@ impl Session {
             // other view already showed it decoded.
             decoded_text: true,
             block: None,
+            scheme: crate::Scheme::Vuwr,
             hidden_columns: std::collections::BTreeSet::new(),
             manual_widths: std::collections::BTreeMap::new(),
             lint: None,
@@ -1742,14 +1748,51 @@ impl Session {
                 self.commit_prompt(kind, buf);
                 Effect::None
             }
-            Mode::Command { buf } => match Command::from_name(&buf) {
-                Some(c) => self.execute(c),
-                None => {
-                    self.status = format!("unknown command :{}", buf.trim());
-                    Effect::None
+            Mode::Command { buf } => {
+                // `:scheme <name>` takes an argument, which no other
+                // command does — so it is read here rather than becoming
+                // a Command variant per scheme.
+                if let Some(rest) = buf.trim().strip_prefix("scheme") {
+                    return self.choose_scheme(rest.trim());
                 }
-            },
+                match Command::from_name(&buf) {
+                    Some(c) => self.execute(c),
+                    None => {
+                        self.status = format!("unknown command :{}", buf.trim());
+                        Effect::None
+                    }
+                }
+            }
         }
+    }
+
+    /// Pick a colour scheme by name, or say which there are.
+    ///
+    /// Core keeps the choice because both frontends colour the same
+    /// tokens from the same table; what each does with it is its own
+    /// business.
+    fn choose_scheme(&mut self, name: &str) -> Effect {
+        if name.is_empty() {
+            let names: Vec<&str> = crate::Scheme::ALL.iter().map(|s| s.name()).collect();
+            self.status = format!("schemes: {}", names.join(", "));
+            return Effect::None;
+        }
+        match crate::Scheme::from_name(name) {
+            Some(scheme) => {
+                self.scheme = scheme;
+                self.status = format!("{} colours", scheme.name());
+                Effect::SchemeChanged(scheme)
+            }
+            None => {
+                self.status = format!("no scheme called {name:?}");
+                Effect::None
+            }
+        }
+    }
+
+    /// The scheme in use, for a frontend drawing the document.
+    pub fn scheme(&self) -> crate::Scheme {
+        self.scheme
     }
 
     /// Commit an edit to the cell, source line or tree node under the

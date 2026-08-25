@@ -10,7 +10,61 @@
 //! The layout is identical either way: only the colours change, so nothing
 //! moves when a session is opened over a plain `TERM`.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use ratatui::style::Color;
+use vuwr_core::Scheme;
+
+static SCHEME: AtomicUsize = AtomicUsize::new(0);
+
+/// The scheme the document's own text is coloured by. The chrome keeps
+/// the terminal's own five colours: a status line in Gruvbox red would be
+/// a scheme deciding something it was not asked about.
+pub fn scheme() -> Scheme {
+    Scheme::ALL
+        .get(SCHEME.load(Ordering::Relaxed))
+        .copied()
+        .unwrap_or(Scheme::Vuwr)
+}
+
+pub fn set_scheme(chosen: Scheme) {
+    let i = Scheme::ALL.iter().position(|s| *s == chosen).unwrap_or(0);
+    SCHEME.store(i, Ordering::Relaxed);
+}
+
+/// A colour from core's table. Truecolor only: an indexed terminal cannot
+/// show a scheme's palette, so it keeps the five it can.
+fn from_rgb(c: vuwr_core::Rgb, fallback: Color) -> Color {
+    pick(Color::Rgb(c.0, c.1, c.2), fallback)
+}
+
+/// The colour for one syntax token under the chosen scheme.
+pub fn token(t: vuwr_core::Token) -> Color {
+    use vuwr_core::Token as T;
+    let fallback = match t {
+        T::Key | T::Tag | T::Keyword => accent(),
+        T::Comment => faint(),
+        T::Escape => warn(),
+        T::Punctuation => dim(),
+        T::Str | T::Number | T::Plain => text(),
+    };
+    // The terminal is dark far more often than not, and a scheme that
+    // names a ground is asking for that one.
+    let dark = !matches!(scheme().ground(), Some(vuwr_core::Ground::Light));
+    from_rgb(scheme().token(t, dark), fallback)
+}
+
+/// The colour for a tree value of a given kind.
+pub fn value(kind: vuwr_core::ValueKind) -> Color {
+    use vuwr_core::ValueKind as V;
+    let fallback = match kind {
+        V::Array | V::Object | V::Element => placeholder(),
+        V::Null | V::Comment => faint(),
+        _ => text(),
+    };
+    let dark = !matches!(scheme().ground(), Some(vuwr_core::Ground::Light));
+    from_rgb(scheme().value(kind, dark), fallback)
+}
 
 /// Whether the terminal was launched with truecolor support.
 ///
