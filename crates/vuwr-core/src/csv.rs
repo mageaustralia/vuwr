@@ -249,7 +249,7 @@ fn write_cell(out: &mut Vec<u8>, cell: &Cell, delimiter: u8) {
 /// Count candidate delimiters outside quotes in the first chunk of the file
 /// and pick the most frequent. Ties and "none found" both resolve to comma.
 fn sniff_delimiter(text: &str) -> u8 {
-    const CANDIDATES: [u8; 3] = [b',', b';', b'\t'];
+    const CANDIDATES: [u8; 3] = *b",;\t";
     let mut counts = [0usize; 3];
     let mut in_quotes = false;
     for &b in text.as_bytes().iter().take(8192) {

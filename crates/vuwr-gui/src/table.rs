@@ -765,10 +765,19 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                                     ui.visuals().selection.bg_fill.gamma_multiply(0.20),
                                 );
                             }
-                            if response.clicked() {
+                            // The rest of the row takes clicks too: a
+                            // label is only as wide as its text, so
+                            // clicking past the end of a short line hit
+                            // nothing and the cursor stayed put.
+                            let rest = ui.available_width().max(1.0);
+                            let (_, tail) = ui.allocate_exact_size(
+                                egui::vec2(rest, row_height),
+                                egui::Sense::click(),
+                            );
+                            if response.clicked() || tail.clicked() {
                                 session.grid.cursor = (n, 0);
                             }
-                            if response.double_clicked() {
+                            if response.double_clicked() || tail.double_clicked() {
                                 session.grid.cursor = (n, 0);
                                 edit = true;
                             }
