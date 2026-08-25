@@ -1413,11 +1413,59 @@ impl Session {
         Some(text)
     }
 
+    /// Select the word around a byte offset — what a double-click means
+    /// inside a field.
+    ///
+    /// A word is a run of letters, digits and the punctuation that holds
+    /// identifiers together, so `SKU-1001` and `g:price` come out whole
+    /// rather than in pieces. A click in whitespace takes the whitespace.
+    pub fn select_word_at(&mut self, byte: usize) {
+        let Mode::Edit { buf, caret, anchor } = &mut self.mode else {
+            return;
+        };
+        if buf.is_empty() {
+            return;
+        }
+        let at = byte.min(buf.len().saturating_sub(1));
+        let wordish = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':');
+        let here = buf[at..].chars().next().unwrap_or(' ');
+        let want_word = wordish(here);
+
+        let mut start = at;
+        for (i, c) in buf[..at].char_indices().rev() {
+            if wordish(c) != want_word {
+                break;
+            }
+            start = i;
+        }
+        let mut end = at;
+        for (i, c) in buf[at..].char_indices() {
+            if wordish(c) != want_word {
+                break;
+            }
+            end = at + i + c.len_utf8();
+        }
+        *anchor = start;
+        *caret = end;
+    }
+
     /// Select everything being edited.
     pub fn select_all(&mut self) {
         if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
             *anchor = 0;
             *caret = buf.len();
+        }
+    }
+
+    /// Move the caret to a byte offset, keeping the anchor — a drag
+    /// across text, or a shift-click.
+    pub fn extend_entry_selection(&mut self, byte: usize) {
+        if let Mode::Edit { buf, caret, .. } = &mut self.mode {
+            let mut at = byte.min(buf.len());
+            while at > 0 && !buf.is_char_boundary(at) {
+                at -= 1;
+            }
+            *caret = at;
         }
     }
 

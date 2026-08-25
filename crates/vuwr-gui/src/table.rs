@@ -435,7 +435,14 @@ pub fn place_caret(
     ui: &egui::Ui,
     text_left: f32,
 ) {
-    if !response.clicked() && !response.drag_started() {
+    // Three clicks takes the value, two takes a word, one places the
+    // caret — the same as any other field, so nobody has to be told.
+    if response.triple_clicked() {
+        session.select_all();
+        return;
+    }
+    let word = response.double_clicked();
+    if !response.clicked() && !response.drag_started() && !word && !response.dragged() {
         return;
     }
     let Some(pos) = response.interact_pointer_pos() else {
@@ -459,7 +466,15 @@ pub fn place_caret(
         .nth(column)
         .map(|(i, _)| i)
         .unwrap_or(buf.len());
-    session.set_entry_caret(byte);
+    if word {
+        session.select_word_at(byte);
+    } else if response.dragged() {
+        // Dragging from where the press landed extends rather than
+        // replaces: that is what dragging across text means.
+        session.extend_entry_selection(byte);
+    } else {
+        session.set_entry_caret(byte);
+    }
 }
 
 /// The text being typed, with a caret drawn where it actually is.

@@ -1154,3 +1154,28 @@ fn moving_collapses_the_selection_and_shift_extends_it() {
     s.input_select_end();
     assert_eq!(s.selected_text().as_deref(), Some("hello"));
 }
+
+/// Double-click takes a word, and an identifier is one word rather than
+/// three: `SKU-1001` and `g:price` hold together.
+#[test]
+fn selecting_a_word_keeps_an_identifier_whole() {
+    let mut s = editing("a,b\n1,SKU-1001 spare\n");
+    s.select_word_at(2);
+    assert_eq!(s.selected_text().as_deref(), Some("SKU-1001"));
+
+    s.select_word_at(9);
+    assert_eq!(s.selected_text().as_deref(), Some("spare"));
+
+    // A click in the space between words takes the space.
+    s.select_word_at(8);
+    assert_eq!(s.selected_text().as_deref(), Some(" "));
+}
+
+/// Dragging keeps the anchor where the press landed.
+#[test]
+fn extending_moves_the_caret_and_keeps_the_anchor() {
+    let mut s = editing("a,b\n1,hello\n");
+    s.set_entry_caret(1);
+    s.extend_entry_selection(4);
+    assert_eq!(s.selected_text().as_deref(), Some("ell"));
+}

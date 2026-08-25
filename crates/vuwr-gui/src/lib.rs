@@ -437,6 +437,34 @@ fn edge_bottom(ui: &egui::Ui) {
     );
 }
 
+/// A command's shortcut, spelled the way this platform spells it.
+///
+/// The keymap says `Ctrl-S`, which is right everywhere except a Mac,
+/// where it is the wrong key and the wrong symbol. Entries with no key —
+/// "menu", "toolbar" — get nothing rather than a label that is not a
+/// shortcut.
+fn shortcut_label(ctx: &egui::Context, cmd: Command) -> String {
+    let keys = input::keys_for(cmd);
+    if matches!(keys, "menu" | "toolbar") || keys.contains("double-click") {
+        return String::new();
+    }
+    // One binding in the menu: the list is a reminder, not a reference.
+    let first = keys.split(" / ").next().unwrap_or(keys);
+    if ctx.os() != egui::os::OperatingSystem::Mac {
+        return first.to_string();
+    }
+    // ⌘ is in every Mac font; ⇧ is not in all of them, and a missing
+    // glyph draws as an empty box — which is worse than the word.
+    // ⌘ is in every Mac font. ⇧ is not — SF Rounded draws it as an empty
+    // box — and a shortcut nobody can read is worse than a longer one, so
+    // that modifier stays a word.
+    // Mac order puts the modifier first: Shift ⌘S, not ⌘Shift S.
+    first
+        .replace("Ctrl-Shift-", "Shift ⌘")
+        .replace("Ctrl-", "⌘")
+        .replace("Shift-", "Shift ")
+}
+
 /// What the document is, for the right-hand end of the status line.
 fn format_label(session: &Session) -> String {
     if session.doc.is_json() {
@@ -598,19 +626,30 @@ impl eframe::App for VuwrApp {
 }
 
 impl VuwrApp {
+    /// A menu entry, with the key that does the same thing beside it.
+    ///
+    /// Taken from the keymap rather than written out here, so a binding
+    /// and the menu cannot disagree — the same rule the help window and
+    /// the hint bar follow.
+    fn menu_item(ui: &mut egui::Ui, label: &str, cmd: Command) -> bool {
+        let keys = shortcut_label(ui.ctx(), cmd);
+        ui.add(egui::Button::new(label).shortcut_text(keys))
+            .clicked()
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("Open…").clicked() {
+                if Self::menu_item(ui, "Open…", Command::Open) {
                     self.run(Command::Open, ctx);
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Save").clicked() {
+                if Self::menu_item(ui, "Save", Command::Save) {
                     self.run(Command::Save, ctx);
                     ui.close();
                 }
-                if ui.button("Save As…").clicked() {
+                if Self::menu_item(ui, "Save As…", Command::SaveAs) {
                     self.run(Command::SaveAs, ctx);
                     ui.close();
                 }
@@ -626,22 +665,22 @@ impl VuwrApp {
                         Command::ForceQuit => "Quit without saving",
                         other => other.description(),
                     };
-                    if ui.button(label).clicked() {
+                    if Self::menu_item(ui, label, *cmd) {
                         self.run(*cmd, ctx);
                         ui.close();
                     }
                 }
-                if ui.button("Quit").clicked() {
+                if Self::menu_item(ui, "Quit", Command::Quit) {
                     self.run(Command::Quit, ctx);
                     ui.close();
                 }
             });
             ui.menu_button("Edit", |ui| {
-                if ui.button("Undo").clicked() {
+                if Self::menu_item(ui, "Undo", Command::Undo) {
                     self.run(Command::Undo, ctx);
                     ui.close();
                 }
-                if ui.button("Redo").clicked() {
+                if Self::menu_item(ui, "Redo", Command::Redo) {
                     self.run(Command::Redo, ctx);
                     ui.close();
                 }
@@ -660,7 +699,11 @@ impl VuwrApp {
                         ViewMode::Tree => ("Tree", Command::ViewTree),
                         ViewMode::Text => ("Text", Command::ViewText),
                     };
-                    if ui.selectable_label(current == view, label).clicked() {
+                    let keys = shortcut_label(ui.ctx(), cmd);
+                    if ui
+                        .add(egui::Button::selectable(current == view, label).shortcut_text(keys))
+                        .clicked()
+                    {
                         self.run(cmd, ctx);
                         ui.close();
                     }
@@ -675,7 +718,7 @@ impl VuwrApp {
                 }
             });
             ui.menu_button("Help", |ui| {
-                if ui.button("Keys").clicked() {
+                if Self::menu_item(ui, "Keys", Command::Help) {
                     self.run(Command::Help, ctx);
                     ui.close();
                 }
