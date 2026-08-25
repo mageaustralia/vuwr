@@ -503,6 +503,9 @@ fn duplicate_dot(ui: &mut egui::Ui) -> egui::Response {
 /// Width of the disclosure control, so leaves line up with containers.
 const DISCLOSURE: f32 = 14.0;
 
+/// Height of a tree row.
+const TREE_ROW: f32 = 26.0;
+
 /// The open/closed triangle.
 ///
 /// Painted rather than typed: egui's bundled fonts have no triangle glyph,
@@ -629,6 +632,26 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
         .show(ui, |ui| {
             for (i, row) in session.tree_rows.iter().enumerate() {
                 ui.horizontal(|ui| {
+                    let selected = i == cursor;
+                    // The row carries the selection, so the key and the
+                    // value can be plain text. As pills they read as two
+                    // controls sitting on a row rather than as a value
+                    // with a name.
+                    let strip = egui::Rect::from_min_size(
+                        ui.cursor().min,
+                        egui::vec2(ui.available_width(), TREE_ROW),
+                    );
+                    if selected {
+                        ui.painter().rect_filled(strip, 0.0, theme::row_selected());
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                strip.min,
+                                egui::vec2(theme::ROW_MARKER, TREE_ROW),
+                            ),
+                            0.0,
+                            theme::accent(),
+                        );
+                    }
                     ui.add_space(row.depth as f32 * 14.0);
 
                     // The disclosure triangle, and nothing where a leaf sits,
@@ -651,13 +674,10 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
                         );
                     }
 
-                    let key = RichText::new(&row.label).monospace().color(if dark {
-                        Color32::from_rgb(130, 190, 240)
-                    } else {
-                        Color32::from_rgb(20, 90, 160)
-                    });
-                    let selected = i == cursor;
-                    let response = ui.selectable_label(selected, key);
+                    let key = RichText::new(&row.label)
+                        .monospace()
+                        .color(theme::accent_text());
+                    let response = ui.add(egui::Label::new(key).sense(egui::Sense::click()));
                     if response.clicked() {
                         action = Some(TreeAction::Select(i));
                     }
@@ -667,7 +687,7 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
                         action = Some(TreeAction::RenameKey(i));
                     }
 
-                    ui.label(RichText::new(":").weak().monospace());
+                    ui.label(RichText::new(":").monospace().color(theme::text_disabled()));
 
                     // The value being typed is drawn where the value is, not
                     // echoed at the bottom of the window.
@@ -679,7 +699,8 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
                     let value = RichText::new(&row.summary)
                         .monospace()
                         .color(value_color(row.value, dark));
-                    let value_response = ui.selectable_label(selected, value);
+                    let value_response =
+                        ui.add(egui::Label::new(value).sense(egui::Sense::click()));
                     if value_response.clicked() {
                         action = Some(TreeAction::Select(i));
                     }
@@ -761,9 +782,23 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
     // Wide enough for the largest line number, so the gutter never
     // resizes as you scroll.
     let digits = lines.to_string().len().max(2) as f32;
-    let gutter_width = digits * 9.0 + 6.0;
+    let gutter_width = (digits * 8.0 + 24.0).max(56.0);
 
     ui.horizontal_top(|ui| {
+        // The gutter is its own surface, as the column headers are: a
+        // column of numbers on the same ground as the file reads as part
+        // of it.
+        let gutter_rect = egui::Rect::from_min_size(
+            ui.cursor().min,
+            egui::vec2(gutter_width, ui.available_height()),
+        );
+        ui.painter()
+            .rect_filled(gutter_rect, 0.0, theme::surface_header());
+        ui.painter().vline(
+            gutter_rect.right() - 0.5,
+            gutter_rect.y_range(),
+            egui::Stroke::new(1.0_f32, theme::border()),
+        );
         let gutter = egui::ScrollArea::vertical()
             .id_salt("text-gutter")
             .vertical_scroll_offset(session.text_scroll)
@@ -774,17 +809,27 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     ui.set_width(gutter_width);
                     for n in range {
+                        // The line you are on names itself in the accent,
+                        // so the eye can find its way back after reading
+                        // across.
+                        let colour = if n == cursor_row {
+                            theme::accent_text()
+                        } else {
+                            theme::text_disabled()
+                        };
+                        // Right-aligned by padding the number rather than
+                        // by a layout: a nested layout per line takes the
+                        // whole column's height, and only the first number
+                        // was drawn.
                         ui.label(
-                            RichText::new(format!("{:>1$}", n + 1, lines.to_string().len().max(2)))
-                                .monospace()
-                                .weak(),
+                            RichText::new(format!("{:>1$}  ", n + 1, digits as usize))
+                                .text_style(theme::micro())
+                                .color(colour),
                         );
                     }
                 });
             });
         let _ = gutter;
-
-        ui.separator();
 
         let content = egui::ScrollArea::both()
             .id_salt("text-content")

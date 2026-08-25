@@ -11,6 +11,9 @@ fn doc(src: &str) -> Document {
 
 fn ctx() -> egui::Context {
     let ctx = egui::Context::default();
+    // The views ask for named text styles, so the theme has to be in
+    // place before anything is drawn — as it is in the app.
+    vuwr_gui::install_theme(&ctx);
     // One warm-up pass so fonts and style exist before anything is drawn.
     let _ = ctx.run(egui::RawInput::default(), |_| {});
     ctx

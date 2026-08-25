@@ -196,7 +196,10 @@ pub fn install(ctx: &egui::Context) {
 
     let sans = egui::FontFamily::Proportional;
     let mono = egui::FontFamily::Monospace;
-    s.text_styles = [
+    let (sans2, mono2) = (sans.clone(), mono.clone());
+    // Inserted rather than assigned: replacing the map drops egui's own
+    // Heading and Small, and anything still asking for one panics.
+    let styles = [
         (heading(), egui::FontId::new(13.5, sans.clone())),
         (egui::TextStyle::Body, egui::FontId::new(12.5, sans.clone())),
         (egui::TextStyle::Button, egui::FontId::new(12.5, sans)),
@@ -206,8 +209,15 @@ pub fn install(ctx: &egui::Context) {
         ),
         (meta(), egui::FontId::new(11.5, mono.clone())),
         (micro(), egui::FontId::new(11.0, mono)),
-    ]
-    .into();
+    ];
+    for (name, font) in styles {
+        s.text_styles.insert(name, font);
+    }
+    // Our scale has one heading; egui's own is twice the size it wants.
+    s.text_styles
+        .insert(egui::TextStyle::Heading, egui::FontId::new(15.0, sans2));
+    s.text_styles
+        .insert(egui::TextStyle::Small, egui::FontId::new(11.0, mono2));
 
     // Everything is a multiple of the 4px grid.
     s.spacing.item_spacing = egui::vec2(4.0, 4.0);

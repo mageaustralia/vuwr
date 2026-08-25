@@ -26,6 +26,15 @@ pub fn install_fonts(ctx: &egui::Context) -> Vec<String> {
     fonts::install(ctx)
 }
 
+/// Install the palette, type scale and spacing.
+///
+/// Anything drawing a view has to call this first: the named text styles
+/// it defines are what the views ask for, and egui panics on a style it
+/// does not know rather than falling back.
+pub fn install_theme(ctx: &egui::Context) {
+    theme::install(ctx);
+}
+
 /// Commands the GUI offers only through the menu bar. Help says "menu" for
 /// these, and the File menu builds from the same list, so the two cannot
 /// disagree.
