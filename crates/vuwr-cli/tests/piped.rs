@@ -119,8 +119,13 @@ fn run_program(program: &str, args: &[&str], input: &str, keys: &str) -> String 
     // either way stdin is not a terminal, which is the condition under
     // test, and this way the child sees the whole document and its end
     // without depending on when the parent gets around to writing.
+    // Unique per call, not per process: the tests share a binary and run
+    // in parallel, so a name built from the process id alone had them
+    // overwriting each other's document.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut document = std::env::temp_dir();
-    document.push(format!("vuwr-piped-{}.csv", std::process::id()));
+    document.push(format!("vuwr-piped-{}-{n}.csv", std::process::id()));
     std::fs::write(&document, input).expect("write document");
     let file = std::fs::File::open(&document).expect("open document");
 
