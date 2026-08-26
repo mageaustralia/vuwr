@@ -350,3 +350,51 @@ fn a_flat_document_opens_flat() {
     let s = Session::new(Document::parse(br#"{"a":1,"b":2}"#, FormatHint::Json).unwrap());
     assert_eq!(s.tree_rows.len(), 2);
 }
+
+/// A description stays where it is when the cursor passes over it.
+///
+/// A CDATA section keeps its own newlines, so its later lines sit at
+/// column zero however deeply the element is nested. They are drawn under
+/// the tag that owns them — but that was done only for the block under
+/// the cursor, so the text slid sideways as the cursor moved.
+#[test]
+fn the_source_view_indents_the_same_lines_wherever_the_cursor_is() {
+    let xml = b"<rss>\n<channel>\n  <item>\n    <description><![CDATA[<p>One</p>\n\
+                <ul>\n<li>Two</li>\n</ul>]]></description>\n    <sku>A1</sku>\n\
+                  </item>\n</channel>\n</rss>\n";
+    let mut s = Session::new(Document::parse(xml, FormatHint::Xml).unwrap());
+    s.execute(Command::ViewText);
+
+    // The value's own lines, and nothing else.
+    let shifted: Vec<usize> = (0..s.table_dims().1)
+        .filter(|n| s.line_indent(*n) > 0)
+        .collect();
+    assert_eq!(shifted, [4, 5, 6], "wrong lines shifted");
+    assert!(
+        (4..=6).all(|n| s.line_indent(n) == 4),
+        "not aligned under the tag that owns them"
+    );
+
+    // And it does not depend on where the cursor is: this is the bug.
+    let before: Vec<usize> = (0..s.table_dims().1).map(|n| s.line_indent(n)).collect();
+    for line in 0..s.table_dims().1 {
+        s.grid.cursor = (line, 0);
+        let now: Vec<usize> = (0..s.table_dims().1).map(|n| s.line_indent(n)).collect();
+        assert_eq!(
+            now, before,
+            "the text moved when the cursor reached line {line}"
+        );
+    }
+}
+
+/// Lines that carry their own indentation keep it.
+#[test]
+fn a_pretty_printed_file_is_left_alone() {
+    let xml = b"<r>\n  <a>\n    <b>x</b>\n  </a>\n</r>\n";
+    let mut s = Session::new(Document::parse(xml, FormatHint::Xml).unwrap());
+    s.execute(Command::ViewText);
+    assert!(
+        (0..s.table_dims().1).all(|n| s.line_indent(n) == 0),
+        "shifted a file that was already laid out"
+    );
+}

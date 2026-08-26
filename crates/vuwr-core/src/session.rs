@@ -267,6 +267,15 @@ pub struct Session {
     pub decoded_text: bool,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
+    /// How far each line is displayed in from the left.
+    ///
+    /// A CDATA section keeps its own newlines, so the later lines of a
+    /// description start at column zero however deeply the element is
+    /// nested. Showing them under the tag that owns them is the point —
+    /// but it used to be done only for the block under the cursor, so the
+    /// text moved sideways as the cursor passed over it. Worked out once,
+    /// for every line, and always applied.
+    text_indents: Vec<usize>,
     /// The longest line, in characters.
     ///
     /// Worked out once here rather than by the frontend on every frame:
@@ -323,6 +332,7 @@ impl Session {
             manual_widths: std::collections::BTreeMap::new(),
             lint: None,
             text_lines: Vec::new(),
+            text_indents: Vec::new(),
             text_widest: 0,
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
@@ -1415,22 +1425,6 @@ impl Session {
     pub fn value_block(&mut self) -> Option<(usize, usize)> {
         let b = self.block_span()?;
         Some((b.first, b.last))
-    }
-
-    /// How far the block under the cursor is indented, in characters.
-    ///
-    /// A CDATA section keeps its own newlines, so its later lines start
-    /// at column zero however deeply the element itself is nested. The
-    /// frontends draw those lines shifted across to sit under the tag
-    /// they belong to — as a rendering offset only, since the file's own
-    /// bytes are what the text view is for.
-    pub fn block_indent(&mut self) -> usize {
-        let Some(b) = self.block_span() else {
-            return 0;
-        };
-        self.text_lines
-            .get(b.first)
-            .map_or(0, |l| l.len() - l.trim_start_matches([' ', '\t']).len())
     }
 
     /// The block under the cursor, as lines and as bytes.
@@ -3026,6 +3020,81 @@ impl Session {
             .map(|l| l.chars().count())
             .max()
             .unwrap_or(0);
+        self.rebuild_line_indents();
+    }
+
+    /// Work out every line's display indent, block by block.
+    ///
+    /// Each block is found once and then skipped over, so this is one
+    /// pass over the source rather than one scan per line.
+    fn rebuild_line_indents(&mut self) {
+        let mut indents = vec![0usize; self.text_lines.len()];
+        if !self.doc.is_xml() {
+            self.text_indents = indents;
+            return;
+        }
+        // One pass over the bytes, not one search per line. Asking the
+        // block machinery for every line was quadratic: on a feed of
+        // seventy thousand lines, switching to the source view took four
+        // and a half minutes.
+        //
+        // A line needs shifting when it *starts* inside a value — inside
+        // a CDATA section, or between a start tag and the next `<`. Its
+        // own indentation is then whatever the value happens to contain,
+        // which is usually nothing at all.
+        let bytes = std::mem::take(&mut self.text_bytes);
+        let leading = |line: usize, lines: &[String]| -> usize {
+            lines
+                .get(line)
+                .map_or(0, |l| l.len() - l.trim_start_matches([' ', '\t']).len())
+        };
+        let (mut line, mut i) = (0usize, 0usize);
+        let (mut in_cdata, mut in_text, mut starting) = (false, false, false);
+        let mut owner = 0usize;
+        while i < bytes.len() {
+            if in_cdata {
+                if bytes[i..].starts_with(b"]]>") {
+                    in_cdata = false;
+                    i += 3;
+                    continue;
+                }
+            } else if bytes[i..].starts_with(b"<![CDATA[") {
+                in_cdata = true;
+                owner = leading(line, &self.text_lines);
+                i += 9;
+                continue;
+            } else if bytes[i] == b'<' {
+                in_text = false;
+                // A start tag opens a value; an end tag closes one, and
+                // what follows it is the whitespace between elements —
+                // which is the file's own indentation, not a value's.
+                starting = bytes.get(i + 1) != Some(&b'/');
+            } else if bytes[i] == b'>' {
+                in_text = starting && bytes.get(i.wrapping_sub(1)) != Some(&b'/');
+                owner = leading(line, &self.text_lines);
+            }
+            if bytes[i] == b'\n' {
+                line += 1;
+                // Only where the line has no indentation of its own. A
+                // pretty-printed file puts `\n  ` between its tags, and
+                // that whitespace *is* the indentation; the lines worth
+                // shifting are the ones a value left at column zero.
+                if (in_cdata || in_text)
+                    && line < indents.len()
+                    && leading(line, &self.text_lines) == 0
+                {
+                    indents[line] = owner;
+                }
+            }
+            i += 1;
+        }
+        self.text_bytes = bytes;
+        self.text_indents = indents;
+    }
+
+    /// How far in one line of the source is drawn.
+    pub fn line_indent(&self, line: usize) -> usize {
+        self.text_indents.get(line).copied().unwrap_or(0)
     }
 
     /// How many characters the longest line holds, for a frontend sizing

@@ -93,6 +93,15 @@ fn no_view_draws_the_whole_document() {
         if view == ViewMode::Tree {
             s.execute(Command::ExpandAll);
         }
+        // Switching in is part of the cost: working out which lines the
+        // source view has to shift was once quadratic, and four minutes.
+        let switched = std::time::Instant::now();
+        let _ = s.table_dims();
+        assert!(
+            switched.elapsed() < std::time::Duration::from_millis(250),
+            "{view:?} took {:?} just to be ready",
+            switched.elapsed()
+        );
         let worst = frame_time(&mut s);
         assert!(
             worst < std::time::Duration::from_millis(250),

@@ -1048,7 +1048,6 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
     // The value the cursor sits inside, so a description reads as the one
     // thing it is rather than as twenty unrelated lines.
     let block = session.value_block();
-    let block_indent = session.block_indent();
     let (_, lines, _) = session.table_dims();
     let cursor_row = session.grid.cursor.0;
     let editing = session.is_editing_inline();
@@ -1136,11 +1135,11 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 // lines start at column zero however deep the element is.
                 // They are drawn shifted under the tag they belong to — a
                 // rendering offset only; the file's bytes are untouched.
-                let indent = if inside && Some(n) != block.map(|(a, _)| a) {
-                    block_indent as f32 * char_px(ui, &font)
-                } else {
-                    0.0
-                };
+                //
+                // For every line, not only the one the cursor is in. It
+                // used to depend on the cursor, so a description slid
+                // sideways as the cursor passed over it.
+                let indent = session.line_indent(n) as f32 * char_px(ui, &font);
 
                 if editing && n == cursor_row {
                     let galley = ui.painter().layout_job(caret_text(session));
