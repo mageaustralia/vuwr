@@ -1737,6 +1737,63 @@ impl Session {
         })
     }
 
+    /// The path of the record the tree cursor is inside.
+    ///
+    /// A leaf's record is its parent; a container is its own.
+    fn tree_record_path(&self) -> Option<Vec<crate::PathSeg>> {
+        let here = self.tree_rows.get(self.grid.cursor.0)?;
+        if here.is_container() {
+            return Some(here.path.clone());
+        }
+        let mut path = here.path.clone();
+        path.pop()?;
+        Some(path)
+    }
+
+    /// Put the cursor on the record's `index`-th field.
+    ///
+    /// So that clicking a field in the panel acts on *that* field. The
+    /// panel shows the record wherever in it the cursor happens to be, so
+    /// without this a double-click edited whatever row the cursor was
+    /// left on — `g:id` when you had clicked `g:price`.
+    pub fn focus_record_field(&mut self, index: usize) {
+        match self.view {
+            ViewMode::Table => {
+                if let Some(&column) = self.visible_columns().get(index) {
+                    self.grid.cursor.1 = column;
+                }
+            }
+            ViewMode::Tree => self.focus_tree_field(index),
+            ViewMode::Text => {}
+        }
+    }
+
+    fn focus_tree_field(&mut self, index: usize) {
+        let Some(path) = self.tree_record_path() else {
+            return;
+        };
+        let Some(root) = self.tree_root() else {
+            return;
+        };
+        let Some(node) = crate::tree::at(&root, &path) else {
+            return;
+        };
+        let Some(step) = crate::tree::child_steps(node).into_iter().nth(index) else {
+            return;
+        };
+        // The record has to be open for its field to be a row at all.
+        for depth in 0..=path.len() {
+            self.expansion.open(&path[..depth]);
+        }
+        self.rebuild_tree();
+        let mut child = path;
+        child.push(step);
+        if let Some(row) = self.tree_rows.iter().position(|r| r.path == child) {
+            let (rows, cols) = self.grid_dims();
+            self.grid.move_to(row, 0, rows, cols);
+        }
+    }
+
     /// Whether the panel has anything to show here.
     ///
     /// The table always does — a row is a record. The tree does wherever
@@ -1758,15 +1815,7 @@ impl Session {
     /// item that holds it, and standing on the item itself shows the same
     /// thing — which is what "the record" means either way.
     fn tree_record(&self) -> Option<Inspector> {
-        let here = self.tree_rows.get(self.grid.cursor.0)?;
-        // A leaf's record is its parent; a container is its own.
-        let path: Vec<crate::PathSeg> = if here.is_container() {
-            here.path.clone()
-        } else {
-            let mut p = here.path.clone();
-            p.pop()?;
-            p
-        };
+        let path = self.tree_record_path()?;
         let root = self.tree_root()?;
         let node = crate::tree::at(&root, &path)?;
         let children = crate::tree::child_fields(node);

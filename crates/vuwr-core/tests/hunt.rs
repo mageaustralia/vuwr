@@ -278,3 +278,41 @@ fn the_table_always_has_something_to_inspect() {
     s.execute(Command::ViewTable);
     assert!(s.can_inspect());
 }
+
+/// Clicking a field in the panel acts on that field.
+///
+/// The panel shows the record wherever in it the cursor happens to be, so
+/// acting on "the cursor's value" edited whichever row the cursor had
+/// been left on — `sku` when you had double-clicked `price`.
+#[test]
+fn a_field_in_the_panel_is_the_field_you_clicked() {
+    let xml = "<r>\n<item><sku>A1</sku><city>Sydney</city><price>19.95</price></item>\n</r>\n";
+    let mut s = Session::new(Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap());
+    s.execute(Command::ViewTree);
+    s.grid.cursor = (0, 0);
+
+    let fields = s.inspector().fields;
+    assert_eq!(fields[2].key, "price");
+
+    // The third field, from the item's own row — which is collapsed, so
+    // this has to open it as well as move.
+    s.focus_record_field(2);
+    let row = &s.tree_rows[s.grid.cursor.0];
+    assert_eq!(row.label, "price", "landed on {:?}", row.label);
+    assert_eq!(row.summary, "19.95");
+}
+
+/// And in the table it is the column, hidden ones skipped.
+#[test]
+fn a_field_in_the_panel_is_the_column_you_clicked() {
+    let mut s = csv(STOCK);
+    s.execute(Command::ViewTable);
+    s.grid.cursor = (0, 1);
+    s.execute(Command::HideColumn);
+
+    // `city` is away, so the second field is `note` — column 2.
+    let fields = s.inspector().fields;
+    assert_eq!(fields[1].key, "note", "{fields:?}");
+    s.focus_record_field(1);
+    assert_eq!(s.grid.cursor.1, 2);
+}

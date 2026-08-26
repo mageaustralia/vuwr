@@ -814,6 +814,7 @@ impl VuwrApp {
                     ui.close();
                 }
             });
+            let mut toggle_detail = false;
             ui.menu_button("View", |ui| {
                 ui.set_min_width(MENU_WIDTH);
                 // Only the views this document actually has, exactly as
@@ -824,6 +825,8 @@ impl VuwrApp {
                 };
                 let current = session.view_mode();
                 let available = session.available_views();
+                let can_inspect = session.can_inspect();
+                let showing_detail = session.show_detail;
                 for view in VIEW_ORDER.iter().copied().filter(|v| available.contains(v)) {
                     let (label, cmd) = match view {
                         ViewMode::Table => ("Table", Command::ViewTable),
@@ -839,6 +842,22 @@ impl VuwrApp {
                         ui.close();
                     }
                 }
+                ui.separator();
+                // The panel belongs in the menu that lists the views: it
+                // is one, and a shortcut nobody can find is not one.
+                let (can, showing) = (can_inspect, showing_detail);
+                ui.add_enabled_ui(can, |ui| {
+                    let keys = shortcut_label(ui.ctx(), Command::ToggleDetail);
+                    if ui
+                        .add(egui::Button::selectable(showing, "Detail panel").shortcut_text(keys))
+                        .on_disabled_hover_text(
+                            "Nothing to show here — put the cursor inside a value",
+                        )
+                        .clicked()
+                    {
+                        toggle_detail = true;
+                    }
+                });
                 ui.separator();
                 ui.label(egui::RichText::new("Appearance").weak());
                 for (label, dark) in [("Light", false), ("Dark", true)] {
@@ -858,6 +877,9 @@ impl VuwrApp {
                     }
                 }
             });
+            if toggle_detail {
+                self.run(Command::ToggleDetail, ctx);
+            }
             ui.menu_button("Help", |ui| {
                 ui.set_min_width(MENU_WIDTH);
                 if Self::menu_item(ui, "Keys", Command::Help) {
@@ -1269,7 +1291,9 @@ impl VuwrApp {
                         colour,
                     );
 
-                    if response.clicked() && table {
+                    // A single click goes there — in the tree as well as
+                    // the table, where the record's fields are nodes.
+                    if response.clicked() {
                         go_to = Some(i);
                     }
                     // Double-click edits, as it does in the table, the
@@ -1304,16 +1328,28 @@ impl VuwrApp {
                 });
             });
 
-        if let Some(col) = go_to
+        if let Some(field) = go_to
             && let Some(session) = self.session.as_mut()
         {
-            session.grid.cursor.1 = col;
+            session.focus_record_field(field);
         }
-        if let Some(col) = edit_field {
-            if table && let Some(session) = self.session.as_mut() {
-                session.grid.cursor.1 = col;
+        if let Some(field) = edit_field {
+            // The cursor goes to the field that was clicked first. The
+            // panel shows the record wherever in it the cursor is, so
+            // editing "the cursor's value" would edit whichever field it
+            // had been left on.
+            if let Some(session) = self.session.as_mut() {
+                session.focus_record_field(field);
             }
-            self.run(Command::EditCell, ctx);
+            // In the source view the panel shows a whole value, which is
+            // what the large editor is for; a line edit would take the
+            // one line under the cursor instead.
+            let cmd = if self.session().view_mode() == ViewMode::Text {
+                Command::EditLarge
+            } else {
+                Command::EditCell
+            };
+            self.run(cmd, ctx);
         }
     }
 

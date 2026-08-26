@@ -310,6 +310,12 @@ pub fn child_fields(node: &Node) -> Vec<(String, String, ValueKind)> {
         .collect()
 }
 
+/// The steps to a node's children, in the order [`child_fields`] lists
+/// them — so an index into one is an index into the other.
+pub fn child_steps(node: &Node) -> Vec<PathSeg> {
+    children(node).into_iter().map(|(seg, _)| seg).collect()
+}
+
 /// The node a path leads to, if it leads anywhere.
 pub fn at<'a>(root: &'a Node, path: &[PathSeg]) -> Option<&'a Node> {
     let mut node = root;
