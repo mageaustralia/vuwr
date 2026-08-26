@@ -1,11 +1,13 @@
-# The corpus is compared byte for byte, and the round-trip promise is
-# about bytes. Git normalising line endings on checkout would rewrite the
-# fixtures before the tests ever saw them — on Windows the CRLF file and
-# the LF files would both arrive as something else, and the failure would
-# look like a bug in the parser.
+# The general rule first: later patterns win in this file, so anything
+# meant to override has to come after it. Normalise in the repository,
+# check out with LF, so sources do not acquire carriage returns on a
+# Windows clone.
+* text=auto eol=lf
+
+# And the exceptions. The corpus is compared byte for byte and the
+# round-trip promise is about bytes, so these files must arrive exactly as
+# committed. Left to the rule above, the CRLF fixture is stored with its
+# carriage returns stripped — it then tests nothing, while still looking
+# like it does.
 crates/vuwr-core/tests/corpus/** -text
 examples/** -text
-
-# Everything else: normalise in the repository, check out with LF, so the
-# sources do not acquire carriage returns on a Windows clone.
-* text=auto eol=lf
