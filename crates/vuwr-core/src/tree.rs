@@ -293,6 +293,35 @@ fn walk_all(node: &Node, path: &mut Vec<PathSeg>, out: &mut Vec<Entry>) {
     }
 }
 
+/// A node's children as key/value pairs, for the inspector.
+///
+/// Read from the node itself rather than from the drawn rows, because the
+/// record has to be readable whether or not it happens to be open.
+pub fn child_fields(node: &Node) -> Vec<(String, String, ValueKind)> {
+    children(node)
+        .into_iter()
+        .map(|(seg, child)| {
+            (
+                label_of(&seg, child),
+                summarize(child),
+                ValueKind::of(child),
+            )
+        })
+        .collect()
+}
+
+/// The node a path leads to, if it leads anywhere.
+pub fn at<'a>(root: &'a Node, path: &[PathSeg]) -> Option<&'a Node> {
+    let mut node = root;
+    for seg in path {
+        node = children(node)
+            .into_iter()
+            .find(|(s, _)| s == seg)
+            .map(|(_, c)| c)?;
+    }
+    Some(node)
+}
+
 /// A one-line stand-in for a value.
 pub fn summarize(node: &Node) -> String {
     match node {

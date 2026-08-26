@@ -1117,6 +1117,15 @@ impl Session {
     /// the one value the cursor is on — which is what the detail pane
     /// showed before it.
     pub fn inspector(&self) -> Inspector {
+        // In the tree, the record is the node the cursor is inside — the
+        // `<item>`, not the one row of it you happen to be on. Showing
+        // the row alone made the panel read `item : item`, which is the
+        // row's own label and summary and tells you nothing.
+        if self.view == ViewMode::Tree
+            && let Some(record) = self.tree_record()
+        {
+            return record;
+        }
         if self.view != ViewMode::Table {
             let label = self.detail_label();
             let value = self.detail_text().unwrap_or_default();
@@ -1667,6 +1676,53 @@ impl Session {
             Mode::Prompt { kind, .. } => Some(kind),
             _ => None,
         }
+    }
+
+    /// The record the tree cursor is inside, read downwards.
+    ///
+    /// The nearest container with children: standing on a field shows the
+    /// item that holds it, and standing on the item itself shows the same
+    /// thing — which is what "the record" means either way.
+    fn tree_record(&self) -> Option<Inspector> {
+        let here = self.tree_rows.get(self.grid.cursor.0)?;
+        // A leaf's record is its parent; a container is its own.
+        let path: Vec<crate::PathSeg> = if here.is_container() {
+            here.path.clone()
+        } else {
+            let mut p = here.path.clone();
+            p.pop()?;
+            p
+        };
+        let root = self.tree_root()?;
+        let node = crate::tree::at(&root, &path)?;
+        let children = crate::tree::child_fields(node);
+        if children.is_empty() {
+            return None;
+        }
+        let title = self
+            .tree_rows
+            .iter()
+            .find(|r| r.path == path)
+            .map_or_else(|| "record".to_string(), |r| r.label.clone());
+        let fields = children
+            .into_iter()
+            .map(|(key, value, kind)| {
+                let kind = if value.starts_with("http://") || value.starts_with("https://") {
+                    FieldKind::Url
+                } else {
+                    match kind {
+                        crate::ValueKind::Number => FieldKind::Number,
+                        _ => FieldKind::Text,
+                    }
+                };
+                Field { key, value, kind }
+            })
+            .collect();
+        Some(Inspector {
+            meta: format!("Row {} of {}", self.grid.cursor.0 + 1, self.tree_rows.len()),
+            title,
+            fields,
+        })
     }
 
     /// Whether replacing can address anything here.

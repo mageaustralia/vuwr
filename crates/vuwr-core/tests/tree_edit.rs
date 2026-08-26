@@ -1069,16 +1069,31 @@ fn the_inspector_reads_the_row_under_the_cursor() {
     assert_eq!(it.fields[0].kind, FieldKind::Text);
 }
 
-/// Outside a table there is no record, so it falls back to the one value
-/// the cursor is on rather than showing nothing.
+/// In the tree the record is the container the cursor is inside, not the
+/// one row it is on — standing on `b` shows the object that holds it.
+///
+/// This used to show the single field under the cursor, which in a feed
+/// meant a panel reading `item : item` when you stood on an item.
 #[test]
-fn the_inspector_falls_back_to_the_value_under_the_cursor() {
+fn the_inspector_shows_the_containing_record() {
     let mut s = session(r#"{"a":1,"b":2}"#);
     s.execute(Command::ViewTree);
     s.grid.cursor = (1, 0);
     let it = s.inspector();
-    assert_eq!(it.fields.len(), 1);
-    assert_eq!(it.fields[0].key, "b");
+    assert_eq!(
+        it.fields.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+}
+
+/// With no container to show — a scalar document — it falls back to the
+/// value under the cursor rather than showing nothing.
+#[test]
+fn the_inspector_falls_back_to_the_value_under_the_cursor() {
+    let mut s = session(r#"{"a":1}"#);
+    s.execute(Command::ViewText);
+    let it = s.inspector();
+    assert_eq!(it.fields.len(), 1, "{:?}", it.fields);
 }
 
 // --- Selection while editing ---

@@ -200,3 +200,40 @@ fn replacing_works_on_xml_and_json_too() {
         assert_eq!(text(&s), src, "{name}: undo was not exact");
     }
 }
+
+/// The inspector shows the record, wherever in it the cursor is.
+///
+/// In the tree it showed the row's own label and summary, so standing on
+/// an `<item>` gave a panel reading `item : item` — true, and of no use to
+/// anybody. The record is the nearest container either way: standing on a
+/// field shows the item that holds it, standing on the item shows the same.
+#[test]
+fn the_inspector_shows_the_record_in_the_tree() {
+    let xml = "<r>\n<item><sku>A1</sku><city>Sydney</city><price>19.95</price></item>\n\
+               <item><sku>A2</sku><city>Perth</city><price>29.95</price></item>\n</r>\n";
+    let mut s = Session::new(Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap());
+    s.execute(Command::ViewTree);
+
+    // On the first item, closed.
+    s.grid.cursor = (0, 0);
+    let seen = s.inspector();
+    let keys: Vec<&str> = seen.fields.iter().map(|f| f.key.as_str()).collect();
+    assert_eq!(keys, ["sku", "city", "price"], "{:?}", seen.fields);
+    assert_eq!(seen.fields[0].value, "A1");
+
+    // Open it and stand on one of its fields: the same record.
+    s.execute(Command::DrillDown);
+    s.execute(Command::MoveDown);
+    s.execute(Command::MoveDown);
+    let inside = s.inspector();
+    assert_eq!(
+        inside
+            .fields
+            .iter()
+            .map(|f| f.key.as_str())
+            .collect::<Vec<_>>(),
+        ["sku", "city", "price"],
+        "standing on a field showed something else: {:?}",
+        inside.fields
+    );
+}
