@@ -11,12 +11,14 @@ license.workspace = true
 arboard = "3"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
+vuwr-core = { path = "../vuwr-core" }
+
+[target.'cfg(unix)'.dependencies]
 # Waiting on the terminal's own file descriptor to answer a question,
 # without crossterm's event reader in the way — it buffers what it polls,
-# and the bytes we were owed became keystrokes.
+# and the bytes we were owed became keystrokes. Unix only: the question is
+# asked over a file descriptor, which Windows does not have.
 libc = "0.2"
-
-vuwr-core = { path = "../vuwr-core" }
 
 [dev-dependencies]
 insta = "1.48.0"

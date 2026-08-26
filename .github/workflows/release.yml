@@ -1,0 +1,157 @@
+# Build the binaries for a tagged release and attach them to it.
+#
+# One job per target, each on the OS it targets: cross-compiling a GUI
+# means cross-linking against that platform's window system, which is a
+# great deal of setup to avoid using a runner that already has it. The
+# Apple targets are the exception — an arm64 runner builds both, since the
+# SDK carries both slices.
+#
+# Nothing here is signed. See the release notes step for what that costs
+# the person downloading.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # So a build can be tried without cutting a tag first.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One target failing should not cancel the others: a release with
+      # three of four binaries is worth having while the fourth is fixed.
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple silicon)
+            os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - name: macOS (Intel)
+            os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - name: Linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # eframe links against GTK and X11 on Linux. The other two carry
+      # their window systems in the OS.
+      - name: Install Linux window-system headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p vuwr
+
+      # Named for the target, so four downloads on a release page are
+      # telling each other apart rather than all called `vuwr`.
+      - name: Package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [ "$version" = "$GITHUB_REF_NAME" ] && version="dev"
+          staging="vuwr-$version-${{ matrix.target }}"
+          mkdir "$staging"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/vuwr.exe" "$staging/"
+          else
+            cp "target/${{ matrix.target }}/release/vuwr" "$staging/"
+          fi
+          cp README.md LICENSE-APACHE LICENSE-MIT "$staging/" 2>/dev/null || true
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "$staging.zip" "$staging"
+            echo "ASSET=$staging.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "$staging.tar.gz" "$staging"
+            echo "ASSET=$staging.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      # A checksum beside each archive: the binaries are unsigned, so this
+      # is the only way a downloader can tell they arrived intact.
+      - name: Checksum
+        shell: bash
+        run: |
+          if command -v shasum > /dev/null; then
+            shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          else
+            sha256sum "$ASSET" > "$ASSET.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    # Only a tag makes a release; a manual run just leaves the artifacts
+    # on the workflow for whoever asked for them.
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Installing
+
+            Download the archive for your machine, unpack it, and put
+            `vuwr` somewhere on your `PATH`.
+
+            | Machine | File |
+            |---|---|
+            | Mac, Apple silicon (M1 and later) | `aarch64-apple-darwin` |
+            | Mac, Intel | `x86_64-apple-darwin` |
+            | Windows | `x86_64-pc-windows-msvc` |
+            | Linux | `x86_64-unknown-linux-gnu` |
+
+            **These binaries are not code-signed.** macOS will refuse to
+            open one downloaded through a browser until you clear the
+            quarantine flag:
+
+            ```
+            xattr -d com.apple.quarantine ./vuwr
+            ```
+
+            Windows SmartScreen will warn on first run for the same
+            reason: *More info* → *Run anyway*.
+
+            Verify a download against the `.sha256` beside it if you would
+            rather not take that on trust.

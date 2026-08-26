@@ -10,12 +10,16 @@
 //! kitty, WezTerm, Alacritty, foot, and xterm itself, which invented it.
 //! One that does not answer costs a tenth of a second and falls back.
 
+#[cfg(unix)]
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 /// How long to wait for an answer. Long enough for a terminal over ssh,
 /// short enough that nobody notices one that stays silent.
+#[cfg(unix)]
 const PATIENCE: Duration = Duration::from_millis(120);
 
 /// The terminal's background colour, if it will say.
@@ -23,6 +27,7 @@ const PATIENCE: Duration = Duration::from_millis(120);
 /// Must be called with the terminal in raw mode, or the reply is line
 /// buffered and never arrives. Anything unexpected on the way back is
 /// treated as no answer rather than parsed hopefully.
+#[cfg(unix)]
 pub fn background() -> Option<(u8, u8, u8)> {
     let mut out = std::io::stdout();
     // `ESC ] 11 ; ? BEL` — "what is your background colour?"
@@ -59,7 +64,20 @@ pub fn background() -> Option<(u8, u8, u8)> {
     parse(&reply)
 }
 
+/// Not asked on Windows.
+///
+/// Reading the reply means waiting on the console handle without letting
+/// the event reader buffer it first, which is a different problem there
+/// and not one worth solving blind. Saying "unknown" costs nothing: the
+/// palette already has a set of colours for a ground it cannot determine,
+/// chosen to read on either — see `palette::token`.
+#[cfg(not(unix))]
+pub fn background() -> Option<(u8, u8, u8)> {
+    None
+}
+
 /// Whether the descriptor has something to read before the deadline.
+#[cfg(unix)]
 fn readable(fd: std::os::fd::RawFd, deadline: Instant) -> bool {
     let left = deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
@@ -78,6 +96,12 @@ fn readable(fd: std::os::fd::RawFd, deadline: Instant) -> bool {
 
 /// Pull `rgb:RRRR/GGGG/BBBB` out of a reply, in whatever width the
 /// terminal chose to give it — one to four hex digits per channel.
+///
+/// Only a Unix build asks the question, but the parsing is worth keeping
+/// compiled and tested everywhere: it is where a transcription error
+/// would hide, and a test that runs on one platform only is a test that
+/// rots on the others.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn parse(reply: &[u8]) -> Option<(u8, u8, u8)> {
     let text = std::str::from_utf8(reply).ok()?;
     let rest = text.split("rgb:").nth(1)?;
@@ -90,6 +114,7 @@ fn parse(reply: &[u8]) -> Option<(u8, u8, u8)> {
 
 /// One channel, scaled to a byte. Terminals answer in 16 bits more often
 /// than not, so `ffff` and `ff` both have to mean full.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn channel(text: &str) -> Option<u8> {
     let hex: String = text.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
     if hex.is_empty() {
