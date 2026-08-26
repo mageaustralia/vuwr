@@ -1,0 +1,11 @@
+# The corpus is compared byte for byte, and the round-trip promise is
+# about bytes. Git normalising line endings on checkout would rewrite the
+# fixtures before the tests ever saw them — on Windows the CRLF file and
+# the LF files would both arrive as something else, and the failure would
+# look like a bug in the parser.
+crates/vuwr-core/tests/corpus/** -text
+examples/** -text
+
+# Everything else: normalise in the repository, check out with LF, so the
+# sources do not acquire carriage returns on a Windows clone.
+* text=auto eol=lf

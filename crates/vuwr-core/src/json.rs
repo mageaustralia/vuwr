@@ -77,17 +77,36 @@ pub struct JsonDoc {
     /// asks — so re-deriving it made drawing quadratic in the row count.
     /// Cleared by [`JsonDoc::root_mut`].
     table_shaped: std::cell::Cell<Option<bool>>,
+    /// Whatever sat before the value and after it.
+    ///
+    /// Nearly every file ends with a newline and this serializer builds
+    /// its output from the tree, so without keeping them a document that
+    /// was merely opened and saved lost its last byte.
+    leading: String,
+    trailing: String,
+    /// Whether the file's line ending is CRLF.
+    ///
+    /// A JSON string escapes its own newlines, so every raw line feed in
+    /// the output is one this serializer put there — which makes swapping
+    /// them at the end safe, and much simpler than threading the choice
+    /// through every branch.
+    crlf: bool,
 }
 
 impl JsonDoc {
     pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
         let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let indent = sniff_indent(text);
-        let (node, _rest) = parse_value(text, text.trim_start())?;
+        let body = text.trim_start();
+        let leading = text[..text.len() - body.len()].to_string();
+        let (node, rest) = parse_value(text, body)?;
         Ok(Self {
             root: node,
             indent,
             table_shaped: std::cell::Cell::new(None),
+            leading,
+            trailing: rest.to_string(),
+            crlf: text.contains("\r\n"),
         })
     }
 
@@ -146,10 +165,34 @@ impl JsonDoc {
     }
 
     pub fn serialize(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        serialize_node(&self.root, &mut out, 0, self.indent);
+        let mut body = Vec::new();
+        serialize_node(&self.root, &mut body, 0, self.indent);
+        if self.crlf {
+            body = to_crlf(&body);
+        }
+        // The surroundings go back on unchanged: they were taken from the
+        // file whole, line endings included.
+        let mut out = Vec::with_capacity(self.leading.len() + body.len() + self.trailing.len());
+        out.extend_from_slice(self.leading.as_bytes());
+        out.append(&mut body);
+        out.extend_from_slice(self.trailing.as_bytes());
         out
     }
+}
+
+/// Every line feed becomes a carriage return and a line feed.
+///
+/// Safe to do wholesale: a line feed inside a string was escaped on the
+/// way out, so the only raw ones here are the serializer's own breaks.
+fn to_crlf(body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(body.len() + body.len() / 16);
+    for &b in body {
+        if b == b'\n' {
+            out.push(b'\r');
+        }
+        out.push(b);
+    }
+    out
 }
 
 fn serialize_node(node: &Node, out: &mut Vec<u8>, depth: usize, indent: IndentStyle) {
