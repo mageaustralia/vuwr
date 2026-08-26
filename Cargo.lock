@@ -4250,6 +4250,7 @@ name = "vuwr"
 version = "0.3.0"
 dependencies = [
  "clap",
+ "libc",
  "vuwr-core",
  "vuwr-gui",
  "vuwr-tui",

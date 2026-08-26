@@ -17,3 +17,9 @@ vuwr-core = { path = "../vuwr-core" }
 vuwr-tui = { path = "../vuwr-tui" }
 vuwr-gui = { path = "../vuwr-gui" }
 clap = { version = "4.6.6", features = ["derive"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+# Building a pseudo-terminal for the piped-input test: there is no way to
+# ask for one from std, and the bug being tested only appears when the
+# other end of stdout is a real terminal.
+libc = "0.2"
