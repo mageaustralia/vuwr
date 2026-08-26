@@ -161,7 +161,7 @@ impl Node {
     ///
     /// The returned value is exactly what `set_at` needs to put it back,
     /// which is what makes undo byte-exact.
-    pub fn set_at(&mut self, path: &[PathSeg], value: Node) -> Result<Node, crate::Error> {
+    pub fn set_at(&mut self, path: &[PathSeg], value: Self) -> Result<Self, crate::Error> {
         let Some((last, parents)) = path.split_last() else {
             return Ok(std::mem::replace(self, value));
         };
@@ -171,7 +171,7 @@ impl Node {
         }
         match last {
             PathSeg::Attr(name) => {
-                let Node::Element(e) = node else {
+                let Self::Element(e) = node else {
                     return Err(crate::Error::NoSuchPath);
                 };
                 let attr = e
@@ -182,19 +182,19 @@ impl Node {
                 let old = std::mem::replace(
                     &mut attr.1,
                     match value {
-                        Node::Str(s) => s,
+                        Self::Str(s) => s,
                         other => other.scalar_text(),
                     },
                 );
-                Ok(Node::Str(old))
+                Ok(Self::Str(old))
             }
             PathSeg::Text => {
-                let Node::Element(e) = node else {
+                let Self::Element(e) = node else {
                     return Err(crate::Error::NoSuchPath);
                 };
                 let old = e.text_content();
                 let text = match value {
-                    Node::Text(t) | Node::Str(t) => t,
+                    Self::Text(t) | Self::Str(t) => t,
                     other => other.scalar_text(),
                 };
                 // Replace the first text child and drop any others, so
@@ -205,15 +205,15 @@ impl Node {
                 // the layout whitespace would leave the old value behind.
                 match e.text_slot() {
                     Some(i) => match &mut e.children[i] {
-                        Node::Text(t) | Node::CData(t) => *t = text,
+                        Self::Text(t) | Self::CData(t) => *t = text,
                         _ => unreachable!("text_slot only points at text"),
                     },
                     None => {
-                        e.children.push(Node::Text(text));
+                        e.children.push(Self::Text(text));
                         e.self_closing = false;
                     }
                 }
-                Ok(Node::Text(old))
+                Ok(Self::Text(old))
             }
             seg => {
                 let slot = node.child_mut(seg)?;
@@ -223,18 +223,18 @@ impl Node {
     }
 
     /// The node at `path`, if it exists.
-    pub fn get_at(&self, path: &[PathSeg]) -> Option<&Node> {
+    pub fn get_at(&self, path: &[PathSeg]) -> Option<&Self> {
         let mut node = self;
         for seg in path {
             node = match (node, seg) {
-                (Node::Map(m), PathSeg::Key(k)) => {
+                (Self::Map(m), PathSeg::Key(k)) => {
                     m.entries.iter().find(|(key, _)| key == k).map(|(_, v)| v)?
                 }
-                (Node::Array(a), PathSeg::Index(i)) => a.items.get(*i)?,
-                (Node::Element(e), PathSeg::Index(i)) => e
+                (Self::Array(a), PathSeg::Index(i)) => a.items.get(*i)?,
+                (Self::Element(e), PathSeg::Index(i)) => e
                     .children
                     .iter()
-                    .filter(|c| matches!(c, Node::Element(_)))
+                    .filter(|c| matches!(c, Self::Element(_)))
                     .nth(*i)?,
                 _ => return None,
             };
@@ -242,23 +242,23 @@ impl Node {
         Some(node)
     }
 
-    fn child_mut(&mut self, seg: &PathSeg) -> Result<&mut Node, crate::Error> {
+    fn child_mut(&mut self, seg: &PathSeg) -> Result<&mut Self, crate::Error> {
         match (self, seg) {
-            (Node::Map(m), PathSeg::Key(k)) => m
+            (Self::Map(m), PathSeg::Key(k)) => m
                 .entries
                 .iter_mut()
                 .find(|(key, _)| key == k)
                 .map(|(_, v)| v)
                 .ok_or(crate::Error::NoSuchPath),
-            (Node::Array(a), PathSeg::Index(i)) => {
+            (Self::Array(a), PathSeg::Index(i)) => {
                 a.items.get_mut(*i).ok_or(crate::Error::NoSuchPath)
             }
             // Only element children are addressable, so an index means the
             // n-th element, skipping whitespace text and comments.
-            (Node::Element(e), PathSeg::Index(i)) => e
+            (Self::Element(e), PathSeg::Index(i)) => e
                 .children
                 .iter_mut()
-                .filter(|c| matches!(c, Node::Element(_)))
+                .filter(|c| matches!(c, Self::Element(_)))
                 .nth(*i)
                 .ok_or(crate::Error::NoSuchPath),
             _ => Err(crate::Error::NoSuchPath),
@@ -274,20 +274,20 @@ impl Node {
         &mut self,
         parent: &[PathSeg],
         index: usize,
-    ) -> Result<(Option<String>, Node), crate::Error> {
+    ) -> Result<(Option<String>, Self), crate::Error> {
         let node = self.node_at_mut(parent)?;
         match node {
-            Node::Map(m) if index < m.entries.len() => {
+            Self::Map(m) if index < m.entries.len() => {
                 let (k, v) = m.entries.remove(index);
                 Ok((Some(k), v))
             }
-            Node::Array(a) if index < a.items.len() => Ok((None, a.items.remove(index))),
+            Self::Array(a) if index < a.items.len() => Ok((None, a.items.remove(index))),
             // For elements `index` is a *raw* child position, not an
             // element ordinal: whitespace between elements is a child too,
             // and removing by ordinal left it behind, so re-inserting
             // landed in the wrong slot and undo was not exact.
             // [`Node::raw_child_index`] does the translation at the edge.
-            Node::Element(e) if index < e.children.len() => Ok((None, e.children.remove(index))),
+            Self::Element(e) if index < e.children.len() => Ok((None, e.children.remove(index))),
             _ => Err(crate::Error::NoSuchPath),
         }
     }
@@ -298,21 +298,21 @@ impl Node {
         parent: &[PathSeg],
         index: usize,
         key: Option<String>,
-        value: Node,
+        value: Self,
     ) -> Result<(), crate::Error> {
         let node = self.node_at_mut(parent)?;
         match node {
-            Node::Map(m) => {
+            Self::Map(m) => {
                 let at = index.min(m.entries.len());
                 m.entries.insert(at, (key.unwrap_or_default(), value));
                 Ok(())
             }
-            Node::Array(a) => {
+            Self::Array(a) => {
                 let at = index.min(a.items.len());
                 a.items.insert(at, value);
                 Ok(())
             }
-            Node::Element(e) => {
+            Self::Element(e) => {
                 let at = index.min(e.children.len());
                 e.children.insert(at, value);
                 Ok(())
@@ -331,7 +331,7 @@ impl Node {
     ) -> Result<String, crate::Error> {
         let node = self.node_at_mut(parent)?;
         match node {
-            Node::Map(m) if index < m.entries.len() => {
+            Self::Map(m) if index < m.entries.len() => {
                 Ok(std::mem::replace(&mut m.entries[index].0, name))
             }
             _ => Err(crate::Error::NoSuchPath),
@@ -345,7 +345,7 @@ impl Node {
     /// the whitespace around a node is left exactly where it was.
     pub fn raw_child_index(&self, parent: &[PathSeg], ordinal: usize) -> Option<usize> {
         match self.get_at(parent)? {
-            Node::Element(e) => element_positions(e).get(ordinal).copied(),
+            Self::Element(e) => element_positions(e).get(ordinal).copied(),
             _ => Some(ordinal),
         }
     }
@@ -353,7 +353,7 @@ impl Node {
     /// Where a new child should go to land after `ordinal`.
     pub fn raw_insert_index(&self, parent: &[PathSeg], ordinal: usize) -> Option<usize> {
         match self.get_at(parent)? {
-            Node::Element(e) => {
+            Self::Element(e) => {
                 let positions = element_positions(e);
                 Some(positions.get(ordinal).copied().unwrap_or(e.children.len()))
             }
@@ -361,7 +361,7 @@ impl Node {
         }
     }
 
-    fn node_at_mut(&mut self, path: &[PathSeg]) -> Result<&mut Node, crate::Error> {
+    fn node_at_mut(&mut self, path: &[PathSeg]) -> Result<&mut Self, crate::Error> {
         let mut node = self;
         for seg in path {
             node = node.child_mut(seg)?;
@@ -372,11 +372,11 @@ impl Node {
     /// The text of a scalar node, as it would appear in a cell.
     pub fn scalar_text(&self) -> String {
         match self {
-            Node::Null => "null".to_string(),
-            Node::Bool(b) => b.to_string(),
-            Node::Number(n) => n.clone(),
-            Node::Str(s) => s.clone(),
-            Node::Text(t) | Node::CData(t) => t.clone(),
+            Self::Null => "null".to_string(),
+            Self::Bool(b) => b.to_string(),
+            Self::Number(n) => n.clone(),
+            Self::Str(s) => s.clone(),
+            Self::Text(t) | Self::CData(t) => t.clone(),
             _ => String::new(),
         }
     }
@@ -397,31 +397,31 @@ fn element_positions(e: &Element) -> Vec<usize> {
 
 impl Node {
     pub fn null() -> Self {
-        Node::Null
+        Self::Null
     }
 
     pub fn bool(b: bool) -> Self {
-        Node::Bool(b)
+        Self::Bool(b)
     }
 
     pub fn number(s: impl Into<String>) -> Self {
-        Node::Number(s.into())
+        Self::Number(s.into())
     }
 
     pub fn string(s: impl Into<String>) -> Self {
-        Node::Str(s.into())
+        Self::Str(s.into())
     }
 
     pub fn text(s: impl Into<String>) -> Self {
-        Node::Text(s.into())
+        Self::Text(s.into())
     }
 
     pub fn comment(s: impl Into<String>) -> Self {
-        Node::Comment(s.into())
+        Self::Comment(s.into())
     }
 
     pub fn element(tag: impl Into<String>) -> Self {
-        Node::Element(Element {
+        Self::Element(Element {
             tag: tag.into(),
             attributes: Vec::new(),
             children: Vec::new(),

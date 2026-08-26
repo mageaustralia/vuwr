@@ -43,32 +43,32 @@ pub enum Scheme {
 }
 
 impl Scheme {
-    pub const ALL: &'static [Scheme] = &[
-        Scheme::Vuwr,
-        Scheme::GruvboxDark,
-        Scheme::GruvboxLight,
-        Scheme::SolarizedDark,
-        Scheme::SolarizedLight,
-        Scheme::Nord,
-        Scheme::Monokai,
+    pub const ALL: &'static [Self] = &[
+        Self::Vuwr,
+        Self::GruvboxDark,
+        Self::GruvboxLight,
+        Self::SolarizedDark,
+        Self::SolarizedLight,
+        Self::Nord,
+        Self::Monokai,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
-            Scheme::Vuwr => "vuwr",
-            Scheme::GruvboxDark => "Gruvbox dark",
-            Scheme::GruvboxLight => "Gruvbox light",
-            Scheme::SolarizedDark => "Solarized dark",
-            Scheme::SolarizedLight => "Solarized light",
-            Scheme::Nord => "Nord",
-            Scheme::Monokai => "Monokai",
+            Self::Vuwr => "vuwr",
+            Self::GruvboxDark => "Gruvbox dark",
+            Self::GruvboxLight => "Gruvbox light",
+            Self::SolarizedDark => "Solarized dark",
+            Self::SolarizedLight => "Solarized light",
+            Self::Nord => "Nord",
+            Self::Monokai => "Monokai",
         }
     }
 
     /// Look this up by name, for `:scheme gruvbox-dark` and the like.
-    pub fn from_name(name: &str) -> Option<Scheme> {
+    pub fn from_name(name: &str) -> Option<Self> {
         let wanted = name.trim().to_ascii_lowercase().replace([' ', '_'], "-");
-        Scheme::ALL
+        Self::ALL
             .iter()
             .copied()
             .find(|s| s.name().to_ascii_lowercase().replace([' ', '_'], "-") == wanted)
@@ -78,9 +78,9 @@ impl Scheme {
     /// either — which is only ours.
     pub fn ground(self) -> Option<Ground> {
         match self {
-            Scheme::Vuwr => None,
-            Scheme::GruvboxLight | Scheme::SolarizedLight => Some(Ground::Light),
-            Scheme::GruvboxDark | Scheme::SolarizedDark | Scheme::Nord | Scheme::Monokai => {
+            Self::Vuwr => None,
+            Self::GruvboxLight | Self::SolarizedLight => Some(Ground::Light),
+            Self::GruvboxDark | Self::SolarizedDark | Self::Nord | Self::Monokai => {
                 Some(Ground::Dark)
             }
         }
@@ -94,7 +94,7 @@ impl Scheme {
             // Ours: structure in the accent, content in the body colour,
             // punctuation receding — the palette the rest of the app uses
             // rather than a second one for syntax.
-            Scheme::Vuwr => {
+            Self::Vuwr => {
                 if dark {
                     match token {
                         T::Key | T::Tag => rgb(0x7AA2F7),
@@ -119,7 +119,7 @@ impl Scheme {
                     }
                 }
             }
-            Scheme::GruvboxDark => match token {
+            Self::GruvboxDark => match token {
                 T::Key | T::Tag => rgb(0x83A598),
                 T::Keyword => rgb(0xFB4934),
                 T::Str => rgb(0xB8BB26),
@@ -129,7 +129,7 @@ impl Scheme {
                 T::Punctuation => rgb(0xA89984),
                 T::Plain => rgb(0xEBDBB2),
             },
-            Scheme::GruvboxLight => match token {
+            Self::GruvboxLight => match token {
                 T::Key | T::Tag => rgb(0x076678),
                 T::Keyword => rgb(0x9D0006),
                 T::Str => rgb(0x79740E),
@@ -139,7 +139,7 @@ impl Scheme {
                 T::Punctuation => rgb(0x7C6F64),
                 T::Plain => rgb(0x3C3836),
             },
-            Scheme::SolarizedDark => match token {
+            Self::SolarizedDark => match token {
                 T::Key | T::Tag => rgb(0x268BD2),
                 T::Keyword => rgb(0x859900),
                 T::Str => rgb(0x2AA198),
@@ -149,7 +149,7 @@ impl Scheme {
                 T::Punctuation => rgb(0x93A1A1),
                 T::Plain => rgb(0x839496),
             },
-            Scheme::SolarizedLight => match token {
+            Self::SolarizedLight => match token {
                 T::Key | T::Tag => rgb(0x268BD2),
                 T::Keyword => rgb(0x859900),
                 T::Str => rgb(0x2AA198),
@@ -159,7 +159,7 @@ impl Scheme {
                 T::Punctuation => rgb(0x657B83),
                 T::Plain => rgb(0x586E75),
             },
-            Scheme::Nord => match token {
+            Self::Nord => match token {
                 T::Key | T::Tag => rgb(0x88C0D0),
                 T::Keyword => rgb(0x81A1C1),
                 T::Str => rgb(0xA3BE8C),
@@ -169,7 +169,7 @@ impl Scheme {
                 T::Punctuation => rgb(0x8FBCBB),
                 T::Plain => rgb(0xD8DEE9),
             },
-            Scheme::Monokai => match token {
+            Self::Monokai => match token {
                 T::Key | T::Tag => rgb(0x66D9EF),
                 T::Keyword => rgb(0xF92672),
                 T::Str => rgb(0xE6DB74),
@@ -192,26 +192,26 @@ impl Scheme {
     /// leaves the terminal's own background alone.
     pub fn background(self) -> Option<Rgb> {
         match self {
-            Scheme::Vuwr => None,
-            Scheme::GruvboxDark => Some(rgb(0x282828)),
-            Scheme::GruvboxLight => Some(rgb(0xFBF1C7)),
-            Scheme::SolarizedDark => Some(rgb(0x002B36)),
-            Scheme::SolarizedLight => Some(rgb(0xFDF6E3)),
-            Scheme::Nord => Some(rgb(0x2E3440)),
-            Scheme::Monokai => Some(rgb(0x272822)),
+            Self::Vuwr => None,
+            Self::GruvboxDark => Some(rgb(0x282828)),
+            Self::GruvboxLight => Some(rgb(0xFBF1C7)),
+            Self::SolarizedDark => Some(rgb(0x002B36)),
+            Self::SolarizedLight => Some(rgb(0xFDF6E3)),
+            Self::Nord => Some(rgb(0x2E3440)),
+            Self::Monokai => Some(rgb(0x272822)),
         }
     }
 
     /// The row the cursor is on, against this scheme's ground.
     pub fn selection(self) -> Option<Rgb> {
         match self {
-            Scheme::Vuwr => None,
-            Scheme::GruvboxDark => Some(rgb(0x3C3836)),
-            Scheme::GruvboxLight => Some(rgb(0xEBDBB2)),
-            Scheme::SolarizedDark => Some(rgb(0x073642)),
-            Scheme::SolarizedLight => Some(rgb(0xEEE8D5)),
-            Scheme::Nord => Some(rgb(0x3B4252)),
-            Scheme::Monokai => Some(rgb(0x3E3D32)),
+            Self::Vuwr => None,
+            Self::GruvboxDark => Some(rgb(0x3C3836)),
+            Self::GruvboxLight => Some(rgb(0xEBDBB2)),
+            Self::SolarizedDark => Some(rgb(0x073642)),
+            Self::SolarizedLight => Some(rgb(0xEEE8D5)),
+            Self::Nord => Some(rgb(0x3B4252)),
+            Self::Monokai => Some(rgb(0x3E3D32)),
         }
     }
 

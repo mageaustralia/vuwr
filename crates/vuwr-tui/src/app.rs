@@ -39,8 +39,8 @@ impl std::ops::DerefMut for App {
 }
 
 impl App {
-    pub fn new(path: PathBuf, doc: Document) -> App {
-        App {
+    pub fn new(path: PathBuf, doc: Document) -> Self {
+        Self {
             session: Session::new(doc),
             large_edit: None,
             path,
@@ -147,16 +147,16 @@ impl App {
                 // field you can only append to.
                 // Shift extends the selection, as it does everywhere.
                 KeyCode::Left if key.modifiers == KeyModifiers::SHIFT => {
-                    self.session.input_select_left()
+                    self.session.input_select_left();
                 }
                 KeyCode::Right if key.modifiers == KeyModifiers::SHIFT => {
-                    self.session.input_select_right()
+                    self.session.input_select_right();
                 }
                 KeyCode::Home if key.modifiers == KeyModifiers::SHIFT => {
-                    self.session.input_select_home()
+                    self.session.input_select_home();
                 }
                 KeyCode::End if key.modifiers == KeyModifiers::SHIFT => {
-                    self.session.input_select_end()
+                    self.session.input_select_end();
                 }
                 KeyCode::Left => self.session.input_left(),
                 KeyCode::Right => self.session.input_right(),
@@ -169,15 +169,15 @@ impl App {
                     self.session.input_delete();
                 }
                 KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
-                    self.session.input_home()
+                    self.session.input_home();
                 }
                 KeyCode::Char('e') if key.modifiers == KeyModifiers::CONTROL => {
-                    self.session.input_end()
+                    self.session.input_end();
                 }
                 KeyCode::Char(c)
                     if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
                 {
-                    self.session.input_char(c)
+                    self.session.input_char(c);
                 }
                 _ => {}
             }
@@ -271,15 +271,12 @@ fn paste_from_clipboard() -> Result<String, String> {
 
 /// Start of the line the caret is on.
 fn line_start(buf: &str, caret: usize) -> usize {
-    buf[..caret].rfind('\n').map(|i| i + 1).unwrap_or(0)
+    buf[..caret].rfind('\n').map_or(0, |i| i + 1)
 }
 
 /// End of the line the caret is on.
 fn line_end(buf: &str, caret: usize) -> usize {
-    buf[caret..]
-        .find('\n')
-        .map(|i| caret + i)
-        .unwrap_or(buf.len())
+    buf[caret..].find('\n').map_or(buf.len(), |i| caret + i)
 }
 
 /// Move the caret a line up or down, keeping its column where the line is

@@ -149,11 +149,11 @@ fn xml(line: &str) -> Vec<Span> {
                 }
             }
         } else if line[i..].starts_with("<!--") {
-            let end = line[i..].find("-->").map(|r| i + r + 3).unwrap_or(b.len());
+            let end = line[i..].find("-->").map_or(b.len(), |r| i + r + 3);
             push(&mut spans, i, end, Token::Comment);
             i = end;
         } else if b[i] == b'<' {
-            let end = line[i..].find('>').map(|r| i + r + 1).unwrap_or(b.len());
+            let end = line[i..].find('>').map_or(b.len(), |r| i + r + 1);
             // Inside a tag, quoted runs are attribute values.
             let mut j = i;
             while j < end {
@@ -180,8 +180,7 @@ fn xml(line: &str) -> Vec<Span> {
             let end = line[i..]
                 .find(';')
                 .filter(|r| *r <= 12)
-                .map(|r| i + r + 1)
-                .unwrap_or(i + 1);
+                .map_or(i + 1, |r| i + r + 1);
             push(&mut spans, i, end, Token::Escape);
             i = end;
         } else {

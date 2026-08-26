@@ -60,7 +60,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo check --workspace --all-targets --locked --target ${{ matrix.target }}
+      # The tests, not just a check: the TUI and the GUI both draw without
+      # a window here, so "it compiles on Windows" and "it works on
+      # Windows" are two different claims and this makes the second one.
+      - run: cargo test --workspace --locked --target ${{ matrix.target }}
 
   # vuwr-core must stay wasm-clean: no fs, no threads, no std::time::Instant,
   # no memmap2. This fails the build the day a wasm-hostile dependency is added.

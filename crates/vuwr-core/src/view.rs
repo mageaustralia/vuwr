@@ -80,9 +80,8 @@ impl GridState {
 
     /// Pop back to the parent sheet. Returns `false` if already at root.
     pub fn drill_up(&mut self) -> bool {
-        let entry = match self.drill_stack.pop() {
-            Some(e) => e,
-            None => return false,
+        let Some(entry) = self.drill_stack.pop() else {
+            return false;
         };
         self.cursor = (entry.parent_row, entry.parent_col);
         self.offset = (0, 0);

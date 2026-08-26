@@ -90,6 +90,11 @@ fn readable(fd: std::os::fd::RawFd, deadline: Instant) -> bool {
     };
     // SAFETY: one initialised `pollfd`, a matching count, and a timeout.
     // `poll` reads and writes only that struct.
+    //
+    // The workspace warns on `unsafe` so that each block has to say why it
+    // is here. This is the only one: there is no safe way to wait on a
+    // file descriptor with a deadline in std.
+    #[allow(unsafe_code)]
     let ready = unsafe { libc::poll(&mut waiting, 1, left.as_millis() as libc::c_int) };
     ready > 0 && waiting.revents & libc::POLLIN != 0
 }
@@ -116,7 +121,7 @@ fn parse(reply: &[u8]) -> Option<(u8, u8, u8)> {
 /// than not, so `ffff` and `ff` both have to mean full.
 #[cfg_attr(not(unix), allow(dead_code))]
 fn channel(text: &str) -> Option<u8> {
-    let hex: String = text.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    let hex: String = text.chars().take_while(char::is_ascii_hexdigit).collect();
     if hex.is_empty() {
         return None;
     }

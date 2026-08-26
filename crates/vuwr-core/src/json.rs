@@ -34,7 +34,7 @@ pub enum Layout {
 fn relayout(node: &mut Node, style: Layout) {
     match node {
         Node::Array(a) => {
-            for item in a.items.iter_mut() {
+            for item in &mut a.items {
                 relayout(item, style);
             }
             a.inline = inline_for(style, a.items.iter().all(is_scalar));
@@ -42,7 +42,7 @@ fn relayout(node: &mut Node, style: Layout) {
             a.trailing_comma = false;
         }
         Node::Map(m) => {
-            for (_, v) in m.entries.iter_mut() {
+            for (_, v) in &mut m.entries {
                 relayout(v, style);
             }
             let flat = m.entries.iter().all(|(_, v)| is_scalar(v));
@@ -80,11 +80,11 @@ pub struct JsonDoc {
 }
 
 impl JsonDoc {
-    pub fn parse(bytes: &[u8]) -> Result<JsonDoc, Error> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
         let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let indent = sniff_indent(text);
         let (node, _rest) = parse_value(text, text.trim_start())?;
-        Ok(JsonDoc {
+        Ok(Self {
             root: node,
             indent,
             table_shaped: std::cell::Cell::new(None),
@@ -246,7 +246,7 @@ fn serialize_string(s: &str, out: &mut Vec<u8>) {
             '\t' => out.extend_from_slice(b"\\t"),
             // Other C0 control characters have no short escape.
             c if (c as u32) < 0x20 => {
-                out.extend_from_slice(format!("\\u{:04x}", c as u32).as_bytes())
+                out.extend_from_slice(format!("\\u{:04x}", c as u32).as_bytes());
             }
             // Everything else, including non-ASCII, is emitted literally as
             // UTF-8. A source that spelled it `\uXXXX` round-trips to the

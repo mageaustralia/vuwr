@@ -22,13 +22,13 @@ impl Search {
     /// case-insensitively, and one containing an upper-case letter is
     /// taken literally. Typing `alice` should find `Alice`; deliberately
     /// typing `Alice` should not find `alice`.
-    pub fn new(pattern: &str) -> Result<Search, Error> {
-        let has_upper = pattern.chars().any(|c| c.is_uppercase());
+    pub fn new(pattern: &str) -> Result<Self, Error> {
+        let has_upper = pattern.chars().any(char::is_uppercase);
         let re = RegexBuilder::new(pattern)
             .case_insensitive(!has_upper)
             .build()
             .map_err(|e| Error::InvalidRegex(e.to_string()))?;
-        Ok(Search {
+        Ok(Self {
             re,
             pattern: pattern.to_string(),
         })

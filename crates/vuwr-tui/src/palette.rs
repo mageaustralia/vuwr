@@ -175,9 +175,7 @@ fn truecolor() -> bool {
     use std::sync::OnceLock;
     static TRUECOLOR: OnceLock<bool> = OnceLock::new();
     *TRUECOLOR.get_or_init(|| {
-        std::env::var("COLORTERM")
-            .map(|v| v.contains("truecolor") || v.contains("24bit"))
-            .unwrap_or(false)
+        std::env::var("COLORTERM").is_ok_and(|v| v.contains("truecolor") || v.contains("24bit"))
     })
 }
 

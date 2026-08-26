@@ -34,7 +34,7 @@ struct TableShape {
 }
 
 impl XmlDoc {
-    pub fn parse(bytes: &[u8]) -> Result<XmlDoc, Error> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
         let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let (children, _rest) = parse_children(text, text.trim_start())?;
         // `root`/`root_mut` index into this, so an empty document would
@@ -44,7 +44,7 @@ impl XmlDoc {
                 offset: bytes.len(),
             });
         }
-        Ok(XmlDoc {
+        Ok(Self {
             children,
             shape: std::cell::RefCell::new(None),
         })
@@ -351,7 +351,7 @@ fn field_of(elem: &Element, name: &str) -> Option<String> {
     element_children(elem)
         .into_iter()
         .find(|c| c.tag == name)
-        .map(|c| c.text_content())
+        .map(super::node::Element::text_content)
 }
 
 /// An element's element children, in order.
@@ -413,10 +413,10 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>) {
             out.extend_from_slice(b"<?xml");
             out.extend_from_slice(format!(" version=\"{}\"", decl.version).as_bytes());
             if let Some(enc) = &decl.encoding {
-                out.extend_from_slice(format!(" encoding=\"{}\"", enc).as_bytes());
+                out.extend_from_slice(format!(" encoding=\"{enc}\"").as_bytes());
             }
             if let Some(sa) = &decl.standalone {
-                out.extend_from_slice(format!(" standalone=\"{}\"", sa).as_bytes());
+                out.extend_from_slice(format!(" standalone=\"{sa}\"").as_bytes());
             }
             out.extend_from_slice(b"?>");
         }
@@ -437,7 +437,7 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>) {
             out.extend_from_slice(raw.as_bytes());
         }
         Node::ProcessingInstruction { target, data } => {
-            out.extend_from_slice(format!("<?{}", target).as_bytes());
+            out.extend_from_slice(format!("<?{target}").as_bytes());
             if !data.is_empty() {
                 out.push(b' ');
                 out.extend_from_slice(data.as_bytes());
@@ -456,7 +456,7 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>) {
                     out.extend_from_slice(leading.as_bytes());
                 }
                 out.extend_from_slice(name.as_bytes());
-                out.extend_from_slice(format!("={}{}{}", q, value, q).as_bytes());
+                out.extend_from_slice(format!("={q}{value}{q}").as_bytes());
             }
             out.extend_from_slice(elem.tag_trailing.as_bytes());
             if elem.self_closing {
@@ -761,10 +761,7 @@ fn parse_attrs(content: &str) -> Vec<Attr> {
         }
         let quote = rest.as_bytes()[0];
         if quote == b'"' || quote == b'\'' {
-            let close = rest[1..]
-                .find(quote as char)
-                .map(|i| i + 1)
-                .unwrap_or(rest.len());
+            let close = rest[1..].find(quote as char).map_or(rest.len(), |i| i + 1);
             let value = rest[1..close].to_string();
             attrs.push((name, value, quote as char, leading));
             rest = &rest[close + 1..];

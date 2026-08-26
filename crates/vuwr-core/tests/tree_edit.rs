@@ -1625,7 +1625,7 @@ fn a_tree_search_opens_the_node_it_found() {
     assert!(
         s.tree_rows
             .get(s.grid.cursor.0 - 1)
-            .is_some_and(|r| r.is_expanded()),
+            .is_some_and(vuwr_core::TreeRow::is_expanded),
         "the item holding it was opened"
     );
 }
@@ -1677,8 +1677,7 @@ fn a_text_search_lands_on_the_line_that_matched() {
     let line = s.table_cell(s.grid.cursor.0, 0).unwrap_or_default();
     assert!(
         line.contains("SKU027"),
-        "landed on {:?}, which does not hold the match",
-        line
+        "landed on {line:?}, which does not hold the match"
     );
 
     // Markup is on screen, so it is searchable — no cell contains it.

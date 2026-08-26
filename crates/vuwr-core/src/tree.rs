@@ -38,20 +38,20 @@ pub enum ValueKind {
 }
 
 impl ValueKind {
-    pub fn of(node: &Node) -> ValueKind {
+    pub fn of(node: &Node) -> Self {
         match node {
-            Node::Null => ValueKind::Null,
-            Node::Bool(_) => ValueKind::Bool,
-            Node::Number(_) => ValueKind::Number,
-            Node::Str(_) => ValueKind::String,
-            Node::Array(_) => ValueKind::Array,
-            Node::Map(_) => ValueKind::Object,
-            Node::Element(_) => ValueKind::Element,
-            Node::Comment(_) => ValueKind::Comment,
+            Node::Null => Self::Null,
+            Node::Bool(_) => Self::Bool,
+            Node::Number(_) => Self::Number,
+            Node::Str(_) => Self::String,
+            Node::Array(_) => Self::Array,
+            Node::Map(_) => Self::Object,
+            Node::Element(_) => Self::Element,
+            Node::Comment(_) => Self::Comment,
             // CDATA is text as far as a reader is concerned; only the
             // escaping differs.
-            Node::Text(_) | Node::CData(_) => ValueKind::Text,
-            _ => ValueKind::Other,
+            Node::Text(_) | Node::CData(_) => Self::Text,
+            _ => Self::Other,
         }
     }
 }
@@ -93,8 +93,8 @@ pub struct Expansion {
 }
 
 impl Expansion {
-    pub fn new() -> Expansion {
-        Expansion::default()
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn is_open(&self, path: &[PathSeg]) -> bool {

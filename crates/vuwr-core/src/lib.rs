@@ -6,6 +6,13 @@
 //! (`rayon`), `std::time::Instant` (use `web-time`), or `memmap2`. CI checks
 //! this crate against the wasm target on every push.
 
+// No `unsafe` in the core, ever. It parses whatever a stranger's file
+// happens to contain, and it is the crate other people would embed — the
+// two places where a memory bug costs the most. This used to live in the
+// manifest; cargo cannot merge a crate's own lints with the workspace's,
+// so it is stated here where it is also visible while reading the code.
+#![forbid(unsafe_code)]
+
 mod command;
 mod csv;
 mod diagnostics;
@@ -129,32 +136,32 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::InvalidUtf8 => write!(f, "input is not valid UTF-8"),
-            Error::UnclosedQuote { .. } => write!(f, "quoted field is never closed"),
-            Error::RowOutOfRange { row, len } => {
+            Self::InvalidUtf8 => write!(f, "input is not valid UTF-8"),
+            Self::UnclosedQuote { .. } => write!(f, "quoted field is never closed"),
+            Self::RowOutOfRange { row, len } => {
                 write!(f, "row {row} is out of range ({len} rows)")
             }
-            Error::ColumnOutOfRange { column, len } => {
+            Self::ColumnOutOfRange { column, len } => {
                 write!(f, "column {column} is out of range ({len} columns)")
             }
-            Error::ColumnLengthMismatch { expected, got } => {
+            Self::ColumnLengthMismatch { expected, got } => {
                 write!(f, "column needs {expected} cells, got {got}")
             }
-            Error::RaggedRows => write!(f, "rows have differing widths"),
-            Error::EmptyDocument => write!(f, "document has no rows"),
-            Error::UnexpectedToken { .. } => write!(f, "unexpected token"),
-            Error::UnexpectedEof { .. } => write!(f, "unexpected end of input"),
-            Error::InvalidEscape { .. } => write!(f, "invalid escape sequence"),
-            Error::EditNotSupported { format } => {
+            Self::RaggedRows => write!(f, "rows have differing widths"),
+            Self::EmptyDocument => write!(f, "document has no rows"),
+            Self::UnexpectedToken { .. } => write!(f, "unexpected token"),
+            Self::UnexpectedEof { .. } => write!(f, "unexpected end of input"),
+            Self::InvalidEscape { .. } => write!(f, "invalid escape sequence"),
+            Self::EditNotSupported { format } => {
                 write!(f, "editing {format} documents is not supported yet")
             }
-            Error::UnclosedTag { tag, .. } => write!(f, "<{tag}> is never closed"),
-            Error::MismatchedTag { opened, closed, .. } => {
+            Self::UnclosedTag { tag, .. } => write!(f, "<{tag}> is never closed"),
+            Self::MismatchedTag { opened, closed, .. } => {
                 write!(f, "<{opened}> is closed by </{closed}>")
             }
-            Error::NoSuchPath => write!(f, "no such path in the document"),
-            Error::InvalidRegex(msg) => write!(f, "bad pattern: {msg}"),
-            Error::NotTableShaped => write!(f, "document has no table-shaped view"),
+            Self::NoSuchPath => write!(f, "no such path in the document"),
+            Self::InvalidRegex(msg) => write!(f, "bad pattern: {msg}"),
+            Self::NotTableShaped => write!(f, "document has no table-shaped view"),
         }
     }
 }
@@ -163,12 +170,12 @@ impl Error {
     /// The byte offset this error points at, if it has one.
     pub fn offset(&self) -> Option<usize> {
         match self {
-            Error::UnclosedQuote { offset }
-            | Error::UnexpectedToken { offset }
-            | Error::UnexpectedEof { offset }
-            | Error::InvalidEscape { offset }
-            | Error::UnclosedTag { offset, .. }
-            | Error::MismatchedTag { offset, .. } => Some(*offset),
+            Self::UnclosedQuote { offset }
+            | Self::UnexpectedToken { offset }
+            | Self::UnexpectedEof { offset }
+            | Self::InvalidEscape { offset }
+            | Self::UnclosedTag { offset, .. }
+            | Self::MismatchedTag { offset, .. } => Some(*offset),
             _ => None,
         }
     }
@@ -241,7 +248,7 @@ impl Document {
     /// first cell happens to start with `{` is still a CSV. Only
     /// [`FormatHint::Auto`] sniffs, in which case the first non-whitespace
     /// byte decides: `{`/`[` is JSON, `<` is XML, anything else is CSV.
-    pub fn parse(bytes: &[u8], hint: FormatHint) -> Result<Document, Error> {
+    pub fn parse(bytes: &[u8], hint: FormatHint) -> Result<Self, Error> {
         // A BOM must not defeat format detection (it is not ASCII
         // whitespace, so it would otherwise sniff as CSV) and must not end
         // up inside the first key or cell.
@@ -261,7 +268,7 @@ impl Document {
             },
         };
 
-        Ok(Document {
+        Ok(Self {
             kind,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -337,7 +344,7 @@ impl Document {
         // Applies to every format: the op carries a whole document.
         if let EditOp::ReplaceSource { bytes } = op {
             let previous = self.serialize();
-            let replacement = Document::parse(&bytes, self.hint)?;
+            let replacement = Self::parse(&bytes, self.hint)?;
             self.kind = replacement.kind;
             self.bom = replacement.bom;
             return Ok(EditOp::ReplaceSource { bytes: previous });

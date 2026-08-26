@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 # System clipboard for copy/paste. Native only; the TUI does not build
 # for wasm.

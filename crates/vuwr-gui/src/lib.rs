@@ -165,11 +165,7 @@ impl VuwrApp {
     ///
     /// Separate from `new` because it needs a context; callers that have
     /// one (both entry points do) should use it.
-    pub fn with_context(
-        ctx: &egui::Context,
-        path: Option<PathBuf>,
-        doc: Option<Document>,
-    ) -> VuwrApp {
+    pub fn with_context(ctx: &egui::Context, path: Option<PathBuf>, doc: Option<Document>) -> Self {
         fonts::install(ctx);
         theme::set_dark(matches!(
             ctx.system_theme(),
@@ -180,15 +176,15 @@ impl VuwrApp {
         #[cfg(target_arch = "wasm32")]
         handoff::wake_with(ctx);
         let mut app = match doc {
-            Some(doc) => VuwrApp::new(path, doc),
-            None => VuwrApp::empty(),
+            Some(doc) => Self::new(path, doc),
+            None => Self::empty(),
         };
         app.dark = theme::is_dark();
         app
     }
 
-    pub fn new(path: Option<PathBuf>, doc: Document) -> VuwrApp {
-        VuwrApp {
+    pub fn new(path: Option<PathBuf>, doc: Document) -> Self {
+        Self {
             session: Some(Session::new(doc)),
             path,
             last_output: None,
@@ -205,8 +201,8 @@ impl VuwrApp {
     }
 
     /// An app with nothing loaded yet, waiting for a file.
-    pub fn empty() -> VuwrApp {
-        VuwrApp {
+    pub fn empty() -> Self {
+        Self {
             session: None,
             path: None,
             last_output: None,
@@ -232,14 +228,13 @@ impl VuwrApp {
             .as_ref()
             .and_then(|p| p.extension())
             .and_then(|e| e.to_str())
-            .map(|ext| match ext {
+            .map_or(vuwr_core::FormatHint::Auto, |ext| match ext {
                 "csv" => vuwr_core::FormatHint::Csv,
                 "tsv" => vuwr_core::FormatHint::Tsv,
                 "json" => vuwr_core::FormatHint::Json,
                 "xml" => vuwr_core::FormatHint::Xml,
                 _ => vuwr_core::FormatHint::Auto,
-            })
-            .unwrap_or(vuwr_core::FormatHint::Auto);
+            });
         let doc = Document::parse(bytes, hint)?;
         self.session = Some(Session::new(doc));
         self.path = name;
@@ -354,12 +349,10 @@ impl VuwrApp {
                 return;
             }
             Command::SaveAs => {
-                let name = self
-                    .path
-                    .as_ref()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "untitled.json".to_string());
+                let name = self.path.as_ref().and_then(|p| p.file_name()).map_or_else(
+                    || "untitled.json".to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
                 let bytes = self
                     .session
                     .as_ref()
@@ -391,7 +384,7 @@ impl VuwrApp {
     }
 
     pub(crate) fn apply_effect(&mut self, effect: Effect, ctx: &egui::Context) {
-        self.apply(effect, ctx)
+        self.apply(effect, ctx);
     }
 
     fn apply(&mut self, effect: Effect, ctx: &egui::Context) {
@@ -419,7 +412,10 @@ impl VuwrApp {
                 self.report_status("colour schemes apply to the terminal, not the window");
             }
             Effect::EditLarge => {
-                self.large_edit = self.session.as_ref().and_then(|s| s.large_edit_text());
+                self.large_edit = self
+                    .session
+                    .as_ref()
+                    .and_then(vuwr_core::Session::large_edit_text);
             }
             Effect::Output(text) => {
                 // A GUI has no stdout worth writing to, so the marked rows
@@ -957,10 +953,10 @@ impl VuwrApp {
     /// The file's own name, without the unsaved marker: the dot says that.
     fn file_name(&self) -> String {
         match (&self.path, self.session.is_some()) {
-            (Some(p), _) => p
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| p.display().to_string()),
+            (Some(p), _) => p.file_name().map_or_else(
+                || p.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            ),
             (None, true) => "(piped)".to_string(),
             (None, false) => String::new(),
         }
@@ -1432,7 +1428,7 @@ impl VuwrApp {
         let where_from = self
             .session
             .as_ref()
-            .map(|s| s.position_label())
+            .map(vuwr_core::Session::position_label)
             .unwrap_or_default();
 
         // A definite size, decided from the screen rather than from the

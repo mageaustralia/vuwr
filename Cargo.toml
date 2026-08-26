@@ -13,6 +13,44 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+# The house style, enforced by the compiler rather than by review.
+#
+# Clippy's default groups are on everywhere; this adds the ones from
+# `pedantic` and `nursery` that catch something real here, and says
+# plainly which ones are deliberately off. A blanket `pedantic` produces
+# two hundred warnings dominated by the float and index casts that
+# rendering is made of, and a warning nobody can act on trains people to
+# ignore warnings.
+#
+# In the manifest rather than in CI so an editor shows the same thing the
+# build does.
+[workspace.lints.clippy]
+# Modernisation: the idiom that replaced an older one.
+uninlined_format_args = "warn"
+use_self = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+explicit_iter_loop = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+# Left off deliberately: `format_push_string` and `items_after_statements`
+# fired only inside test fixtures building sample documents, where the
+# plain form reads better than the one they ask for, and
+# `cast_possible_truncation` fires two dozen times on the float-to-pixel
+# casts that drawing is made of. A warning nobody can act on trains people
+# to ignore warnings.
+#
+# Correctness-adjacent.
+inefficient_to_string = "warn"
+implicit_clone = "warn"
+cloned_instead_of_copied = "warn"
+
+[workspace.lints.rust]
+# The one `unsafe` block is the `poll` in the terminal-background query,
+# and it carries a SAFETY note. Anything else should have to argue for
+# itself at the call site.
+unsafe_code = "warn"
+
 [profile.release]
 strip = true
 lto = true

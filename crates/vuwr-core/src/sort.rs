@@ -25,10 +25,10 @@ pub enum SortDirection {
 }
 
 impl SortDirection {
-    pub fn flipped(self) -> SortDirection {
+    pub fn flipped(self) -> Self {
         match self {
-            SortDirection::Ascending => SortDirection::Descending,
-            SortDirection::Descending => SortDirection::Ascending,
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
         }
     }
 }
@@ -90,8 +90,7 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 fn digits_at(s: &str, from: usize) -> &str {
     let end = s[from..]
         .find(|c: char| !c.is_ascii_digit())
-        .map(|i| from + i)
-        .unwrap_or(s.len());
+        .map_or(s.len(), |i| from + i);
     &s[from..end]
 }
 

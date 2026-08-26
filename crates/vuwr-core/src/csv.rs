@@ -18,8 +18,8 @@ pub enum LineEnding {
 impl LineEnding {
     fn as_bytes(self) -> &'static [u8] {
         match self {
-            LineEnding::Lf => b"\n",
-            LineEnding::CrLf => b"\r\n",
+            Self::Lf => b"\n",
+            Self::CrLf => b"\r\n",
         }
     }
 }
@@ -35,8 +35,8 @@ pub struct Cell {
 }
 
 impl Cell {
-    pub fn unquoted(value: impl Into<String>) -> Cell {
-        Cell {
+    pub fn unquoted(value: impl Into<String>) -> Self {
+        Self {
             value: value.into(),
             quoted: false,
         }
@@ -57,7 +57,7 @@ pub struct CsvDoc {
 }
 
 impl CsvDoc {
-    pub fn parse(bytes: &[u8], hint: FormatHint) -> Result<CsvDoc, Error> {
+    pub fn parse(bytes: &[u8], hint: FormatHint) -> Result<Self, Error> {
         let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?;
         let delimiter = match hint {
             FormatHint::Csv => b',',
@@ -157,7 +157,7 @@ impl CsvDoc {
             rows.push(row);
         }
 
-        Ok(CsvDoc {
+        Ok(Self {
             delimiter,
             line_ending: line_ending.unwrap_or(LineEnding::Lf),
             trailing_newline: bytes.last() == Some(&b'\n'),
@@ -171,8 +171,8 @@ impl CsvDoc {
         line_ending: LineEnding,
         trailing_newline: bool,
         rows: Vec<Row>,
-    ) -> CsvDoc {
-        CsvDoc {
+    ) -> Self {
+        Self {
             delimiter,
             line_ending,
             trailing_newline,

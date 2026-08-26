@@ -45,8 +45,8 @@ pub enum NewNode {
 impl NewNode {
     pub fn node(self) -> crate::Node {
         match self {
-            NewNode::Value => crate::Node::Str(String::new()),
-            NewNode::Object => crate::Node::Map(crate::Map {
+            Self::Value => crate::Node::Str(String::new()),
+            Self::Object => crate::Node::Map(crate::Map {
                 open: '{',
                 close: '}',
                 entries: Vec::new(),
@@ -54,7 +54,7 @@ impl NewNode {
                 inline: true,
                 spaced: false,
             }),
-            NewNode::Array => crate::Node::Array(crate::Array {
+            Self::Array => crate::Node::Array(crate::Array {
                 open: '[',
                 close: ']',
                 items: Vec::new(),
@@ -67,9 +67,9 @@ impl NewNode {
 
     pub fn label(self) -> &'static str {
         match self {
-            NewNode::Value => "value",
-            NewNode::Object => "object",
-            NewNode::Array => "array",
+            Self::Value => "value",
+            Self::Object => "object",
+            Self::Array => "array",
         }
     }
 }
@@ -143,9 +143,9 @@ pub struct Entry {
 impl Entry {
     /// An entry holding `buf`, with the caret at the end — where a
     /// rename or a tweak usually wants it.
-    pub fn at_end(buf: String) -> Entry {
+    pub fn at_end(buf: String) -> Self {
         let caret = buf.len();
-        Entry {
+        Self {
             buf,
             caret,
             anchor: caret,
@@ -162,8 +162,8 @@ pub enum PromptKind {
 impl PromptKind {
     pub fn sigil(self) -> char {
         match self {
-            PromptKind::Find => '/',
-            PromptKind::Filter => '&',
+            Self::Find => '/',
+            Self::Filter => '&',
         }
     }
 }
@@ -261,7 +261,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(doc: Document) -> Session {
+    pub fn new(doc: Document) -> Self {
         let (view, widths): (ViewMode, Vec<usize>) = if doc.is_json() || doc.is_xml() {
             (ViewMode::Tree, Vec::new())
         } else {
@@ -270,7 +270,7 @@ impl Session {
                 compute_widths(doc.as_csv().expect("CSV only")),
             )
         };
-        let mut app = Session {
+        let mut app = Self {
             doc,
             grid: GridState::new(),
             mode: Mode::Normal,
@@ -341,7 +341,7 @@ impl Session {
 
     /// The columns on display, as indices into the document.
     pub fn visible_columns(&self) -> Vec<usize> {
-        let cols = self.doc.sheet().map(|s| s.dims().1).unwrap_or(0);
+        let cols = self.doc.sheet().map_or(0, |s| s.dims().1);
         (0..cols)
             .filter(|c| !self.hidden_columns.contains(c))
             .collect()
@@ -440,10 +440,7 @@ impl Session {
     /// True when column names are carried separately from the rows, so the
     /// renderer must draw a header row. CSV's header is its own first row.
     pub fn has_separate_header(&self) -> bool {
-        self.doc
-            .sheet()
-            .map(|s| !s.header_is_first_row())
-            .unwrap_or(false)
+        self.doc.sheet().is_some_and(|s| !s.header_is_first_row())
     }
 
     /// The views this document supports, in cycle order. Drives the
@@ -1006,9 +1003,7 @@ impl Session {
             // views behaving alike, which is the point.
             ViewMode::Tree => {
                 let row = self.tree_rows.get(self.grid.cursor.0);
-                let used = row
-                    .map(|r| r.depth * 2 + r.label.chars().count() + 4)
-                    .unwrap_or(0);
+                let used = row.map_or(0, |r| r.depth * 2 + r.label.chars().count() + 4);
                 self.viewport_cols.saturating_sub(used).max(8)
             }
             ViewMode::Text => usize::MAX,
@@ -1346,8 +1341,7 @@ impl Session {
         };
         self.text_lines
             .get(b.first)
-            .map(|l| l.len() - l.trim_start_matches([' ', '\t']).len())
-            .unwrap_or(0)
+            .map_or(0, |l| l.len() - l.trim_start_matches([' ', '\t']).len())
     }
 
     /// The block under the cursor, as lines and as bytes.
@@ -1847,7 +1841,7 @@ impl Session {
 
     /// Where the caret sits in the text being entered, as a byte index.
     pub fn entry_caret(&self) -> usize {
-        self.entry_ref().map(|e| e.caret).unwrap_or(0)
+        self.entry_ref().map_or(0, |e| e.caret)
     }
 
     pub fn is_editing_inline(&self) -> bool {
@@ -2266,7 +2260,7 @@ impl Session {
     /// How many rows a filter is letting through, or `None` when nothing
     /// is filtered. A control that says it is on should say what it did.
     pub fn visible_count(&self) -> Option<usize> {
-        self.grid.visible.as_ref().map(|rows| rows.len())
+        self.grid.visible.as_ref().map(std::vec::Vec::len)
     }
 
     /// Sort by the cursor's column, flipping direction if it is already
@@ -2944,9 +2938,7 @@ fn line_is_self_contained(line: &[u8]) -> bool {
 fn opaque_end(src: &[u8], i: usize) -> Option<usize> {
     let rest = &src[i..];
     let after = |needle: &[u8], from: usize| -> usize {
-        find(src, from, needle)
-            .map(|p| p + needle.len())
-            .unwrap_or(src.len())
+        find(src, from, needle).map_or(src.len(), |p| p + needle.len())
     };
     if rest.starts_with(b"<!--") {
         Some(after(b"-->", i + 4))

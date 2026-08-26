@@ -181,8 +181,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         }
         let width = widths
             .get(cursor.1)
-            .map(|c| *c as f32 * char_width + GRIP + PAD * 2.0)
-            .unwrap_or(0.0);
+            .map_or(0.0, |c| *c as f32 * char_width + GRIP + PAD * 2.0);
         let at = ui
             .ctx()
             .memory(|m| m.data.get_temp::<f32>(egui::Id::new("sheet-offset-x")))
@@ -608,11 +607,7 @@ pub fn place_caret(
     let column = ((pos.x - text_left) / advance).round().max(0.0) as usize;
     // Monospace, so the column is a character index; the byte offset it
     // sits at is what the buffer is addressed by.
-    let byte = buf
-        .char_indices()
-        .nth(column)
-        .map(|(i, _)| i)
-        .unwrap_or(buf.len());
+    let byte = buf.char_indices().nth(column).map_or(buf.len(), |(i, _)| i);
     if word {
         session.select_word_at(byte);
     } else if response.dragged() {
@@ -801,14 +796,14 @@ pub enum NodeAction {
 impl NodeAction {
     pub fn label(self) -> &'static str {
         match self {
-            NodeAction::EditValue => "Edit value",
-            NodeAction::EditLarge => "Edit value in a window…",
-            NodeAction::CopyValue => "Copy value",
-            NodeAction::Duplicate => "Duplicate",
-            NodeAction::Remove => "Remove",
-            NodeAction::InsertValueAfter => "Value",
-            NodeAction::InsertObjectAfter => "Object",
-            NodeAction::InsertArrayAfter => "Array",
+            Self::EditValue => "Edit value",
+            Self::EditLarge => "Edit value in a window…",
+            Self::CopyValue => "Copy value",
+            Self::Duplicate => "Duplicate",
+            Self::Remove => "Remove",
+            Self::InsertValueAfter => "Value",
+            Self::InsertObjectAfter => "Object",
+            Self::InsertArrayAfter => "Array",
         }
     }
 }

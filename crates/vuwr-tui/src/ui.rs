@@ -564,7 +564,7 @@ fn caret_spans(app: &App) -> Vec<Span<'static>> {
         // The character under the caret is highlighted; at the end of the
         // line there is none, so a space stands in.
         Span::styled(
-            under.map(|c| c.to_string()).unwrap_or_else(|| " ".into()),
+            under.map_or_else(|| " ".into(), |c| c.to_string()),
             Style::default().add_modifier(ratatui::style::Modifier::REVERSED),
         ),
         Span::raw(rest),

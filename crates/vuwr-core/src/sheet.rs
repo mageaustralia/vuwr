@@ -52,7 +52,7 @@ impl Sheet for CsvDoc {
     }
 
     fn cell(&self, row: usize, col: usize) -> Option<String> {
-        CsvDoc::cell(self, row, col).map(|c| c.value.clone())
+        Self::cell(self, row, col).map(|c| c.value.clone())
     }
 
     fn set_cell(&mut self, row: usize, col: usize, value: &str) -> Result<EditOp, Error> {
@@ -112,7 +112,7 @@ impl Sheet for JsonDoc {
 
 impl Sheet for XmlDoc {
     fn headers(&self) -> Vec<String> {
-        XmlDoc::table_headers(self)
+        Self::table_headers(self)
     }
 
     fn dims(&self) -> (usize, usize) {
