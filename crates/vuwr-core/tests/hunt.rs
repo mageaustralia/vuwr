@@ -316,3 +316,37 @@ fn a_field_in_the_panel_is_the_column_you_clicked() {
     s.focus_record_field(1);
     assert_eq!(s.grid.cursor.1, 2);
 }
+
+/// A file opens showing what is in it.
+///
+/// A feed opened on one closed line reading `channel : <channel>` — true,
+/// and no use to anybody. It opens the way down to the first record now,
+/// and puts the cursor on it so the panel beside has something to show.
+#[test]
+fn a_tree_opens_on_its_first_record() {
+    let xml = "<rss><channel><title>Feed</title>\
+               <item><g:id>A1</g:id><g:price>19.95</g:price></item>\
+               <item><g:id>A2</g:id><g:price>29.95</g:price></item></channel></rss>";
+    let s = Session::new(Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap());
+
+    let labels: Vec<&str> = s.tree_rows.iter().map(|r| r.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["channel", "title", "item", "g:id", "g:price", "item"],
+        "the first item was not opened"
+    );
+    assert_eq!(
+        s.tree_rows[s.grid.cursor.0].label, "item",
+        "the cursor is not on the record"
+    );
+    // Which is what makes the panel useful the moment the file opens.
+    assert!(s.can_inspect());
+    assert_eq!(s.inspector().fields.len(), 2);
+}
+
+/// A document with nothing to open is left alone rather than unrolled.
+#[test]
+fn a_flat_document_opens_flat() {
+    let s = Session::new(Document::parse(br#"{"a":1,"b":2}"#, FormatHint::Json).unwrap());
+    assert_eq!(s.tree_rows.len(), 2);
+}

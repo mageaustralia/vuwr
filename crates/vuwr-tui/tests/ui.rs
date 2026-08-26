@@ -170,6 +170,9 @@ fn json_tree_cursor_moves() {
 #[test]
 fn json_tree_expands_in_place() {
     let mut a = json_app("{\"nested\":{\"x\":1},\"other\":2}");
+    // Closed first: a document opens with its first record already open,
+    // and this is about the opening.
+    a.handle_key(key(KeyCode::Char('_')));
     assert_eq!(a.tree_rows.len(), 2, "top level only");
 
     a.handle_key(key(KeyCode::Enter)); // open `nested`
@@ -189,6 +192,10 @@ fn json_tree_expands_in_place() {
 #[test]
 fn json_tree_expands_an_array() {
     let mut a = json_app("{\"items\":[1,2,3],\"name\":\"test\"}");
+    // A document opens with its first record already open, so this starts
+    // from closed to test the opening.
+    a.handle_key(key(KeyCode::Char('_')));
+    assert_eq!(a.tree_rows.len(), 2, "closed: two keys");
     a.handle_key(key(KeyCode::Enter));
     assert_eq!(a.tree_rows.len(), 5, "two keys plus three items");
     let out = render(&mut a, 40, 10);
@@ -1259,6 +1266,8 @@ fn tree_edits_commit_to_the_right_node() {
 fn right_opens_a_node_and_left_closes_it() {
     let doc = Document::parse(br#"{"a":1,"o":{"x":1,"y":2}}"#, FormatHint::Auto).unwrap();
     let mut app = App::new(PathBuf::from("t.json"), doc);
+    // Closed first, since a document opens on its first record.
+    app.handle_key(key(KeyCode::Char('_')));
     assert_eq!(app.tree_rows.len(), 2);
 
     app.handle_key(key(KeyCode::Down)); // the object

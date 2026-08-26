@@ -184,8 +184,15 @@ impl VuwrApp {
     }
 
     pub fn new(path: Option<PathBuf>, doc: Document) -> Self {
+        let mut session = Session::new(doc);
+        // Open with the panel showing, where there is a record for it to
+        // show. A window has the room, and a record read downwards is
+        // what a feed twenty-three columns wide is hard to read without.
+        // The terminal decides for itself: eighty columns is a different
+        // question.
+        session.show_detail = session.can_inspect();
         Self {
-            session: Some(Session::new(doc)),
+            session: Some(session),
             path,
             last_output: None,
             pending_g: false,
@@ -236,7 +243,11 @@ impl VuwrApp {
                 _ => vuwr_core::FormatHint::Auto,
             });
         let doc = Document::parse(bytes, hint)?;
-        self.session = Some(Session::new(doc));
+        let mut session = Session::new(doc);
+        // As on the way in: a file dropped on the window opens the same
+        // way one named on the command line does.
+        session.show_detail = session.can_inspect();
+        self.session = Some(session);
         self.path = name;
         self.load_error = None;
         Ok(())

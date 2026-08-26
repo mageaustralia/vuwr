@@ -328,7 +328,18 @@ impl Session {
             text_spans: Vec::new(),
         };
         if app.view == ViewMode::Tree {
-            app.rebuild_tree();
+            // Open on something rather than on one closed line reading
+            // `channel : <channel>`, and put the cursor on that first
+            // record so the panel beside it has a record to show.
+            if let Some(root) = app.tree_root() {
+                let record = app.expansion.expand_to_first_record(&root);
+                app.rebuild_tree();
+                if let Some(row) = app.tree_rows.iter().position(|r| r.path == record) {
+                    app.grid.cursor = (row, 0);
+                }
+            } else {
+                app.rebuild_tree();
+            }
         }
         app
     }
@@ -933,8 +944,12 @@ impl Session {
             }
             Command::ToggleDetail => {
                 self.show_detail = !self.show_detail;
-                if self.show_detail && self.detail_text().is_none() {
-                    self.status = "nothing selected to show".into();
+                // Against what the panel will actually show. It used to
+                // ask whether there was a line under the cursor, which is
+                // a different question and answered "nothing selected"
+                // over a panel full of fields.
+                if self.show_detail && !self.can_inspect() {
+                    self.status = "nothing to show here — put the cursor inside a value".into();
                 }
             }
             Command::ToggleHints => self.show_hints = !self.show_hints,

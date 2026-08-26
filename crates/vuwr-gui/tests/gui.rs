@@ -568,7 +568,16 @@ fn tree_select_and_toggle_actions() {
     app.apply_tree_action(TreeAction::Select(1), &ctx);
     assert_eq!(app.session().grid.cursor.0, 1);
 
+    // A document opens with its first record already open, so the first
+    // toggle closes it and the second opens it again.
     let path = app.session().tree_rows[1].path.clone();
+    assert_eq!(
+        app.session().tree_rows.len(),
+        3,
+        "opened on the first record"
+    );
+    app.apply_tree_action(TreeAction::Toggle(path.clone()), &ctx);
+    assert_eq!(app.session().tree_rows.len(), 2, "the object closed");
     app.apply_tree_action(TreeAction::Toggle(path), &ctx);
     assert_eq!(app.session().tree_rows.len(), 3, "the object opened");
 }
@@ -916,9 +925,10 @@ mod inspector {
         let mut app = VuwrApp::new(None, doc(&feed_row()));
         app.run(Command::ViewTable, &ctx);
         // Off the header row, so the values are values rather than the
-        // names repeated back.
+        // names repeated back. The panel is open already — a document
+        // opens with it showing where there is a record for it.
         app.run(Command::MoveDown, &ctx);
-        app.run(Command::ToggleDetail, &ctx);
+        assert!(app.session().show_detail, "the panel was not open");
 
         let painted = painted(&mut app, &ctx);
         // The key column: every field name, at whatever x the panel put

@@ -137,6 +137,39 @@ impl Expansion {
         self.open.clear();
         self.open.insert(Vec::new());
     }
+
+    /// Open the way down to the first record, and return its path.
+    ///
+    /// A feed opened on one closed line saying `channel : <channel>`,
+    /// which is true and shows nobody anything. This walks down the first
+    /// container at each level until it reaches one whose children are
+    /// all values — a record — and opens what it passed through, so the
+    /// file opens showing what is in it.
+    ///
+    /// Bounded, because a deeply nested document has no such thing and
+    /// should not be unrolled looking for one.
+    pub fn expand_to_first_record(&mut self, root: &Node) -> Vec<PathSeg> {
+        self.expand_root(root);
+        let mut path = Vec::new();
+        let mut node = root;
+        for _ in 0..6 {
+            let Some((seg, child)) = children(node)
+                .into_iter()
+                .find(|(_, child)| is_container(child))
+            else {
+                break;
+            };
+            path.push(seg);
+            self.open.insert(path.clone());
+            node = child;
+            // A record: everything in it is a value, so there is nothing
+            // further worth opening.
+            if children(node).iter().all(|(_, c)| !is_container(c)) {
+                break;
+            }
+        }
+        path
+    }
 }
 
 fn collect_containers(node: &Node, path: &mut Vec<PathSeg>, out: &mut BTreeSet<Vec<PathSeg>>) {
