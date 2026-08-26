@@ -1484,3 +1484,71 @@ fn enter_on_a_short_tree_value_edits_in_place() {
     assert!(matches!(effect, vuwr_core::Effect::None), "{effect:?}");
     assert!(s.is_editing_inline());
 }
+
+// --- A prompt is a text field like any other ---
+
+/// The search bar used to append characters and backspace the last one,
+/// so the caret could not move and a selection could not be deleted —
+/// pressing Delete took a character from the end wherever you had
+/// selected. It is the same field as a cell now.
+#[test]
+fn a_search_prompt_has_a_movable_caret() {
+    let mut s = session(r#"{"a":1}"#);
+    s.execute(Command::Find);
+    for c in "abcd".chars() {
+        s.input_char(c);
+    }
+    s.input_home();
+    assert_eq!(s.entry_caret(), 0);
+    s.input_char('X');
+    assert_eq!(s.entry().unwrap().1, "Xabcd", "typed at the caret");
+
+    s.input_delete();
+    assert_eq!(s.entry().unwrap().1, "Xbcd", "deleted at the caret");
+}
+
+/// Selecting in a prompt and pressing Delete removes the selection, not
+/// whatever happens to be under the caret.
+#[test]
+fn deleting_a_selection_in_a_prompt_removes_the_selection() {
+    let mut s = session(r#"{"a":1}"#);
+    s.execute(Command::Filter);
+    for c in "DLTA90431".chars() {
+        s.input_char(c);
+    }
+    // Select the first four, as a drag from the front would.
+    s.set_entry_caret(0);
+    for _ in 0..4 {
+        s.input_select_right();
+    }
+    assert_eq!(s.selected_text().as_deref(), Some("DLTA"));
+
+    s.input_delete();
+    assert_eq!(s.entry().unwrap().1, "90431");
+}
+
+/// And typing over a selection replaces it, which is what a paste over
+/// selected text has to do.
+#[test]
+fn typing_over_a_selection_in_a_prompt_replaces_it() {
+    let mut s = session(r#"{"a":1}"#);
+    s.execute(Command::Find);
+    s.input_text("DLTA90431");
+    s.select_all();
+    s.input_text("WRZ990200");
+    assert_eq!(s.entry().unwrap().1, "WRZ990200", "not appended");
+}
+
+/// Copy and cut work there too, and a prompt with nothing selected hands
+/// back the whole thing.
+#[test]
+fn a_prompt_can_be_copied_and_cut() {
+    let mut s = session(r#"{"a":1}"#);
+    s.execute(Command::Find);
+    s.input_text("hello");
+    assert_eq!(s.entry_text().as_deref(), Some("hello"));
+
+    s.select_all();
+    assert_eq!(s.input_cut().as_deref(), Some("hello"));
+    assert_eq!(s.entry().unwrap().1, "");
+}

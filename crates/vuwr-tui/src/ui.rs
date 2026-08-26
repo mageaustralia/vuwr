@@ -536,7 +536,23 @@ fn caret_spans(app: &App) -> Vec<Span<'static>> {
     // A terminal row is one line; a value containing newlines would break
     // the layout, and such values go to the larger editor anyway.
     let buf = buf.replace('\n', "⏎");
-    let buf = buf.as_str();
+
+    // A selection is what a keystroke would replace, so it is the thing
+    // with a background. Without this, selected text looked no different
+    // from the rest and Delete appeared to take the wrong characters.
+    if let Some((a, b)) = app.entry_selection() {
+        return vec![
+            Span::raw(buf[..a].to_string()),
+            Span::styled(
+                buf[a..b].to_string(),
+                Style::default()
+                    .fg(palette::text())
+                    .add_modifier(ratatui::style::Modifier::REVERSED),
+            ),
+            Span::raw(buf[b..].to_string()),
+        ];
+    }
+
     let caret = app.entry_caret().min(buf.len());
     let (before, after) = buf.split_at(caret);
     let mut after_chars = after.chars();
@@ -549,7 +565,7 @@ fn caret_spans(app: &App) -> Vec<Span<'static>> {
         // line there is none, so a space stands in.
         Span::styled(
             under.map(|c| c.to_string()).unwrap_or_else(|| " ".into()),
-            Style::default().reversed(),
+            Style::default().add_modifier(ratatui::style::Modifier::REVERSED),
         ),
         Span::raw(rest),
     ]
@@ -563,15 +579,25 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     // A prompt or an edit takes the line: there is nowhere else for what
     // is being typed to go.
     let line = match &app.mode {
-        Mode::Prompt { kind, buf } => Line::from(Span::styled(
-            format!(" {}{buf}▏", kind.sigil()),
-            Style::default().fg(palette::text()),
-        )),
-        Mode::Command { buf } => Line::from(Span::styled(
-            format!(" :{buf}▏"),
-            Style::default().fg(palette::text()),
-        )),
-        Mode::Edit { .. } => {
+        // A prompt is a text field like any other: the caret shows where
+        // it is, and a selection shows what a keystroke would replace.
+        Mode::Prompt { kind, .. } => {
+            let mut spans = vec![Span::styled(
+                format!(" {}", kind.sigil()),
+                Style::default().fg(palette::accent()),
+            )];
+            spans.extend(caret_spans(app));
+            Line::from(spans)
+        }
+        Mode::Command(_) => {
+            let mut spans = vec![Span::styled(
+                " :".to_string(),
+                Style::default().fg(palette::accent()),
+            )];
+            spans.extend(caret_spans(app));
+            Line::from(spans)
+        }
+        Mode::Edit(_) => {
             let (r, c) = app.grid.cursor;
             let what = if app.is_renaming() {
                 "renaming"

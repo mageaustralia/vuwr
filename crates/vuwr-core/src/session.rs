@@ -111,27 +111,46 @@ pub enum Effect {
 
 pub enum Mode {
     Normal,
-    /// Inline edit of whatever the cursor is on. `caret` is a byte index
-    /// into `buf`: an edit without a movable caret is a text field you can
-    /// only append to, which is not editing.
-    ///
-    /// `anchor` is where a selection started, so `anchor..caret` — in
-    /// either order — is what is selected. Equal to `caret` means nothing
-    /// is selected, which is the usual state.
-    Edit {
-        buf: String,
-        caret: usize,
-        anchor: usize,
-    },
+    /// Inline edit of whatever the cursor is on.
+    Edit(Entry),
     /// The `:` command line.
-    Command {
-        buf: String,
-    },
+    Command(Entry),
     /// A `/` or `&` prompt.
     Prompt {
         kind: PromptKind,
-        buf: String,
+        entry: Entry,
     },
+}
+
+/// Text being typed, wherever it is being typed.
+///
+/// One shape for all three, because a text field is a text field. The
+/// search bar used to be its own thing — append a character, backspace
+/// the last one — so the caret could not move, and a selection could not
+/// be deleted because there was nothing to select with. Anything that
+/// takes typing gets the same behaviour by construction now.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Entry {
+    pub buf: String,
+    /// A byte index into `buf`.
+    pub caret: usize,
+    /// Where a selection started, so `anchor..caret` — in either order —
+    /// is what is selected. Equal to `caret` means nothing is selected,
+    /// which is the usual state.
+    pub anchor: usize,
+}
+
+impl Entry {
+    /// An entry holding `buf`, with the caret at the end — where a
+    /// rename or a tweak usually wants it.
+    pub fn at_end(buf: String) -> Entry {
+        let caret = buf.len();
+        Entry {
+            buf,
+            caret,
+            anchor: caret,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -450,7 +469,7 @@ impl Session {
     /// differs sharply between a table, a tree, a pager and an open edit.
     pub fn hints(&self) -> Vec<Command> {
         match self.mode {
-            Mode::Edit { .. } | Mode::Command { .. } | Mode::Prompt { .. } => Vec::new(),
+            Mode::Edit(_) | Mode::Command(_) | Mode::Prompt { .. } => Vec::new(),
             Mode::Normal => {
                 let mut v = vec![Command::Help];
                 match self.view {
@@ -702,11 +721,7 @@ impl Session {
                     // hold it rather than making the user find F2.
                     return Effect::EditLarge;
                 } else if cmd == Command::ReplaceCell {
-                    self.mode = Mode::Edit {
-                        buf: String::new(),
-                        caret: 0,
-                        anchor: 0,
-                    };
+                    self.mode = Mode::Edit(Entry::default());
                 } else {
                     self.start_edit();
                 }
@@ -745,13 +760,13 @@ impl Session {
             Command::Find => {
                 self.mode = Mode::Prompt {
                     kind: PromptKind::Find,
-                    buf: String::new(),
+                    entry: Entry::default(),
                 }
             }
             Command::Filter => {
                 self.mode = Mode::Prompt {
                     kind: PromptKind::Filter,
-                    buf: String::new(),
+                    entry: Entry::default(),
                 }
             }
             Command::FindNext => self.find_step(true),
@@ -841,7 +856,7 @@ impl Session {
             // quit, or the edits it was asked to save are lost.
             Command::SaveAndQuit => return Effect::SaveAndQuit,
 
-            Command::OpenPalette => self.mode = Mode::Command { buf: String::new() },
+            Command::OpenPalette => self.mode = Mode::Command(Entry::default()),
             Command::Help => self.show_help = !self.show_help,
             Command::ToggleDecoded => {
                 if !self.doc.is_xml() {
@@ -1231,13 +1246,7 @@ impl Session {
             return;
         }
         self.renaming = true;
-        let buf = row.label.clone();
-        let caret = buf.len();
-        self.mode = Mode::Edit {
-            buf,
-            caret,
-            anchor: caret,
-        };
+        self.mode = Mode::Edit(Entry::at_end(row.label.clone()));
     }
 
     /// True while a key is being renamed.
@@ -1499,29 +1508,41 @@ impl Session {
 
     /// The text being entered, if any, with the sigil that introduces it.
     pub fn entry(&self) -> Option<(char, &str)> {
+        let sigil = match &self.mode {
+            Mode::Normal => return None,
+            Mode::Edit(_) => '>',
+            Mode::Command(_) => ':',
+            Mode::Prompt { kind, .. } => kind.sigil(),
+        };
+        Some((sigil, self.entry_ref()?.buf.as_str()))
+    }
+
+    /// The text being typed, wherever it is being typed.
+    fn entry_ref(&self) -> Option<&Entry> {
         match &self.mode {
             Mode::Normal => None,
-            Mode::Edit { buf, .. } => Some(('>', buf.as_str())),
-            Mode::Command { buf } => Some((':', buf.as_str())),
-            Mode::Prompt { kind, buf } => Some((kind.sigil(), buf.as_str())),
+            Mode::Edit(e) | Mode::Command(e) => Some(e),
+            Mode::Prompt { entry, .. } => Some(entry),
+        }
+    }
+
+    fn entry_mut(&mut self) -> Option<&mut Entry> {
+        match &mut self.mode {
+            Mode::Normal => None,
+            Mode::Edit(e) | Mode::Command(e) => Some(e),
+            Mode::Prompt { entry, .. } => Some(entry),
         }
     }
 
     /// Insert a character at the caret, replacing the selection if there
     /// is one — which is what typing over selected text means everywhere.
     pub fn input_char(&mut self, c: char) {
-        match &mut self.mode {
-            Mode::Normal => {}
-            Mode::Edit { .. } => {
-                self.delete_selection();
-                if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
-                    let at = (*caret).min(buf.len());
-                    buf.insert(at, c);
-                    *caret = at + c.len_utf8();
-                    *anchor = *caret;
-                }
-            }
-            Mode::Command { buf } | Mode::Prompt { buf, .. } => buf.push(c),
+        self.delete_selection();
+        if let Some(e) = self.entry_mut() {
+            let at = e.caret.min(e.buf.len());
+            e.buf.insert(at, c);
+            e.caret = at + c.len_utf8();
+            e.anchor = e.caret;
         }
     }
 
@@ -1534,30 +1555,21 @@ impl Session {
 
     /// The selected range, or `None` when nothing is selected.
     fn selection(&self) -> Option<(usize, usize)> {
-        match &self.mode {
-            Mode::Edit { caret, anchor, .. } if caret != anchor => {
-                Some((*caret.min(anchor), *caret.max(anchor)))
-            }
-            _ => None,
-        }
+        let e = self.entry_ref()?;
+        (e.caret != e.anchor).then(|| (e.caret.min(e.anchor), e.caret.max(e.anchor)))
     }
 
     /// The selected text, for a copy.
     pub fn selected_text(&self) -> Option<String> {
         let (a, b) = self.selection()?;
-        match &self.mode {
-            Mode::Edit { buf, .. } => Some(buf[a..b].to_string()),
-            _ => None,
-        }
+        Some(self.entry_ref()?.buf[a..b].to_string())
     }
 
     /// What a copy or cut should take: the selection, or the whole value
     /// when there is none — the same rule a browser address bar follows.
     pub fn entry_text(&self) -> Option<String> {
-        match &self.mode {
-            Mode::Edit { buf, .. } => Some(self.selected_text().unwrap_or_else(|| buf.clone())),
-            _ => None,
-        }
+        let e = self.entry_ref()?;
+        Some(self.selected_text().unwrap_or_else(|| e.buf.clone()))
     }
 
     /// Remove the selection, leaving the caret where it was.
@@ -1565,10 +1577,10 @@ impl Session {
         let Some((a, b)) = self.selection() else {
             return false;
         };
-        if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
-            buf.replace_range(a..b, "");
-            *caret = a;
-            *anchor = a;
+        if let Some(e) = self.entry_mut() {
+            e.buf.replace_range(a..b, "");
+            e.caret = a;
+            e.anchor = a;
             return true;
         }
         false
@@ -1581,59 +1593,11 @@ impl Session {
         Some(text)
     }
 
-    /// Select the word around a byte offset — what a double-click means
-    /// inside a field.
-    ///
-    /// A word is a run of letters, digits and the punctuation that holds
-    /// identifiers together, so `SKU-1001` and `g:price` come out whole
-    /// rather than in pieces. A click in whitespace takes the whitespace.
-    pub fn select_word_at(&mut self, byte: usize) {
-        let Mode::Edit { buf, caret, anchor } = &mut self.mode else {
-            return;
-        };
-        if buf.is_empty() {
-            return;
-        }
-        let at = byte.min(buf.len().saturating_sub(1));
-        let wordish = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':');
-        let here = buf[at..].chars().next().unwrap_or(' ');
-        let want_word = wordish(here);
-
-        let mut start = at;
-        for (i, c) in buf[..at].char_indices().rev() {
-            if wordish(c) != want_word {
-                break;
-            }
-            start = i;
-        }
-        let mut end = at;
-        for (i, c) in buf[at..].char_indices() {
-            if wordish(c) != want_word {
-                break;
-            }
-            end = at + i + c.len_utf8();
-        }
-        *anchor = start;
-        *caret = end;
-    }
-
-    /// Select everything being edited.
+    /// Select everything being typed.
     pub fn select_all(&mut self) {
-        if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
-            *anchor = 0;
-            *caret = buf.len();
-        }
-    }
-
-    /// Move the caret to a byte offset, keeping the anchor — a drag
-    /// across text, or a shift-click.
-    pub fn extend_entry_selection(&mut self, byte: usize) {
-        if let Mode::Edit { buf, caret, .. } = &mut self.mode {
-            let mut at = byte.min(buf.len());
-            while at > 0 && !buf.is_char_boundary(at) {
-                at -= 1;
-            }
-            *caret = at;
+        if let Some(e) = self.entry_mut() {
+            e.anchor = 0;
+            e.caret = e.buf.len();
         }
     }
 
@@ -1642,39 +1606,31 @@ impl Session {
         self.selection()
     }
 
-    /// Delete the character before the caret.
+    /// Delete the character before the caret, or the selection.
     pub fn input_backspace(&mut self) {
-        match &mut self.mode {
-            Mode::Normal => {}
-            Mode::Edit { .. } => {
-                if self.delete_selection() {
-                    return;
-                }
-                if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
-                    let at = (*caret).min(buf.len());
-                    if let Some(prev) = buf[..at].chars().next_back() {
-                        let start = at - prev.len_utf8();
-                        buf.remove(start);
-                        *caret = start;
-                        *anchor = start;
-                    }
-                }
-            }
-            Mode::Command { buf } | Mode::Prompt { buf, .. } => {
-                buf.pop();
+        if self.delete_selection() {
+            return;
+        }
+        if let Some(e) = self.entry_mut() {
+            let at = e.caret.min(e.buf.len());
+            if let Some(prev) = e.buf[..at].chars().next_back() {
+                let start = at - prev.len_utf8();
+                e.buf.remove(start);
+                e.caret = start;
+                e.anchor = start;
             }
         }
     }
 
-    /// Delete the character at the caret.
+    /// Delete the character at the caret, or the selection.
     pub fn input_delete(&mut self) {
         if self.delete_selection() {
             return;
         }
-        if let Mode::Edit { buf, caret, .. } = &mut self.mode {
-            let at = (*caret).min(buf.len());
-            if at < buf.len() {
-                buf.remove(at);
+        if let Some(e) = self.entry_mut() {
+            let at = e.caret.min(e.buf.len());
+            if at < e.buf.len() {
+                e.buf.remove(at);
             }
         }
     }
@@ -1721,44 +1677,43 @@ impl Session {
         // word puts you before the word, not one character into it.
         if !extend
             && let Some((a, b)) = self.selection()
-            && let Mode::Edit { caret, anchor, .. } = &mut self.mode
+            && let Some(e) = self.entry_mut()
         {
             match how {
                 Move::Left => {
-                    *caret = a;
-                    *anchor = a;
+                    e.caret = a;
+                    e.anchor = a;
                     return;
                 }
                 Move::Right => {
-                    *caret = b;
-                    *anchor = b;
+                    e.caret = b;
+                    e.anchor = b;
                     return;
                 }
                 Move::Start | Move::End => {}
             }
         }
-        if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
+        if let Some(e) = self.entry_mut() {
             match how {
                 Move::Left => {
-                    if let Some(prev) = buf[..(*caret).min(buf.len())].chars().next_back() {
-                        *caret -= prev.len_utf8();
+                    if let Some(prev) = e.buf[..e.caret.min(e.buf.len())].chars().next_back() {
+                        e.caret -= prev.len_utf8();
                     }
                 }
                 Move::Right => {
-                    if let Some(next) = buf[(*caret).min(buf.len())..].chars().next() {
-                        *caret += next.len_utf8();
+                    if let Some(next) = e.buf[e.caret.min(e.buf.len())..].chars().next() {
+                        e.caret += next.len_utf8();
                     }
                 }
-                Move::Start => *caret = 0,
-                Move::End => *caret = buf.len(),
+                Move::Start => e.caret = 0,
+                Move::End => e.caret = e.buf.len(),
             }
             if !extend {
-                *anchor = *caret;
+                e.anchor = e.caret;
             }
         }
     }
 
-    /// Where the caret sits in the text being entered, as a byte index.
     /// Complete what is being typed at the `:` prompt.
     ///
     /// Tab again to take the next candidate, and again to come back
@@ -1770,10 +1725,10 @@ impl Session {
     /// prompt is a character somebody wants, and Tab in a cell is the
     /// next field.
     pub fn complete(&mut self) {
-        let Mode::Command { buf } = &self.mode else {
+        let Mode::Command(entry) = &self.mode else {
             return;
         };
-        let typed = buf.clone();
+        let typed = entry.buf.clone();
         // An argument if there is a space, otherwise the command itself.
         let (prefix, stem) = match typed.split_once(' ') {
             Some((cmd, arg)) => (format!("{cmd} "), arg.to_string()),
@@ -1788,20 +1743,16 @@ impl Session {
         // has been typed so far.
         let next = match candidates.iter().position(|c| *c == stem) {
             Some(at) => candidates[(at + 1) % candidates.len()].clone(),
-            None => {
-                let matching: Vec<&String> =
-                    candidates.iter().filter(|c| c.starts_with(&stem)).collect();
-                match matching.first() {
-                    Some(first) => (*first).clone(),
-                    // Nothing matches what was typed, so offer everything
-                    // rather than nothing: a typo should not leave Tab
-                    // looking broken.
-                    None => candidates[0].clone(),
-                }
-            }
+            None => candidates
+                .iter()
+                .find(|c| c.starts_with(&stem))
+                // Nothing matches what was typed, so offer everything
+                // rather than nothing: a typo should not leave Tab
+                // looking broken.
+                .unwrap_or(&candidates[0])
+                .clone(),
         };
-        let buf = format!("{prefix}{next}");
-        self.mode = Mode::Command { buf };
+        self.mode = Mode::Command(Entry::at_end(format!("{prefix}{next}")));
     }
 
     /// What Tab can offer, given the command already typed.
@@ -1825,33 +1776,68 @@ impl Session {
         }
     }
 
-    /// Put the caret at a byte offset in the text being edited.
+    /// Put the caret at a byte offset in the text being typed.
     ///
     /// Clicking where you want to type is how every other editor works;
-    /// without it a typo halfway along a line means retyping the rest.
+    /// without it a typo halfway along means retyping the rest.
     pub fn set_entry_caret(&mut self, byte: usize) {
-        if let Mode::Edit { buf, caret, anchor } = &mut self.mode {
-            let mut at = byte.min(buf.len());
-            while at > 0 && !buf.is_char_boundary(at) {
-                at -= 1;
+        if let Some(e) = self.entry_mut() {
+            e.caret = floor_boundary(&e.buf, byte);
+            e.anchor = e.caret;
+        }
+    }
+
+    /// Move the caret to a byte offset, keeping the anchor — a drag
+    /// across text, or a shift-click.
+    pub fn extend_entry_selection(&mut self, byte: usize) {
+        if let Some(e) = self.entry_mut() {
+            e.caret = floor_boundary(&e.buf, byte);
+        }
+    }
+
+    /// Select the word around a byte offset — what a double-click means
+    /// inside a field.
+    ///
+    /// A word is a run of letters, digits and the punctuation that holds
+    /// identifiers together, so `SKU-1001` and `g:price` come out whole
+    /// rather than in pieces. A click in whitespace takes the whitespace.
+    pub fn select_word_at(&mut self, byte: usize) {
+        let Some(e) = self.entry_mut() else {
+            return;
+        };
+        if e.buf.is_empty() {
+            return;
+        }
+        let at = floor_boundary(&e.buf, byte.min(e.buf.len().saturating_sub(1)));
+        let wordish = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':');
+        let here = e.buf[at..].chars().next().unwrap_or(' ');
+        let want_word = wordish(here);
+
+        let mut start = at;
+        for (i, c) in e.buf[..at].char_indices().rev() {
+            if wordish(c) != want_word {
+                break;
             }
-            *caret = at;
-            *anchor = at;
+            start = i;
         }
+        let mut end = at;
+        for (i, c) in e.buf[at..].char_indices() {
+            if wordish(c) != want_word {
+                break;
+            }
+            end = at + i + c.len_utf8();
+        }
+        e.anchor = start;
+        e.caret = end;
     }
 
+    /// Where the caret sits in the text being entered, as a byte index.
     pub fn entry_caret(&self) -> usize {
-        match &self.mode {
-            Mode::Edit { caret, .. } => *caret,
-            Mode::Command { buf } | Mode::Prompt { buf, .. } => buf.len(),
-            Mode::Normal => 0,
-        }
+        self.entry_ref().map(|e| e.caret).unwrap_or(0)
     }
 
-    /// True while a cell, line or key is being edited in place, as opposed
-    /// to a `:` command or a search prompt.
     pub fn is_editing_inline(&self) -> bool {
-        matches!(self.mode, Mode::Edit { .. })
+        matches!(self.mode, Mode::Edit(_))
     }
 
     /// Abandon what is being entered.
@@ -1865,15 +1851,16 @@ impl Session {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
         match mode {
             Mode::Normal => Effect::None,
-            Mode::Edit { buf, .. } => {
-                self.commit_edit(buf);
+            Mode::Edit(e) => {
+                self.commit_edit(e.buf);
                 Effect::None
             }
-            Mode::Prompt { kind, buf } => {
-                self.commit_prompt(kind, buf);
+            Mode::Prompt { kind, entry } => {
+                self.commit_prompt(kind, entry.buf);
                 Effect::None
             }
-            Mode::Command { buf } => {
+            Mode::Command(e) => {
+                let buf = e.buf;
                 // `:scheme <name>` takes an argument, which no other
                 // command does — so it is read here rather than becoming
                 // a Command variant per scheme.
@@ -2616,13 +2603,9 @@ impl Session {
                 })
                 .unwrap_or_default(),
         };
-        // Start at the end, the way a rename or a tweak usually wants.
-        let caret = buf.len();
-        self.mode = Mode::Edit {
-            buf,
-            caret,
-            anchor: caret,
-        };
+        // Starting at the end, the way a tweak usually wants — see
+        // `Entry::at_end`.
+        self.mode = Mode::Edit(Entry::at_end(buf));
     }
 
     fn clamp_cursor(&mut self) {
@@ -2669,6 +2652,16 @@ pub enum FieldKind {
     Text,
     Number,
     Url,
+}
+
+/// The nearest character boundary at or before `byte`, so an offset
+/// worked out from a click never lands inside a character.
+fn floor_boundary(text: &str, byte: usize) -> usize {
+    let mut at = byte.min(text.len());
+    while at > 0 && !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
 }
 
 /// How the caret moves, so extending and not extending share one path.

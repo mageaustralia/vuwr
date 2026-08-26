@@ -145,10 +145,29 @@ impl App {
                 KeyCode::Delete => self.session.input_delete(),
                 // Caret movement, so an edit is an edit rather than a
                 // field you can only append to.
+                // Shift extends the selection, as it does everywhere.
+                KeyCode::Left if key.modifiers == KeyModifiers::SHIFT => {
+                    self.session.input_select_left()
+                }
+                KeyCode::Right if key.modifiers == KeyModifiers::SHIFT => {
+                    self.session.input_select_right()
+                }
+                KeyCode::Home if key.modifiers == KeyModifiers::SHIFT => {
+                    self.session.input_select_home()
+                }
+                KeyCode::End if key.modifiers == KeyModifiers::SHIFT => {
+                    self.session.input_select_end()
+                }
                 KeyCode::Left => self.session.input_left(),
                 KeyCode::Right => self.session.input_right(),
                 KeyCode::Home => self.session.input_home(),
                 KeyCode::End => self.session.input_end(),
+                // A terminal has no ⌘, so the readline keys people
+                // already have in their fingers: Ctrl-U to take the lot.
+                KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                    self.session.select_all();
+                    self.session.input_delete();
+                }
                 KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
                     self.session.input_home()
                 }

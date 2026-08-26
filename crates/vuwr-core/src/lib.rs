@@ -33,8 +33,8 @@ pub use ops::EditOp;
 pub use scheme::{Ground, Rgb, Scheme};
 pub use search::Search;
 pub use session::{
-    Effect, Field, FieldKind, Inspector, Mode, NewNode, PromptKind, Session, SortSpec, ViewMode,
-    escape, path_label,
+    Effect, Entry, Field, FieldKind, Inspector, Mode, NewNode, PromptKind, Session, SortSpec,
+    ViewMode, escape, path_label,
 };
 pub use sheet::Sheet;
 pub use sort::{SortDirection, SortKind, natural_cmp, sort_rows};

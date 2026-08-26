@@ -134,104 +134,135 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     // window they sit somewhere in the middle of the screen — or, with
     // content narrower than the pane, appear to be missing.
     ui.style_mut().spacing.scroll.floating = false;
-    let scrolled = egui::ScrollArea::both()
+    // Follow the cursor sideways. A column can be off the right-hand edge
+    // — a feed is twenty-three wide — and jumping to one without bringing
+    // it into view leaves the status line saying "editing" over a screen
+    // that has not moved. Only when the cursor has just moved, so it does
+    // not fight the scrollbar the rest of the time.
+    let follow = ui.ctx().memory_mut(|m| {
+        let seen = m
+            .data
+            .get_temp::<(usize, usize)>(egui::Id::new("sheet-cursor"));
+        m.data.insert_temp(egui::Id::new("sheet-cursor"), cursor);
+        seen != Some(cursor)
+    });
+    let mut area = egui::ScrollArea::both()
         .id_salt("sheet")
-        .auto_shrink([false; 2])
-        .show_rows(ui, row_height, rows, |ui, range| {
-            ui.vertical(|ui| {
-                for r in range {
-                    let source = session.grid.source_row(r);
-                    let marked = session.grid.marks.contains(&source);
-                    let on_row = r == cursor.0;
-                    ui.horizontal(|ui| {
-                        let strip = egui::Rect::from_min_size(
-                            ui.cursor().min,
-                            egui::vec2(ui.available_width(), row_height),
+        .auto_shrink([false; 2]);
+    if follow {
+        let pane = ui.available_width() - GUTTER;
+        let mut left = 0.0;
+        for chars in widths.iter().take(cursor.1) {
+            left += *chars as f32 * char_width + GRIP + PAD * 2.0;
+        }
+        let width = widths
+            .get(cursor.1)
+            .map(|c| *c as f32 * char_width + GRIP + PAD * 2.0)
+            .unwrap_or(0.0);
+        let at = ui
+            .ctx()
+            .memory(|m| m.data.get_temp::<f32>(egui::Id::new("sheet-offset-x")))
+            .unwrap_or(0.0);
+        // Only when it is actually out of view: scrolling a column that
+        // is already on screen jerks the table for no reason.
+        if left < at {
+            area = area.horizontal_scroll_offset(left);
+        } else if left + width > at + pane {
+            area = area.horizontal_scroll_offset(left + width - pane);
+        }
+    }
+    let scrolled = area.show_rows(ui, row_height, rows, |ui, range| {
+        ui.vertical(|ui| {
+            for r in range {
+                let source = session.grid.source_row(r);
+                let marked = session.grid.marks.contains(&source);
+                let on_row = r == cursor.0;
+                ui.horizontal(|ui| {
+                    let strip = egui::Rect::from_min_size(
+                        ui.cursor().min,
+                        egui::vec2(ui.available_width(), row_height),
+                    );
+                    if on_row {
+                        ui.painter().rect_filled(strip, 0.0, theme::row_selected());
+                    }
+                    // A marker down the left edge: accent for where
+                    // you are, amber for a row you flagged.
+                    let marker = if on_row {
+                        Some(theme::accent())
+                    } else if marked {
+                        Some(theme::warn())
+                    } else {
+                        None
+                    };
+                    if let Some(colour) = marker {
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                strip.min,
+                                egui::vec2(theme::ROW_MARKER, row_height),
+                            ),
+                            0.0,
+                            colour,
                         );
-                        if on_row {
-                            ui.painter().rect_filled(strip, 0.0, theme::row_selected());
-                        }
-                        // A marker down the left edge: accent for where
-                        // you are, amber for a row you flagged.
-                        let marker = if on_row {
-                            Some(theme::accent())
-                        } else if marked {
-                            Some(theme::warn())
-                        } else {
-                            None
-                        };
-                        if let Some(colour) = marker {
-                            ui.painter().rect_filled(
-                                egui::Rect::from_min_size(
-                                    strip.min,
-                                    egui::vec2(theme::ROW_MARKER, row_height),
-                                ),
-                                0.0,
-                                colour,
-                            );
-                        }
-                        ui.painter().hline(
-                            strip.x_range(),
-                            strip.bottom() - 0.5,
-                            egui::Stroke::new(1.0_f32, theme::border_faint()),
-                        );
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.allocate_exact_size(
-                            egui::vec2(GUTTER, row_height),
-                            egui::Sense::hover(),
-                        );
-                        for (c, chars) in widths.iter().enumerate() {
-                            // Editing happens in the cell, drawn as a
-                            // field, so it is obvious which value you are
-                            // typing into.
-                            if editing && (r, c) == cursor {
-                                let response = edit_field(
-                                    ui,
-                                    session,
-                                    *chars as f32 * char_width + GRIP + PAD * 2.0,
-                                    row_height,
-                                );
-                                let left = response.rect.left() + PAD;
-                                place_caret(session, &response, ui, left);
-                                continue;
-                            }
-                            let raw = session.table_cell(r, c).unwrap_or_default();
-                            // Cut to what the column can show: a
-                            // description is thousands of characters, and
-                            // laying the rest out costs time to draw
-                            // nothing.
-                            let text = truncate(&raw, chars + 1);
-                            let mut colour = theme::text_body();
-                            // The first column is an identifier: the
-                            // accent marks it, as it marks a path.
-                            if c == 0 || c < frozen {
-                                colour = theme::accent_text();
-                            }
-                            if search.as_ref().is_some_and(|s| s.matches(&raw)) {
-                                colour = theme::warn_text();
-                            }
-                            let response = cell_aligned(
+                    }
+                    ui.painter().hline(
+                        strip.x_range(),
+                        strip.bottom() - 0.5,
+                        egui::Stroke::new(1.0_f32, theme::border_faint()),
+                    );
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.allocate_exact_size(egui::vec2(GUTTER, row_height), egui::Sense::hover());
+                    for (c, chars) in widths.iter().enumerate() {
+                        // Editing happens in the cell, drawn as a
+                        // field, so it is obvious which value you are
+                        // typing into.
+                        if editing && (r, c) == cursor {
+                            let response = edit_field(
                                 ui,
-                                &text,
-                                *chars as f32 * char_width + GRIP,
+                                session,
+                                *chars as f32 * char_width + GRIP + PAD * 2.0,
                                 row_height,
-                                &font,
-                                colour,
-                                (r, c) == cursor,
-                                numeric[c],
                             );
-                            if response.clicked() {
-                                session.grid.cursor = (r, c);
-                            }
-                            if response.double_clicked() {
-                                session.grid.cursor = (r, c);
-                                edit = true;
-                            }
+                            let left = response.rect.left() + PAD;
+                            place_caret(session, &response, ui, left);
+                            continue;
                         }
-                    });
-                }
-            });
+                        let raw = session.table_cell(r, c).unwrap_or_default();
+                        // Cut to what the column can show: a
+                        // description is thousands of characters, and
+                        // laying the rest out costs time to draw
+                        // nothing.
+                        let text = truncate(&raw, chars + 1);
+                        let mut colour = theme::text_body();
+                        // The first column is an identifier: the
+                        // accent marks it, as it marks a path.
+                        if c == 0 || c < frozen {
+                            colour = theme::accent_text();
+                        }
+                        if search.as_ref().is_some_and(|s| s.matches(&raw)) {
+                            colour = theme::warn_text();
+                        }
+                        let response = cell_aligned(
+                            ui,
+                            &text,
+                            *chars as f32 * char_width + GRIP,
+                            row_height,
+                            &font,
+                            colour,
+                            (r, c) == cursor,
+                            numeric[c],
+                        );
+                        if response.clicked() {
+                            session.grid.cursor = (r, c);
+                        }
+                        if response.double_clicked() {
+                            session.grid.cursor = (r, c);
+                            edit = true;
+                        }
+                    }
+                });
+            }
         });
+    });
     ui.ctx()
         .data_mut(|d| d.insert_temp(offset_id, scrolled.state.offset.x));
     match grip {

@@ -966,6 +966,7 @@ impl VuwrApp {
     /// the thing being searched, where a browser's find bar is, and where
     /// the eye already is after clicking Find.
     fn prompt_bar(&mut self, ui: &mut egui::Ui) {
+        let mut place: Option<(egui::Response, f32)> = None;
         let Some(session) = self.session.as_ref() else {
             return;
         };
@@ -996,14 +997,20 @@ impl VuwrApp {
                             .monospace()
                             .color(theme::accent_text()),
                     );
-                    let response = ui.label(table::caret_text(session));
-                    let left = response.rect.left();
-                    table::draw_caret(
-                        ui,
-                        left + table::caret_offset(ui, session),
-                        response.rect.top(),
-                        response.rect.height(),
+                    let response = ui.add(
+                        egui::Label::new(table::caret_text(session))
+                            .sense(egui::Sense::click_and_drag()),
                     );
+                    let left = response.rect.left();
+                    if session.entry_selection().is_none() {
+                        table::draw_caret(
+                            ui,
+                            left + table::caret_offset(ui, session),
+                            response.rect.top(),
+                            response.rect.height(),
+                        );
+                    }
+                    place = Some((response, left));
                 });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
@@ -1018,6 +1025,14 @@ impl VuwrApp {
                 );
             });
         });
+
+        // Clicking, dragging and double-clicking the prompt do what they
+        // do in a cell: the search bar is a text field like any other.
+        if let Some((response, left)) = place
+            && let Some(session) = self.session.as_mut()
+        {
+            table::place_caret(session, &response, ui, left);
+        }
     }
 
     /// The whole record under the cursor, read downwards.
