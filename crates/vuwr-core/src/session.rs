@@ -265,6 +265,12 @@ pub struct Session {
     pub decoded_text: bool,
     /// Rendered lines for text view, rebuilt when the document changes.
     text_lines: Vec<String>,
+    /// The longest line, in characters.
+    ///
+    /// Worked out once here rather than by the frontend on every frame:
+    /// measuring it meant cloning two thousand strings sixty times a
+    /// second, which cost more than drawing the file did.
+    text_widest: usize,
     /// The exact bytes those lines came from, and each line's byte span
     /// within them. An edit splices into these, so CRLF endings and a
     /// missing final newline survive untouched.
@@ -315,6 +321,7 @@ impl Session {
             manual_widths: std::collections::BTreeMap::new(),
             lint: None,
             text_lines: Vec::new(),
+            text_widest: 0,
             text_bytes: Vec::new(),
             text_spans: Vec::new(),
         };
@@ -2794,6 +2801,18 @@ impl Session {
                 }
             })
             .collect();
+        self.text_widest = self
+            .text_lines
+            .iter()
+            .map(|l| l.chars().count())
+            .max()
+            .unwrap_or(0);
+    }
+
+    /// How many characters the longest line holds, for a frontend sizing
+    /// its scroll area.
+    pub fn widest_line(&self) -> usize {
+        self.text_widest
     }
 
     /// Commit an edited source line: splice it into the original bytes and

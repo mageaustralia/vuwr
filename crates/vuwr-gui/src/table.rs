@@ -9,6 +9,39 @@ use vuwr_core::{PathSeg, RowKind, Session, ValueKind};
 
 use crate::theme;
 
+/// The vertical offset that brings a row into view, or `None` to leave
+/// the scroll position alone.
+///
+/// For the views that draw only what is on screen: the row to reach is
+/// usually not among them, so there is no rectangle to hand egui and the
+/// position has to be worked out. That only holds while the drawn pitch
+/// really is `row_height` — see the callers, which zero the spacing that
+/// would otherwise make it taller.
+fn follow_offset(cursor: (usize, usize), row_height: f32, height: f32, at: f32) -> Option<f32> {
+    let top = cursor.0 as f32 * row_height;
+    if top < at {
+        Some(top)
+    } else if top + row_height > at + height {
+        // A little above the bottom edge, so the row it lands on has its
+        // neighbours around it rather than being the last line.
+        Some((top + row_height * 3.0 - height).max(0.0))
+    } else {
+        None
+    }
+}
+
+/// Remember where a view was scrolled to, for the next frame's decision.
+fn remember_offset(ui: &egui::Ui, key: &'static str, offset: f32) {
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::new(key).with("offset-y"), offset));
+}
+
+fn seen_offset(ui: &egui::Ui, key: &'static str) -> f32 {
+    ui.ctx()
+        .data(|d| d.get_temp::<f32>(egui::Id::new(key).with("offset-y")))
+        .unwrap_or(0.0)
+}
+
 /// Whether the cursor has moved since the last frame.
 ///
 /// What "follow the cursor" hangs on: scrolling on every frame would
@@ -730,13 +763,12 @@ fn char_px(ui: &egui::Ui, font: &egui::FontId) -> f32 {
 /// sideways there is to go. Measured in characters against the longest
 /// line rather than by laying every line out, which at 84,000 lines is
 /// the difference between a frame and a freeze.
-fn longest_line(session: &Session, lines: usize) -> f32 {
-    let widest = (0..lines.min(2000))
-        .filter_map(|n| session.table_cell(n, 0))
-        .map(|l| l.chars().count())
-        .max()
-        .unwrap_or(0);
-    widest as f32 * 7.2
+fn longest_line(session: &Session, _lines: usize) -> f32 {
+    // From the session, which worked it out when it built the lines. This
+    // used to clone and measure two thousand strings on every frame — six
+    // hundred milliseconds a frame on a feed, spent deciding how wide a
+    // scrollbar should be.
+    session.widest_line() as f32 * 7.2
 }
 
 /// The open/closed triangle.
@@ -837,19 +869,41 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
     let editing = session.is_editing_inline();
     let mut action = None;
 
-    // Follow the cursor, so `n` shows the match it found rather than only
-    // selecting it.
-    //
-    // By handing egui the row's own rectangle rather than by computing an
-    // offset: these rows are laid out by their content, so their real
-    // pitch is not the nominal row height, and arithmetic built on that
-    // height scrolled to the wrong part of the tree.
     let follow = cursor_moved(ui, "tree", session.grid.cursor);
-    let area = egui::ScrollArea::both()
+    let rows = session.tree_rows.len();
+
+    // Only the rows on screen, as the table and the text view already
+    // did. Expanded, a product feed is forty thousand rows, and laying
+    // every one of them out on every frame is what made scrolling crawl.
+    //
+    // `show_rows` needs the drawn pitch to match the height it is given,
+    // so the spacing between rows is zeroed here — on the ui the scroll
+    // area is built on, which is where egui reads it from.
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let mut area = egui::ScrollArea::both()
         .id_salt("tree")
         .auto_shrink([false; 2]);
-    area.show(ui, |ui| {
-        for (i, row) in session.tree_rows.iter().enumerate() {
+    // Follow the cursor, so `n` shows the match it found rather than only
+    // selecting it. Arithmetic rather than the row's own rectangle,
+    // because the row it has to reach is usually one of the many not
+    // drawn — which is the whole point of drawing only what is on screen.
+    if let Some(offset) = follow
+        .then(|| {
+            follow_offset(
+                session.grid.cursor,
+                TREE_ROW,
+                ui.available_height(),
+                seen_offset(ui, "tree"),
+            )
+        })
+        .flatten()
+    {
+        area = area.vertical_scroll_offset(offset);
+    }
+    let scrolled = area.show_rows(ui, TREE_ROW, rows, |ui, range| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for i in range {
+            let row = &session.tree_rows[i];
             ui.horizontal(|ui| {
                 let selected = i == cursor;
                 // The row carries the selection, so the key and the
@@ -949,6 +1003,7 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
             });
         }
     });
+    remember_offset(ui, "tree", scrolled.state.offset.y);
 
     action
 }
