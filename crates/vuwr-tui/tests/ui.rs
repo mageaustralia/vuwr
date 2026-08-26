@@ -1653,3 +1653,86 @@ fn a_named_scheme_brings_its_own_ground() {
     }
     palette::set_scheme(Scheme::Vuwr);
 }
+
+/// Find and replace, driven the way a reader drives it.
+///
+/// The core has its own tests for what replacing does. These are about
+/// whether the terminal can get there: the keys, the two prompts, and the
+/// warning that a filter is narrowing the job.
+mod replace {
+    use super::*;
+
+    fn typed(a: &mut App, text: &str) {
+        for c in text.chars() {
+            a.handle_key(key(KeyCode::Char(c)));
+        }
+    }
+
+    const STOCK: &str = "sku,size,city\nA1,120mm,Sydney\nA2,130mm,Perth\nA3,125mm,Sydney\n";
+
+    #[test]
+    fn the_two_prompts_are_named_and_the_keys_work() {
+        let mut a = app(STOCK);
+        a.handle_key(key(KeyCode::Char('%')));
+        let screen = render(&mut a, 70, 8);
+        assert!(
+            screen.contains("replace"),
+            "the first prompt is unnamed:\n{screen}"
+        );
+
+        typed(&mut a, "Sydney");
+        a.handle_key(key(KeyCode::Enter));
+        let screen = render(&mut a, 70, 8);
+        assert!(
+            screen.contains("with"),
+            "the second prompt is unnamed:\n{screen}"
+        );
+
+        typed(&mut a, "Hobart");
+        a.handle_key(key(KeyCode::Enter));
+
+        // `.` takes this one, `n` skips the next.
+        a.handle_key(key(KeyCode::Char('.')));
+        let out = String::from_utf8(a.session.doc.serialize()).unwrap();
+        assert!(out.contains("A1,120mm,Hobart"), "{out}");
+        assert!(
+            out.contains("A3,125mm,Sydney"),
+            "the skipped row changed: {out}"
+        );
+
+        // `a` takes the rest, and one `u` puts it all back.
+        a.handle_key(key(KeyCode::Char('a')));
+        let out = String::from_utf8(a.session.doc.serialize()).unwrap();
+        assert!(!out.contains("Sydney"), "{out}");
+        a.handle_key(key(KeyCode::Char('u')));
+        let out = String::from_utf8(a.session.doc.serialize()).unwrap();
+        assert!(
+            out.contains("A3,125mm,Sydney"),
+            "one undo did not undo the batch: {out}"
+        );
+    }
+
+    /// A filter narrows the job, and the terminal says so while you type.
+    #[test]
+    fn the_filter_warning_is_on_screen() {
+        let mut a = app(STOCK);
+        a.handle_key(key(KeyCode::Char('&')));
+        typed(&mut a, "Sydney");
+        a.handle_key(key(KeyCode::Enter));
+
+        a.handle_key(key(KeyCode::Char('%')));
+        let screen = render(&mut a, 100, 8);
+        assert!(
+            screen.contains("the filter shows"),
+            "no warning while choosing what to find:\n{screen}"
+        );
+
+        typed(&mut a, "mm");
+        a.handle_key(key(KeyCode::Enter));
+        let screen = render(&mut a, 100, 8);
+        assert!(
+            screen.contains("the filter shows"),
+            "no warning while choosing the replacement:\n{screen}"
+        );
+    }
+}
