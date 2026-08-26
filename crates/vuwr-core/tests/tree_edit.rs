@@ -1552,3 +1552,34 @@ fn a_prompt_can_be_copied_and_cut() {
     assert_eq!(s.input_cut().as_deref(), Some("hello"));
     assert_eq!(s.entry().unwrap().1, "");
 }
+
+/// Turning a filter off has to be possible from the filter itself.
+///
+/// It used to be reachable only from a Clear button at the far end of the
+/// toolbar: the prompt opened empty however the rows were filtered, and
+/// submitting it empty did nothing at all, so the obvious gesture — clear
+/// the box, press Enter — left the filter on with no sign why.
+#[test]
+fn a_filter_is_removed_from_the_filter_field() {
+    let csv = "warehouse,sku\nMelbourne,1\nSydney,2\nMelbourne,3\n";
+    let doc = Document::parse(csv.as_bytes(), FormatHint::Csv).unwrap();
+    let mut s = Session::new(doc);
+
+    s.execute(Command::Filter);
+    s.input_text("Melbourne");
+    s.input_submit();
+    assert!(s.is_filtered());
+    assert_eq!(s.visible_count(), Some(3), "the header and the two matches");
+
+    // Reopening shows the filter that is on, selected, so typing replaces
+    // it and Delete empties it.
+    s.execute(Command::Filter);
+    assert_eq!(s.entry().unwrap().1, "Melbourne");
+    assert_eq!(s.selected_text().as_deref(), Some("Melbourne"));
+
+    s.input_delete();
+    assert_eq!(s.entry().unwrap().1, "");
+    s.input_submit();
+    assert!(!s.is_filtered(), "an empty filter is not a filter");
+    assert_eq!(s.visible_count(), None);
+}

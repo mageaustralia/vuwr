@@ -242,14 +242,18 @@ fn handle_dropped_files(app: &mut VuwrApp, ctx: &egui::Context) {
 /// Feed this frame's input to the session.
 pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
     handle_dropped_files(app, ctx);
-    handle_clipboard(app, ctx);
 
     if !app.has_document() {
+        handle_clipboard(app, ctx);
         return;
     }
 
     // Text being entered wins: a `q` typed into a search box is a letter,
     // not a quit. The TUI makes the same distinction.
+    //
+    // The clipboard is handled here or below, never both. It used to be
+    // handled first and then again by the loop underneath, so one ⌘V put
+    // the text in twice.
     if app.session().is_entering_text() {
         let events = ctx.input(|i| i.events.clone());
         for event in events {
@@ -315,6 +319,7 @@ pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
         return;
     }
 
+    handle_clipboard(app, ctx);
     let mut pending_g = app.take_pending_g();
     let events = ctx.input(|i| i.events.clone());
     for event in events {

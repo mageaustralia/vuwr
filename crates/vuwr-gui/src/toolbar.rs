@@ -168,6 +168,16 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Toolbar {
         if filter_button(ui, &label, session.is_filtered()).clicked() {
             clicked = Some(Command::Filter);
         }
+        // Take it off where it is on, rather than only from a Clear button
+        // at the far end of the bar that reads as chrome. A thing that is
+        // switched on should carry its own switch.
+        if session.is_filtered()
+            && filter_button(ui, "×", true)
+                .on_hover_text("Remove the filter")
+                .clicked()
+        {
+            clicked = Some(Command::ClearFilter);
+        }
         if button(ui, "Find", "Search (Ctrl+F)").clicked() {
             clicked = Some(Command::Find);
         }

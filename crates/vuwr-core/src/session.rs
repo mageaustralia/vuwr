@@ -764,9 +764,23 @@ impl Session {
                 }
             }
             Command::Filter => {
+                // Opening the prompt on an active filter shows what that
+                // filter is, selected, so the field behaves like every
+                // other one: type to replace it, or clear it and press
+                // Enter to take the filter off. Coming to it blind and
+                // having to hunt for a separate Clear button was the whole
+                // complaint.
+                let entry = match &self.filter {
+                    Some(search) => Entry {
+                        buf: search.pattern().to_string(),
+                        caret: search.pattern().len(),
+                        anchor: 0,
+                    },
+                    None => Entry::default(),
+                };
                 self.mode = Mode::Prompt {
                     kind: PromptKind::Filter,
-                    entry: Entry::default(),
+                    entry,
                 }
             }
             Command::FindNext => self.find_step(true),
@@ -2326,6 +2340,12 @@ impl Session {
 
     fn commit_prompt(&mut self, kind: PromptKind, pattern: String) {
         if pattern.is_empty() {
+            // An empty filter is not a filter. Emptying the field and
+            // pressing Enter is how every search box is turned off, so it
+            // turns this one off too rather than silently doing nothing.
+            if kind == PromptKind::Filter && self.filter.is_some() {
+                self.execute(Command::ClearFilter);
+            }
             return;
         }
         let search = match Search::new(&pattern) {
