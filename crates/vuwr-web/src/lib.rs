@@ -51,6 +51,19 @@ fn requested_sample() -> Option<(String, Document)> {
     Some((format!("sample.{name}"), doc))
 }
 
+/// Open a document handed in from JavaScript.
+///
+/// Exposed so something with cross-origin rights of its own — a
+/// userscript, an extension, a host page — can read a file and push it
+/// here. vuwr never fetches anything itself: the bytes travel from the
+/// origin server to this tab and nowhere else, which is the only way to
+/// reach a file behind CORS or a login without a proxy in the middle
+/// seeing it.
+#[wasm_bindgen]
+pub fn open_bytes(name: String, bytes: Vec<u8>) {
+    vuwr_gui::deliver(name, bytes);
+}
+
 /// Start vuwr on the canvas with the given element id.
 #[wasm_bindgen]
 pub async fn start(canvas_id: String) -> Result<(), JsValue> {

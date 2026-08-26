@@ -28,11 +28,17 @@
         const build = (
           await (await fetch("./dist/build.txt", { cache: "no-store" })).text()
         ).trim();
-        const { default: init, start } = await import(
+        const { default: init, start, open_bytes } = await import(
           `./dist/vuwr.js?v=${build}`
         );
         await init({ module_or_path: `./dist/vuwr_bg.wasm?v=${build}` });
+        // Hand-off for anything with cross-origin rights of its own: a
+        // userscript or extension reads a file and pushes the bytes in.
+        // Nothing here fetches — see open_bytes.
+        window.vuwrOpen = (name, bytes) =>
+          open_bytes(String(name), new Uint8Array(bytes));
         await start("vuwr");
+        window.dispatchEvent(new Event("vuwr-ready"));
         document.getElementById("loading").remove();
       } catch (e) {
         document.getElementById("loading").textContent =

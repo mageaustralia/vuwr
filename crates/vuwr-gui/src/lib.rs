@@ -93,6 +93,53 @@ pub struct VuwrApp {
     pending_save: std::sync::Arc<std::sync::Mutex<Option<files::SaveResult>>>,
 }
 
+/// A document handed to the page from outside the canvas.
+///
+/// The page can be *given* bytes rather than fetching them, which is the
+/// point: something with cross-origin rights of its own — a userscript, an
+/// extension, a host page — reads the file and pushes it here. The bytes
+/// go from the origin server to this tab and nowhere else, vuwr makes no
+/// network request, and "nothing is uploaded" stays literally true.
+#[cfg(target_arch = "wasm32")]
+mod handoff {
+    use std::sync::Mutex;
+
+    static INBOX: Mutex<Option<(String, Vec<u8>)>> = Mutex::new(None);
+    /// Kept so a delivery can ask for a frame. Without it the bytes sit
+    /// in the inbox until something else — a keypress, a mouse move —
+    /// happens to wake the canvas, and handing a file in looks like it
+    /// did nothing.
+    static WAKE: Mutex<Option<eframe::egui::Context>> = Mutex::new(None);
+
+    /// Hand a document in. Replaces anything not yet collected.
+    pub fn deliver(name: String, bytes: Vec<u8>) {
+        if let Ok(mut inbox) = INBOX.lock() {
+            *inbox = Some((name, bytes));
+        }
+        if let Ok(wake) = WAKE.lock()
+            && let Some(ctx) = wake.as_ref()
+        {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Collect whatever was handed in, if anything.
+    pub fn take() -> Option<(String, Vec<u8>)> {
+        INBOX.lock().ok()?.take()
+    }
+
+    pub fn wake_with(ctx: &eframe::egui::Context) {
+        if let Ok(mut wake) = WAKE.lock() {
+            *wake = Some(ctx.clone());
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use handoff::deliver;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use handoff::take as handoff_take;
+
 impl VuwrApp {
     /// Build the app and adopt the platform's fonts.
     ///
@@ -109,6 +156,9 @@ impl VuwrApp {
             Some(eframe::egui::Theme::Dark)
         ));
         theme::install(ctx);
+        // So a document handed in later can ask for a frame.
+        #[cfg(target_arch = "wasm32")]
+        handoff::wake_with(ctx);
         let mut app = match doc {
             Some(doc) => VuwrApp::new(path, doc),
             None => VuwrApp::empty(),

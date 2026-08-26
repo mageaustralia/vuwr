@@ -202,6 +202,23 @@ fn handle_clipboard(app: &mut VuwrApp, ctx: &egui::Context) {
 ///
 /// On the web the bytes come with the drop event; natively only a path
 /// does, so the two are read differently but land in the same place.
+/// A document pushed in from outside the canvas, which arrives on the
+/// same footing as a dropped file: it replaces what is open, and a file
+/// that will not parse says so rather than leaving the old one on screen
+/// looking like the new one.
+#[cfg(target_arch = "wasm32")]
+fn handle_handoff(app: &mut VuwrApp) {
+    let Some((name, bytes)) = crate::handoff_take() else {
+        return;
+    };
+    if let Err(e) = app.load(Some(name.clone().into()), &bytes) {
+        app.report_load_error(format!("{name}: {}", e.located(&bytes)));
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn handle_handoff(_app: &mut VuwrApp) {}
+
 fn handle_dropped_files(app: &mut VuwrApp, ctx: &egui::Context) {
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
     let Some(file) = dropped.into_iter().next() else {
@@ -242,6 +259,7 @@ fn handle_dropped_files(app: &mut VuwrApp, ctx: &egui::Context) {
 /// Feed this frame's input to the session.
 pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
     handle_dropped_files(app, ctx);
+    handle_handoff(app);
 
     if !app.has_document() {
         handle_clipboard(app, ctx);
