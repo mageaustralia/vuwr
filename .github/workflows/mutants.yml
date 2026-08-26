@@ -1,0 +1,47 @@
+# Do the tests actually test anything?
+#
+# Coverage says a line ran. Mutation testing changes the line and asks
+# whether any test noticed — the only automated answer to "is this suite
+# load-bearing or decorative". Several bugs this project has shipped were
+# in code that was covered and unchecked.
+#
+# Weekly and on demand, not per push: it compiles the crate once per
+# mutation and takes far too long to sit in front of a merge.
+name: Mutants
+
+on:
+  schedule:
+    # Sunday, early UTC.
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    # Generous, because the point is to finish rather than to be quick.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - uses: Swatinem/rust-cache@v2
+
+      # vuwr-core only. It holds the parsing, the edit operations and the
+      # undo — the parts where a silent wrong answer costs a file. The
+      # frontends are checked by drawing them.
+      - run: cargo mutants --package vuwr-core --in-place --no-shuffle -j 2
+        # A surviving mutant is a finding, not a broken build: the report
+        # is worth reading either way.
+        continue-on-error: true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-report
+          path: mutants.out/
+          if-no-files-found: warn

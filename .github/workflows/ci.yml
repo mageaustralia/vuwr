@@ -65,6 +65,33 @@ jobs:
       # Windows" are two different claims and this makes the second one.
       - run: cargo test --workspace --locked --target ${{ matrix.target }}
 
+  # A dependency nobody imports still has to be audited, licence-checked
+  # and compiled. Cheap to notice, easy to accumulate.
+  unused-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+      - run: cargo machete
+
+  # vuwr-core is meant to be usable as a crate on its own, so its surface
+  # is a promise. This says whether the promise was broken, and whether
+  # the version number admits it.
+  semver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo semver-checks check-release -p vuwr-core --baseline-rev v0.2.0
+
   # vuwr-core must stay wasm-clean: no fs, no threads, no std::time::Instant,
   # no memmap2. This fails the build the day a wasm-hostile dependency is added.
   wasm-core:
