@@ -34,10 +34,22 @@ jobs:
       # vuwr-core only. It holds the parsing, the edit operations and the
       # undo — the parts where a silent wrong answer costs a file. The
       # frontends are checked by drawing them.
-      - run: cargo mutants --package vuwr-core --in-place --no-shuffle -j 2
-        # A surviving mutant is a finding, not a broken build: the report
-        # is worth reading either way.
-        continue-on-error: true
+      # Exit codes are load-bearing here, so they are read rather than
+      # ignored. `continue-on-error` swallowed everything including a
+      # usage error, and the job reported success having done nothing —
+      # which is worse than no check at all.
+      - name: Mutate
+        run: |
+          set +e
+          cargo mutants --package vuwr-core --no-shuffle -j 2
+          status=$?
+          set -e
+          case "$status" in
+            # Every mutant caught, or some survived — a finding to read,
+            # not a broken build.
+            0|2) exit 0 ;;
+            *) echo "::error::cargo mutants exited $status"; exit "$status" ;;
+          esac
 
       - uses: actions/upload-artifact@v4
         if: always()
