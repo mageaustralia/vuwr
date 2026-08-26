@@ -43,6 +43,9 @@ pub enum Command {
     FindPrev,
     Filter,
     ClearFilter,
+    Substitute,
+    SubstituteOne,
+    SubstituteAll,
     Sort,
     SortNumeric,
     SortNatural,
@@ -116,6 +119,9 @@ impl Command {
         Self::FindNext,
         Self::FindPrev,
         Self::Filter,
+        Self::Substitute,
+        Self::SubstituteOne,
+        Self::SubstituteAll,
         Self::ClearFilter,
         Self::Sort,
         Self::SortNumeric,
@@ -183,6 +189,9 @@ impl Command {
             Self::FindPrev => "find-prev",
             Self::Filter => "filter",
             Self::ClearFilter => "clear-filter",
+            Self::Substitute => "replace",
+            Self::SubstituteOne => "replace-one",
+            Self::SubstituteAll => "replace-all",
             Self::Sort => "sort",
             Self::SortNumeric => "sort-numeric",
             Self::SortNatural => "sort-natural",
@@ -250,6 +259,9 @@ impl Command {
             Self::FindPrev => "jump to the previous match",
             Self::Filter => "show only rows matching a pattern",
             Self::ClearFilter => "clear the filter and sort",
+            Self::Substitute => "find and replace, with $1 for a captured group",
+            Self::SubstituteOne => "replace the match under the cursor, then move to the next",
+            Self::SubstituteAll => "replace every remaining match, as one undo step",
             Self::Sort => "sort by this column (again to reverse)",
             Self::SortNumeric => "sort this column as numbers",
             Self::SortNatural => "sort naturally (file2 before file10)",
@@ -318,6 +330,9 @@ impl Command {
             Self::FindPrev => "prev",
             Self::Filter => "filter",
             Self::ClearFilter => "unfilter",
+            Self::Substitute => "replace…",
+            Self::SubstituteOne => "this one",
+            Self::SubstituteAll => "all",
             Self::Sort => "sort",
             Self::SortNumeric => "sort 123",
             Self::SortNatural => "sort nat",
@@ -382,7 +397,12 @@ impl Command {
     pub fn mutates(self) -> bool {
         matches!(
             self,
-            Self::EditCell | Self::ReplaceCell | Self::Undo | Self::Redo
+            Self::EditCell
+                | Self::ReplaceCell
+                | Self::SubstituteOne
+                | Self::SubstituteAll
+                | Self::Undo
+                | Self::Redo
         )
     }
 }
@@ -406,7 +426,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 61, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 64, "update ALL when adding a command");
     }
 
     #[test]

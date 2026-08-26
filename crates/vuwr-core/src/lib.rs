@@ -341,6 +341,26 @@ impl Document {
     }
 
     fn apply_inner(&mut self, op: EditOp) -> Result<EditOp, Error> {
+        // Several ops as one, for a bulk edit that has to undo as one.
+        if let EditOp::Batch(ops) = op {
+            let mut done: Vec<EditOp> = Vec::with_capacity(ops.len());
+            for step in ops {
+                match self.apply_inner(step) {
+                    Ok(inverse) => done.push(inverse),
+                    // A batch keeps the promise a single op makes: on
+                    // failure the document is as it was. Undoing what has
+                    // been applied is the only way to keep it here.
+                    Err(e) => {
+                        for inverse in done.into_iter().rev() {
+                            let _ = self.apply_inner(inverse);
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            done.reverse();
+            return Ok(EditOp::Batch(done));
+        }
         // Applies to every format: the op carries a whole document.
         if let EditOp::ReplaceSource { bytes } = op {
             let previous = self.serialize();

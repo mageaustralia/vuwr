@@ -87,6 +87,12 @@ pub enum EditOp {
         at: usize,
         entries: Vec<(usize, Cell)>,
     },
+    /// Several ops as one.
+    ///
+    /// So that a replace across four hundred rows is one press of `u`
+    /// rather than four hundred. The inverse is each op's inverse in
+    /// reverse order, which is what makes it exact.
+    Batch(Vec<Self>),
 }
 
 impl CsvDoc {
@@ -97,7 +103,8 @@ impl CsvDoc {
             // Tree ops address JSON/XML nodes; a CSV sheet has no paths.
             EditOp::SetNode { .. } => Err(Error::EditNotSupported { format: "CSV" }),
             // Handled by Document::apply_inner before reaching a format.
-            EditOp::ReplaceSource { .. }
+            EditOp::Batch(_)
+            | EditOp::ReplaceSource { .. }
             | EditOp::RemoveNode { .. }
             | EditOp::InsertNode { .. }
             | EditOp::RenameNode { .. } => Err(Error::EditNotSupported { format: "CSV" }),

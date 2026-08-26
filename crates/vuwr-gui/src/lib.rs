@@ -1051,11 +1051,21 @@ impl VuwrApp {
         let Some((sigil, _)) = session.entry() else {
             return;
         };
-        let what = match sigil {
-            '/' => "Find",
-            '&' => "Filter rows",
-            _ => "Command",
+        let what = match session.prompt_kind() {
+            Some(vuwr_core::PromptKind::Find) => "Find",
+            Some(vuwr_core::PromptKind::Filter) => "Filter rows",
+            Some(vuwr_core::PromptKind::SubstituteFind) => "Replace — find what",
+            Some(vuwr_core::PromptKind::SubstituteWith) => "Replace — with",
+            None => "Command",
         };
+        // A filter narrows what a replacement touches, which is usually
+        // what you want and never something to leave unsaid.
+        let note = matches!(
+            session.prompt_kind(),
+            Some(vuwr_core::PromptKind::SubstituteFind | vuwr_core::PromptKind::SubstituteWith)
+        )
+        .then(|| session.substitution_note())
+        .flatten();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.label(
@@ -1063,6 +1073,13 @@ impl VuwrApp {
                     .text_style(theme::micro())
                     .color(theme::text_muted()),
             );
+            if let Some(note) = &note {
+                ui.label(
+                    egui::RichText::new(note)
+                        .text_style(theme::micro())
+                        .color(theme::warn_text()),
+                );
+            }
             egui::Frame::new()
                 .fill(theme::surface())
                 .stroke(egui::Stroke::new(1.0_f32, theme::accent_border()))

@@ -575,6 +575,16 @@ fn span_width(widths: &[usize], from: usize, to: usize) -> usize {
     widths[from..=to].iter().sum::<usize>() + (to - from)
 }
 
+/// The prompt's own mark, for the kinds that need no name.
+fn return_sigil(kind: vuwr_core::PromptKind) -> &'static str {
+    match kind {
+        vuwr_core::PromptKind::Find => " /",
+        vuwr_core::PromptKind::Filter => " &",
+        vuwr_core::PromptKind::SubstituteFind => " replace  /",
+        vuwr_core::PromptKind::SubstituteWith => " with  =",
+    }
+}
+
 fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     // A prompt or an edit takes the line: there is nowhere else for what
     // is being typed to go.
@@ -582,11 +592,31 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
         // A prompt is a text field like any other: the caret shows where
         // it is, and a selection shows what a keystroke would replace.
         Mode::Prompt { kind, .. } => {
+            // Named, not just sigilled: finding and finding-in-order-to-
+            // replace both carry `/`, and the two are not the same thing
+            // to be in the middle of.
+            let label = match kind {
+                vuwr_core::PromptKind::SubstituteFind => " replace  /",
+                vuwr_core::PromptKind::SubstituteWith => " with  =",
+                _ => return_sigil(*kind),
+            };
             let mut spans = vec![Span::styled(
-                format!(" {}", kind.sigil()),
+                label.to_string(),
                 Style::default().fg(palette::accent()),
             )];
             spans.extend(caret_spans(app));
+            // A filter narrows what a replacement touches, and that is
+            // not something to leave to be discovered afterwards.
+            if matches!(
+                kind,
+                vuwr_core::PromptKind::SubstituteFind | vuwr_core::PromptKind::SubstituteWith
+            ) && let Some(note) = app.session.substitution_note()
+            {
+                spans.push(Span::styled(
+                    format!("   {note}"),
+                    Style::default().fg(palette::warn()),
+                ));
+            }
             Line::from(spans)
         }
         Mode::Command(_) => {

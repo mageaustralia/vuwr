@@ -80,6 +80,13 @@ pub fn resolve(key: KeyEvent, pending_g: bool) -> Resolved {
         (KeyCode::Char('n'), false) => Command::FindNext,
         (KeyCode::Char('N'), false) => Command::FindPrev,
         (KeyCode::Char('&'), false) => Command::Filter,
+        // Replacing. `%` for the setup, after vim's `:%s`; then `.` takes
+        // the match under the cursor and `n` — already "next match" —
+        // skips it, so stepping through needs no new vocabulary. `a`
+        // takes the rest at once.
+        (KeyCode::Char('%'), false) => Command::Substitute,
+        (KeyCode::Char('.'), false) => Command::SubstituteOne,
+        (KeyCode::Char('a'), false) => Command::SubstituteAll,
         (KeyCode::Char('r'), false) => Command::ClearFilter,
         (KeyCode::Char('m'), false) => Command::ToggleMark,
         (KeyCode::Char('M'), false) => Command::ClearMarks,
@@ -138,6 +145,9 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::FindNext => "n",
         Command::FindPrev => "N",
         Command::Filter => "&",
+        Command::Substitute => "%",
+        Command::SubstituteOne => ".",
+        Command::SubstituteAll => "a",
         Command::ClearFilter => "r",
         Command::Sort => "s",
         Command::SortNumeric => "Ctrl-S",

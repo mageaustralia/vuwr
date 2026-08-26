@@ -1051,7 +1051,7 @@ fn every_command_is_reachable_by_the_route_help_advertises() {
     let mut codes: Vec<KeyCode> = ('a'..='z')
         .chain('A'..='Z')
         .chain('0'..='9')
-        .chain("/&:?*_<>=-+".chars())
+        .chain("/&:?*_<>=-+%.".chars())
         .map(KeyCode::Char)
         .collect();
     codes.extend([

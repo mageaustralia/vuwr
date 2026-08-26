@@ -102,6 +102,11 @@ pub fn command_for(key: Key, mods: Modifiers, pending_g: bool) -> Option<Command
 pub fn command_for_char(c: char) -> Option<Command> {
     match c {
         '&' => Some(Command::Filter),
+        // As in the terminal: `%` sets a replacement up, `.` takes the
+        // match under the cursor, `n` skips it, `a` takes the rest.
+        '%' => Some(Command::Substitute),
+        '.' => Some(Command::SubstituteOne),
+        'a' => Some(Command::SubstituteAll),
         '>' => Some(Command::WidenColumn),
         '<' => Some(Command::NarrowColumn),
         _ => None,
@@ -145,6 +150,9 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::FindNext => "n",
         Command::FindPrev => "N",
         Command::Filter => "&",
+        Command::Substitute => "%",
+        Command::SubstituteOne => ".",
+        Command::SubstituteAll => "a",
         Command::ClearFilter => "r",
         Command::Sort => "s",
         Command::SortNumeric => "toolbar",

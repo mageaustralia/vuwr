@@ -66,6 +66,16 @@ impl Search {
             .collect()
     }
 
+    /// Rewrite every match in `text`.
+    ///
+    /// `$1` and `${name}` in `with` stand for what the pattern captured,
+    /// which is the whole reason the search is a regex rather than a
+    /// substring: `(\d+)mm` → `${1} mm` is one replacement rather than a
+    /// hundred hand edits.
+    pub fn replace_in(&self, text: &str, with: &str) -> String {
+        self.re.replace_all(text, with).into_owned()
+    }
+
     /// The byte offset of the next match in a block of text, from `from`
     /// exclusive, wrapping around.
     ///

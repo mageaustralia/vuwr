@@ -157,13 +157,18 @@ impl Entry {
 pub enum PromptKind {
     Find,
     Filter,
+    /// What to look for, on the way to replacing it.
+    SubstituteFind,
+    /// What to put in its place.
+    SubstituteWith,
 }
 
 impl PromptKind {
     pub fn sigil(self) -> char {
         match self {
-            Self::Find => '/',
+            Self::Find | Self::SubstituteFind => '/',
             Self::Filter => '&',
+            Self::SubstituteWith => '=',
         }
     }
 }
@@ -218,6 +223,13 @@ pub struct Session {
     pub search: Option<Search>,
     /// The active row filter, if any.
     filter: Option<Search>,
+    /// A replacement in progress: what to find and what to put there.
+    ///
+    /// Held between the prompt and the edits so the same pattern serves
+    /// stepping through the matches and replacing the rest at once.
+    substitution: Option<(Search, String)>,
+    /// The pattern half, while the second prompt is open.
+    pending_pattern: Option<String>,
     /// The active sort, if any.
     sort: Option<SortSpec>,
     /// True while the open edit is renaming a key rather than changing a
@@ -287,6 +299,8 @@ impl Session {
             show_hints: true,
             search: None,
             filter: None,
+            substitution: None,
+            pending_pattern: None,
             sort: None,
             renaming: false,
             text_scroll: 0.0,
@@ -782,6 +796,26 @@ impl Session {
             }
             Command::FindNext => self.find_step(true),
             Command::FindPrev => self.find_step(false),
+            Command::Substitute => {
+                // The pattern first, prefilled with whatever was last
+                // searched for: replacing what you just found is the
+                // common case.
+                let entry = match &self.search {
+                    Some(search) => Entry {
+                        buf: search.pattern().to_string(),
+                        caret: search.pattern().len(),
+                        anchor: 0,
+                    },
+                    None => Entry::default(),
+                };
+                self.pending_pattern = None;
+                self.mode = Mode::Prompt {
+                    kind: PromptKind::SubstituteFind,
+                    entry,
+                };
+            }
+            Command::SubstituteOne => return self.substitute_one(),
+            Command::SubstituteAll => return self.substitute_all(),
             Command::ClearFilter => {
                 if self.filter.is_some() || self.sort.is_some() {
                     self.filter = None;
@@ -1609,6 +1643,33 @@ impl Session {
         }
     }
 
+    /// Which prompt is open, so a frontend can label it.
+    ///
+    /// The sigil alone is not enough: finding and finding-in-order-to-
+    /// replace both carry `/`, and a reader in the middle of a replacement
+    /// should be told so.
+    pub fn prompt_kind(&self) -> Option<PromptKind> {
+        match self.mode {
+            Mode::Prompt { kind, .. } => Some(kind),
+            _ => None,
+        }
+    }
+
+    /// Whether a replacement is set up and waiting to be applied.
+    pub fn substitution_active(&self) -> bool {
+        self.substitution.is_some()
+    }
+
+    /// A sentence naming what a replacement will touch, when a filter is
+    /// narrowing it. `None` when nothing is filtered.
+    pub fn substitution_note(&self) -> Option<String> {
+        let shown = self.visible_count()?;
+        let total = self.doc.sheet().map_or(0, |s| s.dims().0);
+        Some(format!(
+            "only the {shown} rows the filter shows, not all {total}"
+        ))
+    }
+
     /// The selection, as byte offsets, for a frontend to draw.
     pub fn entry_selection(&self) -> Option<(usize, usize)> {
         self.selection()
@@ -2432,7 +2493,148 @@ impl Session {
         self.status = format!("/{}", search.pattern());
     }
 
+    /// Set up a replacement and go to the first match.
+    ///
+    /// The status says the scope out loud. A filter narrows what is
+    /// replaced — which is usually the point, and is also the sort of
+    /// thing that quietly rewrites the wrong four hundred rows if nobody
+    /// says it.
+    fn begin_substitution(&mut self, with: String) {
+        let Some(pattern) = self.pending_pattern.take() else {
+            return;
+        };
+        if pattern.is_empty() {
+            return;
+        }
+        let search = match Search::new(&pattern) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status = e.to_string();
+                return;
+            }
+        };
+        if self.doc.sheet().is_none() {
+            self.status = "replacing needs a table view".into();
+            return;
+        }
+        let scope = self.substitution_scope();
+        self.search = Some(search.clone());
+        self.substitution = Some((search, with.clone()));
+        self.find_step(true);
+        self.status =
+            format!("replace {pattern} with {with}{scope} — . replaces, n skips, a does the rest");
+    }
+
+    /// How the scope reads in the status line.
+    fn substitution_scope(&self) -> String {
+        match self.substitution_note() {
+            Some(note) => format!(" — {note}"),
+            None => String::new(),
+        }
+    }
+
+    /// The rows a replacement may touch, as source rows.
+    ///
+    /// With a filter on, only what the filter shows. A row hidden from you
+    /// is not a row you asked to change.
+    fn substitution_rows(&self) -> Vec<usize> {
+        let Some(sheet) = self.doc.sheet() else {
+            return Vec::new();
+        };
+        let (rows, _) = sheet.dims();
+        let first = usize::from(sheet.header_is_first_row());
+        match &self.grid.visible {
+            Some(visible) => visible.iter().copied().filter(|r| *r >= first).collect(),
+            None => (first..rows).collect(),
+        }
+    }
+
+    /// Replace what the cursor is on, then move to the next match.
+    fn substitute_one(&mut self) -> Effect {
+        let Some((search, with)) = self.substitution.clone() else {
+            self.status = "nothing to replace — % sets one up".into();
+            return Effect::None;
+        };
+        let row = self.grid.source_row(self.grid.cursor.0);
+        let column = self.source_col(self.grid.cursor.1);
+        let Some(before) = self.doc.sheet().and_then(|s| s.cell(row, column)) else {
+            return Effect::None;
+        };
+        if !search.matches(&before) {
+            self.status = "no match here — n moves to the next".into();
+            return Effect::None;
+        }
+        let after = search.replace_in(&before, &with);
+        match self.doc.set_cell(row, column, &after) {
+            Ok(()) => {
+                self.mark_changed();
+                self.after_edit();
+                self.status = format!("replaced — {after}");
+                self.find_step(true);
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+        Effect::None
+    }
+
+    /// Replace every match in scope, as one edit.
+    fn substitute_all(&mut self) -> Effect {
+        let Some((search, with)) = self.substitution.clone() else {
+            self.status = "nothing to replace — % sets one up".into();
+            return Effect::None;
+        };
+        let Some(sheet) = self.doc.sheet() else {
+            self.status = "replacing needs a table view".into();
+            return Effect::None;
+        };
+        let (_, columns) = sheet.dims();
+        let mut ops = Vec::new();
+        let mut cells = 0usize;
+        for row in self.substitution_rows() {
+            for column in 0..columns {
+                let Some(before) = sheet.cell(row, column) else {
+                    continue;
+                };
+                if !search.matches(&before) {
+                    continue;
+                }
+                let after = search.replace_in(&before, &with);
+                if after == before {
+                    continue;
+                }
+                cells += 1;
+                ops.push(crate::EditOp::SetCell {
+                    row,
+                    column,
+                    value: after,
+                });
+            }
+        }
+        if ops.is_empty() {
+            self.status = format!("nothing matched /{}", search.pattern());
+            return Effect::None;
+        }
+        // One op, so one press of `u` puts it all back.
+        match self.doc.apply(crate::EditOp::Batch(ops)) {
+            Ok(()) => {
+                self.mark_changed();
+                self.after_edit();
+                let scope = self.substitution_scope();
+                self.status = format!("replaced {cells} cells{scope} — u undoes all of it");
+            }
+            Err(e) => self.status = e.to_string(),
+        }
+        Effect::None
+    }
+
     fn commit_prompt(&mut self, kind: PromptKind, pattern: String) {
+        // An empty replacement means "delete what matched", which is a
+        // real thing to ask for — so it does not count as an empty
+        // prompt.
+        if kind == PromptKind::SubstituteWith {
+            self.begin_substitution(pattern);
+            return;
+        }
         if pattern.is_empty() {
             // An empty filter is not a filter. Emptying the field and
             // pressing Enter is how every search box is turned off, so it
@@ -2450,6 +2652,15 @@ impl Session {
             }
         };
         match kind {
+            PromptKind::SubstituteFind => {
+                // Held, not applied: the replacement is asked for next.
+                self.pending_pattern = Some(pattern);
+                self.mode = Mode::Prompt {
+                    kind: PromptKind::SubstituteWith,
+                    entry: Entry::default(),
+                };
+            }
+            PromptKind::SubstituteWith => self.begin_substitution(pattern),
             PromptKind::Find => {
                 self.search = Some(search);
                 self.find_step(true);

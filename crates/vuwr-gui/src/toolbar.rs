@@ -181,6 +181,27 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Toolbar {
         if button(ui, "Find", "Search (Ctrl+F)").clicked() {
             clicked = Some(Command::Find);
         }
+        // Replacing is next to finding because it starts as one.
+        let replacing = session.substitution_active();
+        if filter_button(ui, "Replace", replacing)
+            .on_hover_text("Find and replace, with $1 for a captured group (%)")
+            .clicked()
+        {
+            clicked = Some(Command::Substitute);
+        }
+        // The two halves of stepping, offered only once there is
+        // something to step through.
+        if replacing {
+            if button(ui, "This one", "Replace the match under the cursor (.)").clicked() {
+                clicked = Some(Command::SubstituteOne);
+            }
+            if button(ui, "Skip", "Leave it and go to the next (n)").clicked() {
+                clicked = Some(Command::FindNext);
+            }
+            if button(ui, "All", "Replace the rest, as one undo step (a)").clicked() {
+                clicked = Some(Command::SubstituteAll);
+            }
+        }
         // Only offer the undo of a view change when there is one.
         let filtered = session.is_filtered() || session.sort_spec().is_some();
         ui.add_enabled_ui(filtered, |ui| {
