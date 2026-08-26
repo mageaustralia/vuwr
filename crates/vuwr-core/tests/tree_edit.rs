@@ -1643,3 +1643,44 @@ fn a_tree_search_steps_through_matches() {
     s.execute(Command::FindNext);
     assert_eq!(s.tree_rows.get(s.grid.cursor.0).unwrap().summary, "one");
 }
+
+/// The text view's cursor is a line of the source, so searching it has to
+/// answer in lines.
+///
+/// It used to go through the sheet and treat the row number it got back as
+/// a line number. Those agree in a CSV, which is why nobody noticed, and
+/// agree nowhere else: in XML the search reported a hit and moved the
+/// cursor to a line that had nothing to do with it.
+#[test]
+fn a_text_search_lands_on_the_line_that_matched() {
+    let mut xml = String::from("<rss>\n<channel>\n<title>Feed</title>\n");
+    for i in 0..40 {
+        xml.push_str(&format!("<item><g:id>SKU{i:03}</g:id></item>\n"));
+    }
+    xml.push_str("</channel>\n</rss>\n");
+
+    let doc = Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap();
+    let mut s = Session::new(doc);
+    s.execute(Command::ViewText);
+
+    s.execute(Command::Find);
+    s.input_text("SKU027");
+    s.input_submit();
+
+    let line = s.table_cell(s.grid.cursor.0, 0).unwrap_or_default();
+    assert!(
+        line.contains("SKU027"),
+        "landed on {:?}, which does not hold the match",
+        line
+    );
+
+    // Markup is on screen, so it is searchable — no cell contains it.
+    s.execute(Command::Find);
+    s.input_text("</channel>");
+    s.input_submit();
+    assert!(
+        s.table_cell(s.grid.cursor.0, 0)
+            .unwrap_or_default()
+            .contains("</channel>")
+    );
+}

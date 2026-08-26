@@ -66,6 +66,32 @@ impl Search {
             .collect()
     }
 
+    /// The byte offset of the next match in a block of text, from `from`
+    /// exclusive, wrapping around.
+    ///
+    /// For the text view, where the cursor addresses a line of the source
+    /// rather than a cell. Answering that one from the sheet gave a row
+    /// number and called it a line number, which agree only in a CSV.
+    pub fn find_in_text(&self, text: &str, from: usize, forward: bool) -> Option<usize> {
+        if forward {
+            let mut hits = self.re.find_iter(text).map(|m| m.start()).peekable();
+            let first = *hits.peek()?;
+            // Past the end wraps to the first, so `n` on a lone match
+            // stays on it rather than reporting failure.
+            Some(hits.find(|&at| at > from).unwrap_or(first))
+        } else {
+            let mut last = None;
+            let mut before = None;
+            for at in self.re.find_iter(text).map(|m| m.start()) {
+                if at < from {
+                    before = Some(at);
+                }
+                last = Some(at);
+            }
+            before.or(last)
+        }
+    }
+
     /// The next matching cell from `from`, exclusive, wrapping around.
     ///
     /// Returns `None` only when nothing in the sheet matches, so `n` on a

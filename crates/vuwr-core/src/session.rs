@@ -2324,6 +2324,14 @@ impl Session {
             self.tree_find_step(&search, forward);
             return;
         }
+        // Nor is the text view the table. Its cursor is a line of the
+        // source, and a sheet row is not one: in a CSV the two nearly
+        // agree, which is why this went unnoticed, and in anything with
+        // structure they do not agree at all.
+        if self.view == ViewMode::Text {
+            self.text_find_step(&search, forward);
+            return;
+        }
         let Some(sheet) = self.doc.sheet() else {
             self.status = "search needs a table view".into();
             return;
@@ -2344,6 +2352,33 @@ impl Session {
             }
             None => self.status = format!("no match for /{}", search.pattern()),
         }
+    }
+
+    /// The same jump, through the source text.
+    ///
+    /// Matches against the bytes on screen, so what the eye can see the
+    /// search can find — including markup, which no cell contains.
+    fn text_find_step(&mut self, search: &Search, forward: bool) {
+        let text = String::from_utf8_lossy(&self.text_bytes).into_owned();
+        // From the end of the current line going forward and its start
+        // going back, so a second `n` leaves the line it is on.
+        let line = self.grid.cursor.0;
+        let from = match self.text_spans.get(line) {
+            Some(&(_, b)) if forward => b.saturating_sub(1),
+            Some(&(a, _)) => a,
+            None => 0,
+        };
+        let Some(at) = search.find_in_text(&text, from, forward) else {
+            self.status = format!("no match for /{}", search.pattern());
+            return;
+        };
+        let Some(row) = self.line_of(at) else {
+            self.status = format!("no match for /{}", search.pattern());
+            return;
+        };
+        let (rows, cols) = self.grid_dims();
+        self.grid.move_to(row, 0, rows, cols);
+        self.status = format!("/{}", search.pattern());
     }
 
     /// The same jump, through the tree instead of the sheet.
