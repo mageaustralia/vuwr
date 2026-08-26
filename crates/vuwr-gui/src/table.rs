@@ -44,6 +44,11 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     // glyphs sit.
     let numeric: Vec<bool> = (0..cols).map(|c| session.column_is_numeric(c)).collect();
 
+    // Room for the row numbers, which is however many digits the last row
+    // needs. A feed's "row 247" means nothing without them on screen to
+    // count against.
+    let gutter = GUTTER + digits(rows) as f32 * char_width + PAD;
+
     // The header sits outside the scroll area so it stays put while the
     // rows move under it — but it has to follow the *horizontal* scroll,
     // or scrolling right leaves every heading over the wrong column. The
@@ -66,8 +71,12 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
             RULER
         };
         let outer = ui.available_rect_before_wrap();
-        let header_rect =
-            egui::Rect::from_min_size(outer.min, egui::vec2(outer.width(), head_height));
+        // Inset by the gutter, as the rows are: the headings have to stay
+        // over their own columns.
+        let header_rect = egui::Rect::from_min_size(
+            outer.min + egui::vec2(gutter, 0.0),
+            egui::vec2(outer.width() - gutter, head_height),
+        );
         let mut header = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(egui::Rect::from_min_size(
@@ -85,7 +94,6 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         );
         header.set_clip_rect(header_rect.intersect(ui.clip_rect()));
         header.spacing_mut().item_spacing.x = 0.0;
-        header.add_space(GUTTER);
         let head_colour = theme::text_muted();
         let head_font = header
             .style()
@@ -120,7 +128,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         // Reserve the space without putting a widget over it: an
         // allocation here is hit-tested after the handles and swallows
         // every hover and drag they were drawn for.
-        ui.advance_cursor_after_rect(header_rect);
+        ui.advance_cursor_after_rect(header_rect.translate(egui::vec2(-gutter, 0.0)));
         ui.separator();
     }
 
@@ -150,7 +158,23 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         .id_salt("sheet")
         .auto_shrink([false; 2]);
     if follow {
-        let pane = ui.available_width() - GUTTER;
+        // And downwards, which nothing did: "Show me" on a diagnostic in
+        // row 247 moved the cursor there and left the screen on row 1, so
+        // it looked as though the jump had failed.
+        let top = cursor.0 as f32 * row_height;
+        let down = ui
+            .ctx()
+            .memory(|m| m.data.get_temp::<f32>(egui::Id::new("sheet-offset-y")))
+            .unwrap_or(0.0);
+        let height = ui.available_height();
+        if top < down {
+            area = area.vertical_scroll_offset(top);
+        } else if top + row_height > down + height {
+            // A little above the bottom edge, so the row it lands on has
+            // its neighbours around it rather than being the last line.
+            area = area.vertical_scroll_offset(top + row_height * 3.0 - height);
+        }
+        let pane = ui.available_width() - gutter;
         let mut left = 0.0;
         for chars in widths.iter().take(cursor.1) {
             left += *chars as f32 * char_width + GRIP + PAD * 2.0;
@@ -171,8 +195,29 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
             area = area.horizontal_scroll_offset(left + width - pane);
         }
     }
+    // The gutter is reserved here and painted at the end, beside the pane
+    // rather than inside it: a gutter that scrolls with the content is
+    // gone the moment you scroll right, which is exactly when knowing
+    // which row you are on matters. Same shape as the text view's.
+    let outer = ui.available_rect_before_wrap();
+    let gutter_rect = egui::Rect::from_min_size(outer.min, egui::vec2(gutter, outer.height()));
+    let mut pane_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(
+                outer.min + egui::vec2(gutter, 0.0),
+                outer.max,
+            ))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    let ui = &mut pane_ui;
     let scrolled = area.show_rows(ui, row_height, rows, |ui, range| {
         ui.vertical(|ui| {
+            // Exactly `row_height` apart, which is what `show_rows` has
+            // already assumed in deciding which rows to hand us — and what
+            // the gutter beside it counts in. Default spacing here put a
+            // few pixels between rows, so the further down the pane you
+            // looked the further the numbers were from their rows.
+            ui.spacing_mut().item_spacing.y = 0.0;
             for r in range {
                 let source = session.grid.source_row(r);
                 let marked = session.grid.marks.contains(&source);
@@ -185,32 +230,15 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                     if on_row {
                         ui.painter().rect_filled(strip, 0.0, theme::row_selected());
                     }
-                    // A marker down the left edge: accent for where
-                    // you are, amber for a row you flagged.
-                    let marker = if on_row {
-                        Some(theme::accent())
-                    } else if marked {
-                        Some(theme::warn())
-                    } else {
-                        None
-                    };
-                    if let Some(colour) = marker {
-                        ui.painter().rect_filled(
-                            egui::Rect::from_min_size(
-                                strip.min,
-                                egui::vec2(theme::ROW_MARKER, row_height),
-                            ),
-                            0.0,
-                            colour,
-                        );
-                    }
+                    // The marker for this row is drawn in the gutter,
+                    // which does not scroll away from it.
+                    let _ = marked;
                     ui.painter().hline(
                         strip.x_range(),
                         strip.bottom() - 0.5,
                         egui::Stroke::new(1.0_f32, theme::border_faint()),
                     );
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.allocate_exact_size(egui::vec2(GUTTER, row_height), egui::Sense::hover());
                     for (c, chars) in widths.iter().enumerate() {
                         // Editing happens in the cell, drawn as a
                         // field, so it is obvious which value you are
@@ -263,8 +291,74 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
             }
         });
     });
-    ui.ctx()
-        .data_mut(|d| d.insert_temp(offset_id, scrolled.state.offset.x));
+    let offset_y = scrolled.state.offset.y;
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(offset_id, scrolled.state.offset.x);
+        d.insert_temp(egui::Id::new("sheet-offset-y"), offset_y);
+    });
+
+    // The row numbers, last, so nothing can be drawn over them.
+    //
+    // They are the document's own rows — the same numbers the status line
+    // and a diagnostic use — so "row 247" can be found by looking rather
+    // than by counting.
+    let painter = ui.painter_at(gutter_rect);
+    painter.rect_filled(gutter_rect, 0.0, theme::surface_header());
+    painter.vline(
+        gutter_rect.right() - 0.5,
+        gutter_rect.y_range(),
+        egui::Stroke::new(1.0_f32, theme::border()),
+    );
+    let first = (offset_y / row_height).floor().max(0.0) as usize;
+    let number_font = egui::FontId::monospace(11.0);
+    for r in first..(first + visible + 2).min(rows) {
+        let top = gutter_rect.top() + r as f32 * row_height - offset_y;
+        if top + row_height < gutter_rect.top() || top > gutter_rect.bottom() {
+            continue;
+        }
+        let source = session.grid.source_row(r);
+        let on_row = r == cursor.0;
+        let marked = session.grid.marks.contains(&source);
+        if on_row {
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(gutter_rect.left(), top),
+                    egui::vec2(gutter_rect.width(), row_height),
+                ),
+                0.0,
+                theme::row_selected(),
+            );
+        }
+        // Accent for where you are, amber for a row you flagged.
+        if let Some(colour) = if on_row {
+            Some(theme::accent())
+        } else if marked {
+            Some(theme::warn())
+        } else {
+            None
+        } {
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(gutter_rect.left(), top),
+                    egui::vec2(theme::ROW_MARKER, row_height),
+                ),
+                0.0,
+                colour,
+            );
+        }
+        painter.text(
+            egui::pos2(gutter_rect.right() - PAD, top + row_height / 2.0),
+            egui::Align2::RIGHT_CENTER,
+            (source + 1).to_string(),
+            number_font.clone(),
+            if on_row {
+                theme::accent_text()
+            } else {
+                theme::text_muted()
+            },
+        );
+    }
+
     match grip {
         Grip::None => {}
         Grip::Width(col, chars) => session.set_column_width(col, chars),
@@ -273,8 +367,14 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
     edit
 }
 
-/// Width of the mark gutter.
+/// Width of the mark stripe at the left of the row-number gutter.
 const GUTTER: f32 = 14.0;
+
+/// How many digits a row count needs, with a floor so the gutter does not
+/// visibly change width on the first scroll of a short file.
+fn digits(rows: usize) -> usize {
+    rows.max(1).to_string().len().max(3)
+}
 
 /// How many characters wide a column is, from what the session measured.
 fn column_chars(session: &Session, col: usize) -> usize {
