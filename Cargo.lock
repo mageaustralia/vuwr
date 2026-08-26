@@ -4247,7 +4247,7 @@ dependencies = [
 
 [[package]]
 name = "vuwr"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "vuwr-core",
@@ -4257,7 +4257,7 @@ dependencies = [
 
 [[package]]
 name = "vuwr-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proptest",
  "regex",
@@ -4265,7 +4265,7 @@ dependencies = [
 
 [[package]]
 name = "vuwr-gui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "eframe",
  "egui",
@@ -4278,7 +4278,7 @@ dependencies = [
 
 [[package]]
 name = "vuwr-tui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "crossterm",
@@ -4290,7 +4290,7 @@ dependencies = [
 
 [[package]]
 name = "vuwr-web"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "console_error_panic_hook",
  "eframe",
