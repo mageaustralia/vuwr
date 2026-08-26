@@ -20,6 +20,11 @@ file meant a text editor plus `jq` or `xmllint`.
   one cell gives you a one-line `git diff`.
 - Search, filter, marks, frozen columns, resizable columns, and a
   **Columns** list for putting the ones you are not reading away
+- **Find and replace**, with `$1` for what the pattern captured, so
+  `(\d+)mm` → `${1} mm` is one replacement rather than a hundred edits.
+  Step through the matches or take them all at once, as a single undo. A
+  filter narrows what is replaced — usually the point, and said plainly
+  beside the prompt while you type, not discovered afterwards.
 - An **inspector** beside the table: the whole record read downwards, for
   when a row is twenty-three columns wide and the window shows five
 - Light and dark in the window, under View → Appearance
@@ -69,6 +74,17 @@ the tab; nothing is uploaded.
 
 ## Install
 
+Download a binary from [Releases](https://github.com/mageaustralia/vuwr/releases)
+— macOS (Apple silicon or Intel), Windows, Linux — unpack it and put
+`vuwr` on your `PATH`.
+
+They are not code-signed, so the first run needs a word from you: on macOS
+`xattr -d com.apple.quarantine ./vuwr`, and on Windows *More info* →
+*Run anyway* at the SmartScreen prompt. There is a `.sha256` beside each
+archive if you would rather check than trust.
+
+Or build it:
+
 ```sh
 cargo build --release      # target/release/vuwr
 ```
@@ -97,6 +113,7 @@ matter in the current view.
 | `u` / `Ctrl-R` | undo / redo |
 | `/` `n` `N` | search, next, previous |
 | `&` / `r` | filter rows / clear the filter |
+| `%` `.` `a` | find and replace: set up, take this one, take the rest |
 | `m` `M` `Ctrl-E` | mark, clear marks, print marked rows and exit |
 | `f` | freeze columns left of the cursor |
 | `<` `>` `=` | narrow, widen, re-fit the column (or drag its edge) |
