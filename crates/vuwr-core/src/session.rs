@@ -53,6 +53,8 @@ impl NewNode {
                 trailing_comma: false,
                 inline: true,
                 spaced: false,
+                // A new object is written the way most JSON is.
+                colon_spaced: true,
             }),
             Self::Array => crate::Node::Array(crate::Array {
                 open: '[',
@@ -804,6 +806,11 @@ impl Session {
             Command::FindNext => self.find_step(true),
             Command::FindPrev => self.find_step(false),
             Command::Substitute => {
+                if !self.can_substitute() {
+                    self.status =
+                        "replacing works in the table, where the cursor is a cell — press 1".into();
+                    return Effect::None;
+                }
                 // The pattern first, prefilled with whatever was last
                 // searched for: replacing what you just found is the
                 // common case.
@@ -1662,6 +1669,17 @@ impl Session {
         }
     }
 
+    /// Whether replacing can address anything here.
+    ///
+    /// The table only. A replacement works on cells, and outside the
+    /// table the cursor is a tree node or a line of source — so a row and
+    /// a column taken from it name some other cell entirely. It used to
+    /// arm itself anywhere and then act on whatever those numbers
+    /// happened to point at.
+    pub fn can_substitute(&self) -> bool {
+        self.view == ViewMode::Table && self.doc.sheet().is_some()
+    }
+
     /// Whether a replacement is set up and waiting to be applied.
     pub fn substitution_active(&self) -> bool {
         self.substitution.is_some()
@@ -1670,11 +1688,19 @@ impl Session {
     /// A sentence naming what a replacement will touch, when a filter is
     /// narrowing it. `None` when nothing is filtered.
     pub fn substitution_note(&self) -> Option<String> {
-        let shown = self.visible_count()?;
-        let total = self.doc.sheet().map_or(0, |s| s.dims().0);
-        Some(format!(
-            "only the {shown} rows the filter shows, not all {total}"
-        ))
+        let mut parts = Vec::new();
+        if let Some(shown) = self.visible_count() {
+            let total = self.doc.sheet().map_or(0, |s| s.dims().0);
+            parts.push(format!(
+                "only the {shown} rows the filter shows, not all {total}"
+            ));
+        }
+        match self.hidden_column_count() {
+            0 => {}
+            1 => parts.push("and not the column you have hidden".into()),
+            n => parts.push(format!("and not the {n} columns you have hidden")),
+        }
+        (!parts.is_empty()).then(|| parts.join(", "))
     }
 
     /// The selection, as byte offsets, for a frontend to draw.
@@ -2520,8 +2546,8 @@ impl Session {
                 return;
             }
         };
-        if self.doc.sheet().is_none() {
-            self.status = "replacing needs a table view".into();
+        if !self.can_substitute() {
+            self.status = "replacing works in the table, where the cursor is a cell".into();
             return;
         }
         let scope = self.substitution_scope();
@@ -2594,11 +2620,14 @@ impl Session {
             self.status = "replacing needs a table view".into();
             return Effect::None;
         };
-        let (_, columns) = sheet.dims();
-        let mut ops = Vec::new();
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
         let mut cells = 0usize;
+        // Only the columns on display, for the reason the filter gets the
+        // same treatment: a column you have put away is not one you asked
+        // to change.
+        let columns = self.visible_columns();
         for row in self.substitution_rows() {
-            for column in 0..columns {
+            for &column in &columns {
                 let Some(before) = sheet.cell(row, column) else {
                     continue;
                 };
@@ -2610,20 +2639,16 @@ impl Session {
                     continue;
                 }
                 cells += 1;
-                ops.push(crate::EditOp::SetCell {
-                    row,
-                    column,
-                    value: after,
-                });
+                edits.push((row, column, after));
             }
         }
-        if ops.is_empty() {
+        if edits.is_empty() {
             self.status = format!("nothing matched /{}", search.pattern());
             return Effect::None;
         }
-        // One op, so one press of `u` puts it all back.
-        match self.doc.apply(crate::EditOp::Batch(ops)) {
-            Ok(()) => {
+        // One undo step, through the path each format actually supports.
+        match self.doc.set_cells(&edits) {
+            Ok(_) => {
                 self.mark_changed();
                 self.after_edit();
                 let scope = self.substitution_scope();

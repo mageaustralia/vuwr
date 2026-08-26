@@ -48,6 +48,9 @@ fn relayout(node: &mut Node, style: Layout) {
             let flat = m.entries.iter().all(|(_, v)| is_scalar(v));
             m.inline = inline_for(style, flat);
             m.spaced = m.inline && style != Layout::Compact;
+            // Compact means every space that can go, goes — the one after
+            // the colon included.
+            m.colon_spaced = style != Layout::Compact;
             m.trailing_comma = false;
         }
         _ => {}
@@ -256,7 +259,7 @@ fn serialize_node(node: &Node, out: &mut Vec<u8>, depth: usize, indent: IndentSt
                     out.push(b' ');
                 }
                 serialize_string(key, out);
-                if expand {
+                if expand || map.colon_spaced {
                     out.extend_from_slice(b": ");
                 } else {
                     out.push(b':');
@@ -529,6 +532,7 @@ fn parse_map<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
             Node::Map(Map {
                 open: '{',
                 close: '}',
+                colon_spaced: false,
                 entries,
                 trailing_comma: false,
                 inline: true,
@@ -544,6 +548,7 @@ fn parse_map<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
     let content_start = &input[1..];
     #[allow(unused_assignments)]
     let mut trailing_comma = false;
+    let mut colon_spaced = false;
     loop {
         rest = rest.trim_start();
         // Without this, a truncated object walks off the end: `parse_string`
@@ -558,7 +563,12 @@ fn parse_map<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
                 offset: offset_of(full, rest),
             });
         }
-        rest = rest[1..].trim_start();
+        let after_colon = &rest[1..];
+        rest = after_colon.trim_start();
+        // Only for the first entry: one object writes one way.
+        if entries.is_empty() {
+            colon_spaced = after_colon.len() != rest.len();
+        }
         let (val, r) = parse_value(full, rest)?;
         entries.push((key, val));
         rest = r.trim_start();
@@ -587,6 +597,7 @@ fn parse_map<'a>(full: &str, input: &'a str) -> Result<(Node, &'a str), Error> {
         Node::Map(Map {
             open: '{',
             close: '}',
+            colon_spaced,
             entries,
             trailing_comma,
             inline,

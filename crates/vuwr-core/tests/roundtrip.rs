@@ -75,3 +75,26 @@ fn a_newline_in_a_string_is_not_a_line_ending() {
     let doc = Document::parse(src.as_bytes(), FormatHint::Json).unwrap();
     assert_eq!(String::from_utf8(doc.serialize()).unwrap(), src);
 }
+
+/// The space after a colon is part of the file.
+///
+/// An inline object was written back without one, so `{"a": 1}` became
+/// `{"a":1}` — a rewritten file for a document nobody had edited. The
+/// corpus missed it for the same reason it missed the final newline: not
+/// one file in it was written that way.
+#[test]
+fn an_inline_object_keeps_the_space_after_its_colon() {
+    for src in [
+        r#"{"a": 1}"#,
+        r#"{"a":1}"#,
+        "[\n  {\"sku\": \"A1\", \"qty\": 3}\n]\n",
+        "[\n  {\"sku\":\"A1\",\"qty\":3}\n]\n",
+    ] {
+        let doc = Document::parse(src.as_bytes(), FormatHint::Json).unwrap();
+        assert_eq!(
+            String::from_utf8(doc.serialize()).unwrap(),
+            src,
+            "not returned as it arrived"
+        );
+    }
+}

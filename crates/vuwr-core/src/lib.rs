@@ -605,6 +605,44 @@ impl Document {
         Ok(())
     }
 
+    /// Set many cells as one edit.
+    ///
+    /// Through the same per-format path a single cell takes. A batch of
+    /// raw `SetCell` ops is CSV's alone — JSON and XML address their
+    /// values by node — so one built that way failed on an XML feed with
+    /// "editing XML documents is not supported yet", which is exactly the
+    /// document replace-all exists for.
+    ///
+    /// All or nothing: a failure part way puts back what it had done.
+    pub fn set_cells(&mut self, edits: &[(usize, usize, String)]) -> Result<usize, Error> {
+        let eligible_json = self.json_table_eligible();
+        let eligible_xml = self.xml_table_eligible();
+        let mut inverses = Vec::with_capacity(edits.len());
+        for (row, col, value) in edits {
+            let done = match &mut self.kind {
+                Kind::Csv(doc) => doc.set_cell(*row, *col, value),
+                Kind::Json(doc) if eligible_json => doc.set_cell(*row, *col, value),
+                Kind::Xml(doc) if eligible_xml => doc.set_cell(*row, *col, value),
+                _ => Err(Error::NotTableShaped),
+            };
+            match done {
+                Ok(inverse) => inverses.push(inverse),
+                Err(e) => {
+                    for inverse in inverses.into_iter().rev() {
+                        let _ = self.apply_inner(inverse);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        let count = inverses.len();
+        // Reversed, so undoing walks back the way it came.
+        inverses.reverse();
+        self.undo.push(EditOp::Batch(inverses));
+        self.redo.clear();
+        Ok(count)
+    }
+
     pub fn as_csv(&self) -> Option<&CsvDoc> {
         match &self.kind {
             Kind::Csv(doc) => Some(doc),

@@ -59,6 +59,12 @@ pub struct Map {
     pub inline: bool,
     /// True if the original had spaces after commas (`, ` not `,`).
     pub spaced: bool,
+    /// True if the original had a space after the colon (`"a": 1`).
+    ///
+    /// Recorded because an inline object was always written back without
+    /// one: opening `{"a": 1}` and saving it returned `{"a":1}`, which is
+    /// a rewritten file for a document nobody edited.
+    pub colon_spaced: bool,
 }
 
 impl Element {
