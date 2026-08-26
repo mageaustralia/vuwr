@@ -711,3 +711,120 @@ fn egui_memory_is_not_persisted() {
         "a saved style would be restored over ours"
     );
 }
+
+/// The number beside a row has to be that row's number.
+///
+/// The row numbers are painted by hand into a gutter beside the scrolling
+/// pane, from the scroll offset — the pane lays its own rows out. Two
+/// pieces of arithmetic that have to agree, and nothing but a test says
+/// they do: a screenful in the middle of a feed showed row 247's number
+/// against a different row's values.
+mod gutter {
+    use super::*;
+
+    /// Every string drawn this frame, with the y it was drawn at.
+    fn painted(session: &mut Session, height: f32) -> Vec<(f32, String)> {
+        let ctx = ctx();
+        let mut out = Vec::new();
+        // Three passes: the horizontal offset and the follow-the-cursor
+        // scroll are both a frame behind, as the app's own comments say.
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, height),
+                )),
+                ..Default::default()
+            };
+            out.clear();
+            let full = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| vuwr_gui::render_view(session, ui));
+            });
+            for clipped in &full.shapes {
+                collect(&clipped.shape, &mut out);
+            }
+        }
+        out
+    }
+
+    fn collect(shape: &egui::Shape, out: &mut Vec<(f32, String)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((text.pos.y, text.galley.text().to_string())),
+            egui::Shape::Vec(shapes) => {
+                for s in shapes {
+                    collect(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rows(count: usize) -> String {
+        let mut csv = String::from("marker,value\n");
+        for i in 0..count {
+            // Never bare digits: a cell holding the same characters as a
+            // row number would make the search below pick the wrong shape.
+            csv.push_str(&format!("ROW{i:05},v{i}\n"));
+        }
+        csv
+    }
+
+    /// The cursor's row has to be on screen after a jump to it.
+    ///
+    /// "Show me" moves the cursor and the pane is expected to follow. It
+    /// only followed sideways before; this is the other half.
+    #[test]
+    fn the_pane_scrolls_to_the_cursor() {
+        let mut session = Session::new(doc(&rows(400)));
+        session.execute(Command::ViewTable);
+        session.grid.cursor = (300, 0);
+
+        let painted = painted(&mut session, 600.0);
+        let shown: Vec<String> = painted
+            .iter()
+            .filter(|(_, t)| t.starts_with("ROW"))
+            .map(|(_, t)| t.clone())
+            .collect();
+        assert!(
+            shown.iter().any(|t| t == "ROW00299"),
+            "the cursor is on source row 300, holding ROW00299; the pane shows {:?}..{:?}",
+            shown.first(),
+            shown.last()
+        );
+    }
+
+    /// Whatever the pane is scrolled to, each number is its own row's.
+    #[test]
+    fn a_row_number_is_drawn_beside_its_own_row() {
+        let mut session = Session::new(doc(&rows(400)));
+        session.execute(Command::ViewTable);
+        // Far enough down that the pane must scroll to reach it.
+        session.grid.cursor = (300, 0);
+
+        let painted = painted(&mut session, 600.0);
+        let markers: Vec<&(f32, String)> = painted
+            .iter()
+            .filter(|(_, t)| t.starts_with("ROW"))
+            .collect();
+        assert!(markers.len() > 3, "the pane drew almost nothing");
+
+        for (y, marker) in markers {
+            // The row's own index, from the value it is showing.
+            let index: usize = marker[3..].parse().expect("ROWnnnnn");
+            // Source row 0 is the header, so the row holding ROWn is
+            // source row n + 1 and is numbered n + 2.
+            let expected = (index + 2).to_string();
+            let beside = painted
+                .iter()
+                .filter(|(other, t)| {
+                    (other - y).abs() < 8.0 && t.chars().all(|c| c.is_ascii_digit())
+                })
+                .map(|(_, t)| t.clone())
+                .collect::<Vec<_>>();
+            assert!(
+                beside.contains(&expected),
+                "{marker} at y {y:.1} has {beside:?} beside it, not {expected}"
+            );
+        }
+    }
+}

@@ -209,8 +209,23 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
             ))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
+    // `show_rows` virtualises at `row_height + item_spacing.y`, taken from
+    // *this* ui — the one the scroll area is built on. Zeroing the spacing
+    // inside the closure was too late: egui had already decided each row
+    // was four pixels taller than the rows actually drew, so the range it
+    // handed back belonged to a different part of the file the further
+    // down you scrolled, and it reserved more height than it filled.
+    pane_ui.spacing_mut().item_spacing.y = 0.0;
     let ui = &mut pane_ui;
+    // The rows report where they were actually drawn, and the gutter is
+    // painted from that rather than from the scroll offset. Deriving the
+    // positions a second time meant two pieces of arithmetic that had to
+    // agree and did not: the offset read back after the frame is the one
+    // the *next* frame will use, so on any frame that scrolled — which is
+    // every frame "Show me" acts on — the numbers were drawn against a
+    // screenful the pane was no longer showing.
     let scrolled = area.show_rows(ui, row_height, rows, |ui, range| {
+        let mut drawn: Vec<(usize, f32)> = Vec::new();
         ui.vertical(|ui| {
             // Exactly `row_height` apart, which is what `show_rows` has
             // already assumed in deciding which rows to hand us — and what
@@ -227,6 +242,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                         ui.cursor().min,
                         egui::vec2(ui.available_width(), row_height),
                     );
+                    drawn.push((r, strip.top()));
                     if on_row {
                         ui.painter().rect_filled(strip, 0.0, theme::row_selected());
                     }
@@ -290,6 +306,7 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 });
             }
         });
+        drawn
     });
     let offset_y = scrolled.state.offset.y;
     ui.ctx().data_mut(|d| {
@@ -309,10 +326,9 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
         gutter_rect.y_range(),
         egui::Stroke::new(1.0_f32, theme::border()),
     );
-    let first = (offset_y / row_height).floor().max(0.0) as usize;
     let number_font = egui::FontId::monospace(11.0);
-    for r in first..(first + visible + 2).min(rows) {
-        let top = gutter_rect.top() + r as f32 * row_height - offset_y;
+    for (r, top) in scrolled.inner {
+        let (r, top) = (r, top);
         if top + row_height < gutter_rect.top() || top > gutter_rect.bottom() {
             continue;
         }
