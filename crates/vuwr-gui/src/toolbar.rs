@@ -221,9 +221,21 @@ pub fn toolbar(app: &VuwrApp, ui: &mut egui::Ui) -> Toolbar {
         if button(ui, "Lint", "Check for problems a parser lets through").clicked() {
             clicked = Some(Command::Lint);
         }
-        if button(ui, "Detail", "Show the selected value in full (V)").clicked() {
-            clicked = Some(Command::ToggleDetail);
-        }
+        // Greyed where there is nothing to show — in the source view the
+        // panel would otherwise repeat the line already on screen beside
+        // it, which is worse than an empty panel because it looks like
+        // information.
+        let can_inspect = session.can_inspect();
+        ui.add_enabled_ui(can_inspect, |ui| {
+            let tip = if can_inspect {
+                "Show the selected value in full (V)"
+            } else {
+                "Nothing to show here — put the cursor inside a value"
+            };
+            if button(ui, "Detail", tip).clicked() {
+                clicked = Some(Command::ToggleDetail);
+            }
+        });
 
         // Right-hand end: how XML text is being read.
         if session.doc.is_xml() {

@@ -237,3 +237,44 @@ fn the_inspector_shows_the_record_in_the_tree() {
         inside.fields
     );
 }
+
+/// In the source view the useful unit is the value, not the line.
+///
+/// The panel showed the one line the cursor was on, labelled `line 4` —
+/// beside the twenty lines already on screen. For a description that runs
+/// over twenty lines, the value is the thing worth reading downwards.
+#[test]
+fn the_inspector_shows_the_whole_value_in_the_source() {
+    let xml = "<r>\n<item>\n<sku>A1</sku>\n\
+               <description>Line one\nLine two\nLine three</description>\n\
+               </item>\n</r>\n";
+    let mut s = Session::new(Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap());
+    s.execute(Command::ViewText);
+
+    // On the description: the whole of it, named by its tag.
+    s.grid.cursor = (3, 0);
+    assert!(s.can_inspect());
+    let it = s.inspector();
+    assert_eq!(it.fields[0].key, "description");
+    assert_eq!(it.fields[0].value, "Line one\nLine two\nLine three");
+
+    // On a line that is not inside a value there is nothing to show, and
+    // the panel says so rather than repeating the line.
+    s.grid.cursor = (2, 0);
+    assert!(
+        !s.can_inspect(),
+        "offered a detail of a self-contained line"
+    );
+
+    // And the root element is not a value: its contents are the file.
+    s.grid.cursor = (0, 0);
+    assert!(!s.can_inspect(), "offered the whole document as one field");
+}
+
+/// The table always has a record, so the panel is always worth opening.
+#[test]
+fn the_table_always_has_something_to_inspect() {
+    let mut s = csv(STOCK);
+    s.execute(Command::ViewTable);
+    assert!(s.can_inspect());
+}

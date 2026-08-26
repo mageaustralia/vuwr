@@ -1127,6 +1127,23 @@ impl Session {
             return record;
         }
         if self.view != ViewMode::Table {
+            // In the source, the useful unit is the value the cursor is
+            // inside, not the line it is on: a description runs over
+            // twenty lines, and showing one of them beside the twenty
+            // already on screen tells the reader nothing they cannot see.
+            if self.view == ViewMode::Text
+                && let Some(field) = self.text_value_field()
+            {
+                return Inspector {
+                    meta: format!(
+                        "Line {} of {}",
+                        self.grid.cursor.0 + 1,
+                        self.text_lines.len()
+                    ),
+                    title: field.key.clone(),
+                    fields: vec![field],
+                };
+            }
             let label = self.detail_label();
             let value = self.detail_text().unwrap_or_default();
             return Inspector {
@@ -1444,6 +1461,21 @@ impl Session {
         })
     }
 
+    /// The name of the element a block opens with: `<g:description ...>` is
+    /// `g:description`.
+    fn opening_tag(bytes: &[u8], start: usize) -> Option<String> {
+        let rest = bytes.get(start..)?;
+        if rest.first() != Some(&b'<') {
+            return None;
+        }
+        let name: Vec<u8> = rest[1..]
+            .iter()
+            .copied()
+            .take_while(|b| !b.is_ascii_whitespace() && *b != b'>' && *b != b'/')
+            .collect();
+        (!name.is_empty()).then(|| String::from_utf8_lossy(&name).into_owned())
+    }
+
     /// The line a byte offset falls on.
     fn line_of(&self, byte: usize) -> Option<usize> {
         match self.text_spans.binary_search_by(|&(a, b)| {
@@ -1675,6 +1707,48 @@ impl Session {
         match self.mode {
             Mode::Prompt { kind, .. } => Some(kind),
             _ => None,
+        }
+    }
+
+    /// The whole value the text cursor is inside, named by its tag.
+    ///
+    /// `None` on a line that is not inside one — a bare `<channel>`, a
+    /// blank line — where there is nothing to show that the screen is not
+    /// already showing. See [`Session::can_inspect`].
+    fn text_value_field(&self) -> Option<Field> {
+        let block = self.block_span_read()?;
+        let (from, to) = block.inner;
+        let raw = String::from_utf8_lossy(self.text_bytes.get(from..to)?).into_owned();
+        // Only a value made of text. The root element is a "block" whose
+        // inner span is the entire document, and offering the whole file
+        // as one field is not a detail of anything.
+        if raw.contains('<') {
+            return None;
+        }
+        let value = if self.doc.is_xml() {
+            crate::decode(&raw)
+        } else {
+            raw
+        };
+        Some(Field {
+            key: Self::opening_tag(&self.text_bytes, block.start).unwrap_or_else(|| "value".into()),
+            value,
+            kind: FieldKind::Text,
+        })
+    }
+
+    /// Whether the panel has anything to show here.
+    ///
+    /// The table always does — a row is a record. The tree does wherever
+    /// the cursor is inside a container. The source view only does when
+    /// the cursor is inside a value: otherwise the panel would repeat the
+    /// line already on screen next to it, which is worse than an empty
+    /// panel because it looks like information.
+    pub fn can_inspect(&self) -> bool {
+        match self.view {
+            ViewMode::Table => self.doc.sheet().is_some(),
+            ViewMode::Tree => self.tree_record().is_some(),
+            ViewMode::Text => self.text_value_field().is_some(),
         }
     }
 

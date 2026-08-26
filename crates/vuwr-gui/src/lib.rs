@@ -1141,6 +1141,9 @@ impl VuwrApp {
         let Some(session) = self.session.as_ref() else {
             return;
         };
+        // An open panel with nothing in it is worse than a closed one: it
+        // looks like the answer. This says so instead.
+        let empty = !session.can_inspect();
         let inspector = session.inspector();
         let table = session.view_mode() == ViewMode::Table;
         let cursor_col = session.grid.cursor.1;
@@ -1195,6 +1198,20 @@ impl VuwrApp {
             .max_height(height)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
+                if empty {
+                    ui.add_space(FIELD_PAD);
+                    ui.horizontal(|ui| {
+                        ui.add_space(FIELD_PAD);
+                        ui.label(
+                            egui::RichText::new(
+                                "Nothing to show here.\nPut the cursor inside a value.",
+                            )
+                            .text_style(theme::meta())
+                            .color(theme::text_dim()),
+                        );
+                    });
+                    return;
+                }
                 for (i, field) in inspector.fields.iter().enumerate() {
                     let selected = table && i == cursor_col;
                     // Painted into an exact row: the key column has to
