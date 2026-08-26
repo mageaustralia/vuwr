@@ -2316,6 +2316,14 @@ impl Session {
             self.status = "no search yet — press / to search".into();
             return;
         };
+        // The tree is not the table. Searching used to go through the
+        // sheet wherever you were, and in the tree that landed the cursor
+        // on whatever row happened to share the sheet row's number — a
+        // different item, closed, with nothing to show for it.
+        if self.view == ViewMode::Tree {
+            self.tree_find_step(&search, forward);
+            return;
+        }
         let Some(sheet) = self.doc.sheet() else {
             self.status = "search needs a table view".into();
             return;
@@ -2336,6 +2344,63 @@ impl Session {
             }
             None => self.status = format!("no match for /{}", search.pattern()),
         }
+    }
+
+    /// The same jump, through the tree instead of the sheet.
+    ///
+    /// Walks every node whether or not its ancestors are open, matches on
+    /// the key and the value alike, then opens the way down to the hit so
+    /// the cursor lands on the row that actually matched rather than on
+    /// the closed container above it.
+    fn tree_find_step(&mut self, search: &Search, forward: bool) {
+        let Some(root) = self.tree_root() else {
+            self.status = "nothing to search".into();
+            return;
+        };
+        let all = crate::tree::flatten(&root);
+        if all.is_empty() {
+            self.status = format!("no match for /{}", search.pattern());
+            return;
+        }
+        let here = self.tree_rows.get(self.grid.cursor.0).map(|r| &r.path);
+        let at = here.and_then(|p| all.iter().position(|e| e.path == *p));
+        // From where we are, wrapping once: `n` and `N` walk the whole
+        // document rather than stopping at the end of it.
+        let n = all.len();
+        let start = match at {
+            Some(i) => i,
+            None if forward => n - 1,
+            None => 0,
+        };
+        let hit = (1..=n).map(|k| {
+            if forward {
+                (start + k) % n
+            } else {
+                (start + 2 * n - k) % n
+            }
+        });
+        let Some(i) = hit
+            .into_iter()
+            .find(|&i| search.matches(&all[i].label) || search.matches(&all[i].summary))
+        else {
+            self.status = format!("no match for /{}", search.pattern());
+            return;
+        };
+
+        let path = all[i].path.clone();
+        // Every ancestor, or the row is not drawn and the cursor has
+        // nowhere to land.
+        for depth in 0..path.len() {
+            self.expansion.open(&path[..depth]);
+        }
+        self.rebuild_tree();
+        let Some(row) = self.tree_rows.iter().position(|r| r.path == path) else {
+            self.status = format!("no match for /{}", search.pattern());
+            return;
+        };
+        let (rows, cols) = self.grid_dims();
+        self.grid.move_to(row, 0, rows, cols);
+        self.status = format!("/{}", search.pattern());
     }
 
     fn commit_prompt(&mut self, kind: PromptKind, pattern: String) {

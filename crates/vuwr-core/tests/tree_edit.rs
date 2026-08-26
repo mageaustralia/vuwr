@@ -1583,3 +1583,63 @@ fn a_filter_is_removed_from_the_filter_field() {
     assert!(!s.is_filtered(), "an empty filter is not a filter");
     assert_eq!(s.visible_count(), None);
 }
+
+/// Searching the tree lands on the node that matched.
+///
+/// It used to search the *sheet* — the table projection — wherever you
+/// were, and then move the tree cursor to the sheet's row number. In a
+/// feed the two do not line up, so the cursor landed on a neighbouring
+/// item, still closed, showing nothing.
+#[test]
+fn a_tree_search_opens_the_node_it_found() {
+    let mut xml = String::from("<rss><channel><title>Feed</title>");
+    for i in 0..40 {
+        xml.push_str(&format!(
+            "<item><g:id>SKU{i:03}</g:id><title>Item {i}</title></item>"
+        ));
+    }
+    xml.push_str("</channel></rss>");
+
+    let doc = Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap();
+    let mut s = Session::new(doc);
+    s.execute(Command::ViewTree);
+
+    s.execute(Command::Find);
+    s.input_text("SKU027");
+    s.input_submit();
+
+    let row = s
+        .tree_rows
+        .get(s.grid.cursor.0)
+        .expect("a row under the cursor");
+    assert_eq!(row.label, "g:id", "the cursor is on the node that matched");
+    assert_eq!(row.summary, "SKU027");
+    // And its item is open, or there would be nothing on screen to see.
+    assert!(
+        s.tree_rows
+            .get(s.grid.cursor.0 - 1)
+            .is_some_and(|r| r.is_expanded()),
+        "the item holding it was opened"
+    );
+}
+
+/// A key matches as well as a value, and `n` walks on to the next one.
+#[test]
+fn a_tree_search_steps_through_matches() {
+    let xml = "<r><a><k>one</k></a><b><k>two</k></b></r>";
+    let doc = Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap();
+    let mut s = Session::new(doc);
+    s.execute(Command::ViewTree);
+
+    s.execute(Command::Find);
+    s.input_text("k");
+    s.input_submit();
+    assert_eq!(s.tree_rows.get(s.grid.cursor.0).unwrap().summary, "one");
+
+    s.execute(Command::FindNext);
+    assert_eq!(s.tree_rows.get(s.grid.cursor.0).unwrap().summary, "two");
+
+    // And wraps rather than stopping at the end.
+    s.execute(Command::FindNext);
+    assert_eq!(s.tree_rows.get(s.grid.cursor.0).unwrap().summary, "one");
+}

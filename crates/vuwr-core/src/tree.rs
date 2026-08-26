@@ -216,15 +216,7 @@ fn walk(
     }
 
     for (seg, child) in kids {
-        let label = match &seg {
-            PathSeg::Key(k) => k.clone(),
-            PathSeg::Index(i) => match child {
-                Node::Element(e) => e.tag.clone(),
-                _ => i.to_string(),
-            },
-            PathSeg::Attr(a) => format!("@{a}"),
-            PathSeg::Text => "#text".to_string(),
-        };
+        let label = label_of(&seg, child);
         let duplicate = match &seg {
             PathSeg::Key(k) => dupes.contains(k.as_str()),
             _ => false,
@@ -249,6 +241,54 @@ fn walk(
         if expanded {
             walk(child, path, depth + 1, expansion, out);
         }
+        path.pop();
+    }
+}
+
+/// The key, tag or index a row is drawn with.
+fn label_of(seg: &PathSeg, child: &Node) -> String {
+    match seg {
+        PathSeg::Key(k) => k.clone(),
+        PathSeg::Index(i) => match child {
+            Node::Element(e) => e.tag.clone(),
+            _ => i.to_string(),
+        },
+        PathSeg::Attr(a) => format!("@{a}"),
+        PathSeg::Text => "#text".to_string(),
+    }
+}
+
+/// One node, as searching sees it.
+pub struct Entry {
+    pub path: Vec<PathSeg>,
+    pub label: String,
+    pub summary: String,
+}
+
+/// Every node in the document, in the order the tree draws them, open or
+/// not.
+///
+/// Searching has to see what a collapsed node is hiding: a match on a SKU
+/// inside item 78 of a feed is the answer the reader wanted, even though
+/// nothing on screen is showing it yet. [`rows`] can only report what is
+/// already visible, which is why it is not what a search walks.
+pub fn flatten(root: &Node) -> Vec<Entry> {
+    let mut out = Vec::new();
+    let mut path = Vec::new();
+    walk_all(root, &mut path, &mut out);
+    out
+}
+
+fn walk_all(node: &Node, path: &mut Vec<PathSeg>, out: &mut Vec<Entry>) {
+    for (seg, child) in children(node) {
+        let label = label_of(&seg, child);
+        path.push(seg);
+        out.push(Entry {
+            path: path.clone(),
+            label,
+            summary: summarize(child),
+        });
+        walk_all(child, path, out);
         path.pop();
     }
 }
