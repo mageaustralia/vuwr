@@ -828,3 +828,128 @@ mod gutter {
         }
     }
 }
+
+/// The inspector's field names must not run into each other.
+///
+/// A feed's names are long — `g:shopping_ads_excluded_country` — and they
+/// wrap. The rows were a fixed height, so a wrapped name was cut in half
+/// and its remains sat over the field below it.
+mod inspector {
+    use super::*;
+
+    fn feed_row() -> String {
+        // The names that actually caused it, and a couple of short ones
+        // so the rows are not uniformly tall.
+        let keys = [
+            "g:id",
+            "g:google_product_category",
+            "g:brand",
+            "g:shopping_ads_excluded_country",
+            "g:excluded_destination",
+            "g:additional_image_link",
+            "g:return_policy_label",
+            "g:size",
+        ];
+        let values = [
+            "13029",
+            "1065",
+            "Yonex",
+            "NZ",
+            "Shopping_ads",
+            "x",
+            "y",
+            "L",
+        ];
+        format!("{}\n{}\n", keys.join(","), values.join(","))
+    }
+
+    /// Every string drawn, with the y it starts at and how tall it is.
+    fn painted(app: &mut VuwrApp, ctx: &egui::Context) -> Vec<(f32, f32, f32, String)> {
+        let mut out = Vec::new();
+        let mut frame = eframe::Frame::_new_kittest();
+        for _ in 0..2 {
+            out.clear();
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            let full = ctx.run(input, |ctx| {
+                eframe::App::update(app, ctx, &mut frame);
+            });
+            for clipped in &full.shapes {
+                collect_text(clipped.clip_rect, &clipped.shape, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Text, with the rect it is clipped to.
+    ///
+    /// The clip matters: the table's header carries these same names and
+    /// lays them out across the full width, so its later columns sit at
+    /// the panel's x while being clipped out of sight. Position alone
+    /// cannot tell the two apart.
+    fn collect_text(clip: egui::Rect, shape: &egui::Shape, out: &mut Vec<(f32, f32, f32, String)>) {
+        let _ = clip;
+        match shape {
+            egui::Shape::Text(t) => out.push((
+                t.pos.x,
+                t.pos.y,
+                t.galley.size().y,
+                t.galley.text().to_string(),
+            )),
+            egui::Shape::Vec(shapes) => {
+                for s in shapes {
+                    collect_text(clip, s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn a_wrapped_field_name_does_not_sit_on_the_next_one() {
+        let ctx = ctx();
+        let mut app = VuwrApp::new(None, doc(&feed_row()));
+        app.run(Command::ViewTable, &ctx);
+        // Off the header row, so the values are values rather than the
+        // names repeated back.
+        app.run(Command::MoveDown, &ctx);
+        app.run(Command::ToggleDetail, &ctx);
+
+        let painted = painted(&mut app, &ctx);
+        // The key column: every field name, at whatever x the panel put
+        // them, identified by the names themselves.
+        // The key column, by the x it is drawn at: the table's own header
+        // carries these same names, and the inspector repeats a name in
+        // its value column whenever the value happens to be one.
+        let key_x = 1100.0 - 356.0 + 14.0;
+        let mut keys: Vec<&(f32, f32, f32, String)> = painted
+            .iter()
+            .filter(|(x, _, _, t)| t.starts_with("g:") && (x - key_x).abs() < 1.0)
+            .collect();
+        assert!(keys.len() >= 6, "the inspector drew {} names", keys.len());
+        // One galley per name, wrapped or not — so a long one is here
+        // whole rather than cut down to what fitted.
+        assert!(
+            keys.iter()
+                .any(|(_, _, _, t)| t.contains("shopping_ads_excluded_country")),
+            "the long name was not drawn in full: {:?}",
+            keys.iter().map(|k| &k.3).collect::<Vec<_>>()
+        );
+
+        keys.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        for pair in keys.windows(2) {
+            let (_, y, height, name) = pair[0];
+            let (_, next_y, _, next_name) = pair[1];
+            assert!(
+                y + height <= next_y + 0.5,
+                "{name:?} ends at {:.1} but {next_name:?} starts at {next_y:.1}",
+                y + height
+            );
+        }
+    }
+}

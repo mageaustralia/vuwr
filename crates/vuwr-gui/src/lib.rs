@@ -35,6 +35,24 @@ pub fn install_theme(ctx: &egui::Context) {
     theme::install(ctx);
 }
 
+/// Choose the ground, and the surface it paints. Exposed for the test
+/// that checks every string can be read against the ground behind it —
+/// contrast is arithmetic, so it is checked rather than eyeballed.
+pub fn set_dark(on: bool) {
+    theme::set_dark(on);
+}
+
+/// The surface the views are painted on, in the current mode.
+pub fn surface() -> egui::Color32 {
+    theme::surface()
+}
+
+/// The colour a control that cannot be used is labelled in. Faint on
+/// purpose, so the contrast test knows to leave it alone.
+pub fn text_disabled() -> egui::Color32 {
+    theme::text_disabled()
+}
+
 /// Whether this context carries our style. Exposed for the test that
 /// guards against a restored one taking the app down.
 pub fn theme_is_installed(ctx: &egui::Context) -> bool {
@@ -81,7 +99,9 @@ pub struct VuwrApp {
     /// The Acknowledgements window.
     show_licenses: bool,
     /// Light or dark ground. Starts from what the system asks for.
-    dark: bool,
+    /// The ground the reader asked for. `update` installs the style to
+    /// match; nothing else should set the ground directly.
+    pub dark: bool,
     /// Which diagnostic the bar is showing.
     diagnostic_index: usize,
     /// A paste was asked for and the clipboard has not arrived yet.
@@ -612,7 +632,12 @@ impl eframe::App for VuwrApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         theme::ensure(ctx);
-        if theme::is_dark() != self.dark {
+        // Against the ground the *style* was built for, not the one that
+        // happens to be set. Those are different questions, and asking
+        // the second one meant a control that set the ground itself made
+        // this comparison agree with itself: the surfaces turned dark and
+        // every widget kept the light mode's text colour on top of them.
+        if !theme::installed_for(self.dark) {
             theme::set_dark(self.dark);
             theme::install(ctx);
         }
@@ -822,10 +847,17 @@ impl VuwrApp {
                 ui.label(egui::RichText::new("Appearance").weak());
                 for (label, dark) in [("Light", false), ("Dark", true)] {
                     if ui.selectable_label(self.dark == dark, label).clicked() {
+                        // Only the preference. `update` compares it to the
+                        // ground in force and reinstalls the style, which
+                        // is the part that matters: the palette is also an
+                        // egui `Style`, and half of what is on screen is
+                        // drawn from that rather than from a call site.
+                        //
+                        // Setting the ground here made that comparison
+                        // agree with itself, so nothing was reinstalled —
+                        // the surfaces flipped to dark and every widget
+                        // kept the light mode's text colour on top of them.
                         self.dark = dark;
-                        // A ground chosen by hand outranks the one the
-                        // scheme asked for.
-                        theme::set_dark(dark);
                         ui.close();
                     }
                 }
@@ -1156,11 +1188,6 @@ impl VuwrApp {
                     // start at the same x on every line, or the names stop
                     // being a column and the eye has to hunt again.
                     let width = ui.available_width();
-                    let (row, response) =
-                        ui.allocate_exact_size(egui::vec2(width, FIELD_ROW), egui::Sense::click());
-                    if selected {
-                        ui.painter().rect_filled(row, 0.0, theme::row_selected());
-                    }
                     let key_font = ui
                         .style()
                         .text_styles
@@ -1168,14 +1195,27 @@ impl VuwrApp {
                         .cloned()
                         .unwrap_or_default();
                     let value_font = egui::TextStyle::Monospace.resolve(ui.style());
-                    let clip = row.intersect(ui.clip_rect());
 
+                    // Laid out before the row is allocated, because a feed
+                    // has names like `g:shopping_ads_excluded_country`
+                    // that do not fit the key column on one line. The row
+                    // takes its height from the name: clipping a wrapped
+                    // name to a fixed row cut it in half and left the
+                    // remains sitting over the field below.
                     let key = ui.painter().layout(
                         field.key.clone(),
                         key_font,
                         theme::text_muted(),
                         KEY_COLUMN - 8.0,
                     );
+                    let row_height = (key.size().y + 4.0).max(FIELD_ROW);
+                    let (row, response) =
+                        ui.allocate_exact_size(egui::vec2(width, row_height), egui::Sense::click());
+                    if selected {
+                        ui.painter().rect_filled(row, 0.0, theme::row_selected());
+                    }
+                    let clip = row.intersect(ui.clip_rect());
+
                     let y = row.center().y - key.size().y / 2.0;
                     // Inset like the header above it: the names were
                     // flush against the panel's edge, which reads as the

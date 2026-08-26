@@ -13,11 +13,26 @@
 //! at runtime. The OKLCH values are kept in the comments: they are what a
 //! ramp would be regenerated from, and the hex is what egui takes.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use eframe::egui::{self, Color32, CornerRadius, Stroke};
 
 static DARK: AtomicBool = AtomicBool::new(false);
+
+/// The ground the style now in force was built for: 0 none, 1 light,
+/// 2 dark.
+///
+/// Separate from [`DARK`], which is only what somebody asked for. Half of
+/// what is on screen is drawn from egui's `Style` — `override_text_color`
+/// above all — so the ground being right is not the same as the style
+/// being right, and asking [`is_dark`] whether a reinstall is needed
+/// answers the wrong question.
+static INSTALLED: AtomicU8 = AtomicU8::new(0);
+
+/// Whether the style in force was installed for this ground.
+pub fn installed_for(dark: bool) -> bool {
+    INSTALLED.load(Ordering::Relaxed) == if dark { 2 } else { 1 }
+}
 
 /// Whether the dark ground is in use.
 pub fn is_dark() -> bool {
@@ -120,7 +135,10 @@ pub fn text_muted() -> Color32 {
 }
 /// Hint labels, path. `0.6 0.012 250`
 pub fn text_dim() -> Color32 {
-    pick(0x868D97, 0x8D939C)
+    // Nudged from the ramp's 0.58 to clear 3:1 against the status bar it
+    // is drawn on. The hint bar was at 2.96:1 — legible enough to pass a
+    // glance and not enough to read comfortably at this size.
+    pick(0x7A828C, 0x8D939C)
 }
 /// Redo when there is nothing to redo. `0.72 0.008 250`
 pub fn text_disabled() -> Color32 {
@@ -233,6 +251,7 @@ pub fn ensure(ctx: &egui::Context) {
 /// Called once. Everything drawn afterwards assumes it: a colour set at a
 /// call site that is not in this module is a bug.
 pub fn install(ctx: &egui::Context) {
+    INSTALLED.store(if is_dark() { 2 } else { 1 }, Ordering::Relaxed);
     let mut s = (*ctx.style()).clone();
 
     // egui's own visuals decide the parts we do not paint ourselves —
