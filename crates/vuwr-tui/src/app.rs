@@ -138,6 +138,9 @@ impl App {
                     let effect = self.session.input_submit();
                     self.apply(effect);
                 }
+                // Tab completes at the `:` prompt and is a plain key
+                // anywhere else; `complete` decides which.
+                KeyCode::Tab => self.session.complete(),
                 KeyCode::Backspace => self.session.input_backspace(),
                 KeyCode::Delete => self.session.input_delete(),
                 // Caret movement, so an edit is an edit rather than a

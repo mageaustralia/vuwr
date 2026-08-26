@@ -293,6 +293,7 @@ pub fn handle(app: &mut VuwrApp, ctx: &egui::Context) {
                     Key::ArrowRight if modifiers.shift => app.session_mut().input_select_right(),
                     Key::Home if modifiers.shift => app.session_mut().input_select_home(),
                     Key::End if modifiers.shift => app.session_mut().input_select_end(),
+                    Key::Tab => app.session_mut().complete(),
                     Key::Enter => {
                         let effect = app.session_mut().input_submit();
                         app.apply_effect(effect, ctx);

@@ -1392,3 +1392,95 @@ fn the_applied_layout_is_remembered_and_then_forgotten() {
     s.execute(Command::Undo);
     assert_eq!(s.layout(), None);
 }
+
+// --- Completing at the `:` prompt ---
+
+fn prompt(s: &mut Session, typed: &str) {
+    s.execute(Command::OpenPalette);
+    for c in typed.chars() {
+        s.input_char(c);
+    }
+}
+
+/// Tab takes the next candidate, and again comes back round.
+#[test]
+fn tab_cycles_the_commands() {
+    let mut s = session(r#"{"a":1}"#);
+    prompt(&mut s, "form");
+    s.complete();
+    let first = s.entry().unwrap().1.to_string();
+    assert!(first.starts_with("format"), "{first}");
+
+    s.complete();
+    let second = s.entry().unwrap().1.to_string();
+    assert_ne!(second, first, "Tab again offers the next");
+    assert!(second.starts_with("format"), "{second}");
+}
+
+/// Past the command, Tab offers its argument instead.
+#[test]
+fn tab_cycles_the_schemes_after_scheme() {
+    let mut s = session(r#"{"a":1}"#);
+    prompt(&mut s, "scheme ");
+    s.complete();
+    assert_eq!(s.entry().unwrap().1, "scheme vuwr");
+    s.complete();
+    assert_eq!(s.entry().unwrap().1, "scheme gruvbox-dark");
+
+    // And what it offers can be taken.
+    s.input_submit();
+    assert_eq!(s.scheme(), vuwr_core::Scheme::GruvboxDark);
+}
+
+/// `:theme` is the word people reach for, so it works too.
+#[test]
+fn theme_is_a_word_for_scheme() {
+    let mut s = session(r#"{"a":1}"#);
+    prompt(&mut s, "theme nord");
+    s.input_submit();
+    assert_eq!(s.scheme(), vuwr_core::Scheme::Nord);
+}
+
+/// Tab is a character in a search, and does nothing to a cell.
+#[test]
+fn tab_completes_only_at_the_command_line() {
+    let mut s = session(r#"{"a":1}"#);
+    s.execute(Command::Find);
+    for c in "form".chars() {
+        s.input_char(c);
+    }
+    s.complete();
+    assert_eq!(s.entry().unwrap().1, "form", "a search is not a command");
+}
+
+/// Enter on a long value in the tree opens the editor that can hold it.
+/// It used to start an inline edit regardless, putting a thousand
+/// characters on one line at the bottom of the screen.
+#[test]
+fn enter_on_a_long_tree_value_asks_for_the_window() {
+    let long = "x".repeat(400);
+    let src = format!("<r><d>{long}</d></r>");
+    let mut s = xml_session(&src);
+    s.execute(Command::ViewTree);
+    s.set_viewport_cols(120);
+    s.grid.cursor = (0, 0);
+
+    let effect = s.execute(Command::DrillDown);
+    assert!(
+        matches!(effect, vuwr_core::Effect::EditLarge),
+        "a 400-character value does not fit on a line: {effect:?}"
+    );
+}
+
+/// A short one is still edited in place.
+#[test]
+fn enter_on_a_short_tree_value_edits_in_place() {
+    let mut s = xml_session("<r><d>short</d></r>");
+    s.execute(Command::ViewTree);
+    s.set_viewport_cols(120);
+    s.grid.cursor = (0, 0);
+
+    let effect = s.execute(Command::DrillDown);
+    assert!(matches!(effect, vuwr_core::Effect::None), "{effect:?}");
+    assert!(s.is_editing_inline());
+}

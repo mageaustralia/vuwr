@@ -642,7 +642,7 @@ impl Session {
             }
             Command::ViewText => self.set_view(ViewMode::Text),
             Command::DrillDown => match self.view {
-                ViewMode::Tree => self.toggle_row(),
+                ViewMode::Tree => return self.toggle_row(),
                 // Enter doubles as "edit" in a table, where there is
                 // nothing to descend into.
                 ViewMode::Table => return self.execute(Command::EditCell),
@@ -1759,6 +1759,72 @@ impl Session {
     }
 
     /// Where the caret sits in the text being entered, as a byte index.
+    /// Complete what is being typed at the `:` prompt.
+    ///
+    /// Tab again to take the next candidate, and again to come back
+    /// round. What is offered depends on where the caret is: the command
+    /// while that is still being typed, then its argument — so `:scheme`
+    /// then Tab walks the schemes rather than the commands.
+    ///
+    /// Nothing happens anywhere but the command line: Tab in a search
+    /// prompt is a character somebody wants, and Tab in a cell is the
+    /// next field.
+    pub fn complete(&mut self) {
+        let Mode::Command { buf } = &self.mode else {
+            return;
+        };
+        let typed = buf.clone();
+        // An argument if there is a space, otherwise the command itself.
+        let (prefix, stem) = match typed.split_once(' ') {
+            Some((cmd, arg)) => (format!("{cmd} "), arg.to_string()),
+            None => (String::new(), typed.clone()),
+        };
+        let candidates = self.candidates(prefix.trim_end());
+        if candidates.is_empty() {
+            return;
+        }
+        // Which one follows what is there: if the buffer already holds a
+        // candidate, the next; otherwise the first that starts with what
+        // has been typed so far.
+        let next = match candidates.iter().position(|c| *c == stem) {
+            Some(at) => candidates[(at + 1) % candidates.len()].clone(),
+            None => {
+                let matching: Vec<&String> =
+                    candidates.iter().filter(|c| c.starts_with(&stem)).collect();
+                match matching.first() {
+                    Some(first) => (*first).clone(),
+                    // Nothing matches what was typed, so offer everything
+                    // rather than nothing: a typo should not leave Tab
+                    // looking broken.
+                    None => candidates[0].clone(),
+                }
+            }
+        };
+        let buf = format!("{prefix}{next}");
+        self.mode = Mode::Command { buf };
+    }
+
+    /// What Tab can offer, given the command already typed.
+    fn candidates(&self, command: &str) -> Vec<String> {
+        match command {
+            // `:scheme <name>` is the only command that takes one.
+            "scheme" | "theme" => crate::Scheme::ALL
+                .iter()
+                .map(|s| s.name().to_ascii_lowercase().replace(' ', "-"))
+                .collect(),
+            "" => {
+                let mut names: Vec<String> =
+                    Command::ALL.iter().map(|c| c.name().to_string()).collect();
+                names.push("scheme".to_string());
+                names.push("theme".to_string());
+                names.sort();
+                names
+            }
+            // A command that takes no argument has nothing to offer.
+            _ => Vec::new(),
+        }
+    }
+
     /// Put the caret at a byte offset in the text being edited.
     ///
     /// Clicking where you want to type is how every other editor works;
@@ -1811,7 +1877,13 @@ impl Session {
                 // `:scheme <name>` takes an argument, which no other
                 // command does — so it is read here rather than becoming
                 // a Command variant per scheme.
-                if let Some(rest) = buf.trim().strip_prefix("scheme") {
+                let typed = buf.trim();
+                // `:theme` as well as `:scheme`: both are the word people
+                // reach for, and refusing one of them teaches nothing.
+                if let Some(rest) = typed
+                    .strip_prefix("scheme")
+                    .or_else(|| typed.strip_prefix("theme"))
+                {
                     return self.choose_scheme(rest.trim());
                 }
                 match Command::from_name(&buf) {
@@ -2504,17 +2576,20 @@ impl Session {
 
     /// Open or close the row under the cursor. Scalars have nothing to
     /// open, so Enter edits them instead.
-    fn toggle_row(&mut self) {
+    fn toggle_row(&mut self) -> Effect {
         let Some(row) = self.tree_rows.get(self.grid.cursor.0).cloned() else {
-            return;
+            return Effect::None;
         };
         if !row.is_container() {
-            self.start_edit();
-            return;
+            // Through the same door `i` uses, so Enter on a description
+            // opens the editor that can hold it rather than putting a
+            // thousand characters on one line at the bottom of the screen.
+            return self.execute(Command::EditCell);
         }
         self.expansion.toggle(&row.path);
         self.rebuild_tree();
         self.clamp_cursor();
+        Effect::None
     }
 
     fn start_edit(&mut self) {

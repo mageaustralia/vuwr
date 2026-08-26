@@ -25,8 +25,10 @@ file meant a text editor plus `jq` or `xmllint`.
 - Light and dark in the window, under View → Appearance
 - Colour schemes in the terminal, for the file's own text: Gruvbox,
   Solarized, Nord, Monokai, or ours. `:scheme gruvbox-dark`, or `:scheme`
-  to list them. A named scheme brings its own background, so it reads the
-  same whatever your terminal is set to
+  to list them; `:theme` does the same. Tab at the `:` prompt walks the
+  candidates — the commands while you are typing one, then its argument.
+  A named scheme brings its own background, so it reads the same whatever
+  your terminal is set to
 - Validates: `vuwr --check` replaces `jq empty` and `xmllint --noout`, and
   covers CSV too. It also reports what a parser lets through — a trailing
   comma (which vuwr itself reads, so the file can be opened and fixed),
