@@ -9,6 +9,23 @@ use vuwr_core::{PathSeg, RowKind, Session, ValueKind};
 
 use crate::theme;
 
+/// Whether the cursor has moved since the last frame.
+///
+/// What "follow the cursor" hangs on: scrolling on every frame would
+/// fight the scrollbar for the rest of the time. All three views ask,
+/// because all three had the same job and only the table did it —
+/// pressing `n` moved the cursor to the next match in the tree and in the
+/// text without the screen following, so the match was found and not
+/// shown.
+fn cursor_moved(ui: &egui::Ui, key: &'static str, cursor: (usize, usize)) -> bool {
+    ui.ctx().memory_mut(|m| {
+        let id = egui::Id::new(key).with("cursor");
+        let seen = m.data.get_temp::<(usize, usize)>(id);
+        m.data.insert_temp(id, cursor);
+        seen != Some(cursor)
+    })
+}
+
 /// Rows drawn per screen. egui scrolls the whole grid, so this only sets
 /// what a page-down means.
 const PAGE_ROWS: usize = 25;
@@ -820,107 +837,118 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
     let editing = session.is_editing_inline();
     let mut action = None;
 
-    egui::ScrollArea::both()
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            for (i, row) in session.tree_rows.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    let selected = i == cursor;
-                    // The row carries the selection, so the key and the
-                    // value can be plain text. As pills they read as two
-                    // controls sitting on a row rather than as a value
-                    // with a name.
-                    let strip = egui::Rect::from_min_size(
-                        ui.cursor().min,
-                        egui::vec2(ui.available_width(), TREE_ROW),
+    // Follow the cursor, so `n` shows the match it found rather than only
+    // selecting it.
+    //
+    // By handing egui the row's own rectangle rather than by computing an
+    // offset: these rows are laid out by their content, so their real
+    // pitch is not the nominal row height, and arithmetic built on that
+    // height scrolled to the wrong part of the tree.
+    let follow = cursor_moved(ui, "tree", session.grid.cursor);
+    let area = egui::ScrollArea::both()
+        .id_salt("tree")
+        .auto_shrink([false; 2]);
+    area.show(ui, |ui| {
+        for (i, row) in session.tree_rows.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let selected = i == cursor;
+                // The row carries the selection, so the key and the
+                // value can be plain text. As pills they read as two
+                // controls sitting on a row rather than as a value
+                // with a name.
+                let strip = egui::Rect::from_min_size(
+                    ui.cursor().min,
+                    egui::vec2(ui.available_width(), TREE_ROW),
+                );
+                if selected {
+                    if follow {
+                        ui.scroll_to_rect(strip, Some(egui::Align::Center));
+                    }
+                    ui.painter().rect_filled(strip, 0.0, theme::row_selected());
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(
+                            strip.min,
+                            egui::vec2(theme::ROW_MARKER, TREE_ROW),
+                        ),
+                        0.0,
+                        theme::accent(),
                     );
-                    if selected {
-                        ui.painter().rect_filled(strip, 0.0, theme::row_selected());
-                        ui.painter().rect_filled(
-                            egui::Rect::from_min_size(
-                                strip.min,
-                                egui::vec2(theme::ROW_MARKER, TREE_ROW),
-                            ),
-                            0.0,
-                            theme::accent(),
-                        );
-                    }
-                    ui.add_space(row.depth as f32 * 14.0);
+                }
+                ui.add_space(row.depth as f32 * 14.0);
 
-                    // The disclosure triangle, and nothing where a leaf sits,
-                    // so the columns still line up.
-                    match row.kind {
-                        RowKind::Container { expanded } => {
-                            if disclosure(ui, expanded).clicked() {
-                                action = Some(TreeAction::Toggle(row.path.clone()));
-                            }
-                        }
-                        RowKind::Scalar => {
-                            ui.add_space(DISCLOSURE);
+                // The disclosure triangle, and nothing where a leaf sits,
+                // so the columns still line up.
+                match row.kind {
+                    RowKind::Container { expanded } => {
+                        if disclosure(ui, expanded).clicked() {
+                            action = Some(TreeAction::Toggle(row.path.clone()));
                         }
                     }
+                    RowKind::Scalar => {
+                        ui.add_space(DISCLOSURE);
+                    }
+                }
 
-                    if row.duplicate {
-                        duplicate_dot(ui).on_hover_text(
-                            "This key appears more than once. Most parsers keep only \
+                if row.duplicate {
+                    duplicate_dot(ui).on_hover_text(
+                        "This key appears more than once. Most parsers keep only \
                              the last one, so the other value is silently discarded.",
-                        );
-                    }
+                    );
+                }
 
-                    let key = RichText::new(&row.label)
-                        .monospace()
-                        .color(theme::accent_text());
-                    let response = ui.add(egui::Label::new(key).sense(egui::Sense::click()));
-                    if response.clicked() {
-                        action = Some(TreeAction::Select(i));
-                    }
-                    // Double-clicking a key renames it; double-clicking the
-                    // value edits the value. Each edits what you clicked.
-                    if response.double_clicked() {
-                        action = Some(TreeAction::RenameKey(i));
-                    }
+                let key = RichText::new(&row.label)
+                    .monospace()
+                    .color(theme::accent_text());
+                let response = ui.add(egui::Label::new(key).sense(egui::Sense::click()));
+                if response.clicked() {
+                    action = Some(TreeAction::Select(i));
+                }
+                // Double-clicking a key renames it; double-clicking the
+                // value edits the value. Each edits what you clicked.
+                if response.double_clicked() {
+                    action = Some(TreeAction::RenameKey(i));
+                }
 
-                    ui.label(RichText::new(":").monospace().color(theme::text_disabled()));
+                ui.label(RichText::new(":").monospace().color(theme::text_disabled()));
 
-                    // The value being typed is drawn where the value is, not
-                    // echoed at the bottom of the window.
-                    if editing && selected {
-                        ui.label(caret_text(session));
-                        return;
-                    }
+                // The value being typed is drawn where the value is, not
+                // echoed at the bottom of the window.
+                if editing && selected {
+                    ui.label(caret_text(session));
+                    return;
+                }
 
-                    // A container's summary says there is more inside; a
-                    // leaf's is the value itself.
-                    let colour = if row.is_container() {
-                        theme::placeholder()
-                    } else {
-                        value_color(row.value)
-                    };
-                    let value = RichText::new(&row.summary).monospace().color(colour);
-                    let value_response =
-                        ui.add(egui::Label::new(value).sense(egui::Sense::click()));
-                    if value_response.clicked() {
-                        action = Some(TreeAction::Select(i));
-                    }
-                    if value_response.double_clicked() {
-                        action = Some(TreeAction::Edit(i));
-                    }
+                // A container's summary says there is more inside; a
+                // leaf's is the value itself.
+                let colour = if row.is_container() {
+                    theme::placeholder()
+                } else {
+                    value_color(row.value)
+                };
+                let value = RichText::new(&row.summary).monospace().color(colour);
+                let value_response = ui.add(egui::Label::new(value).sense(egui::Sense::click()));
+                if value_response.clicked() {
+                    action = Some(TreeAction::Select(i));
+                }
+                if value_response.double_clicked() {
+                    action = Some(TreeAction::Edit(i));
+                }
 
-                    // Right-click anywhere on the row opens the node menu.
-                    for r in [&response, &value_response] {
-                        r.context_menu(|ui| {
-                            if let Some(chosen) = node_menu(ui, row.is_container()) {
-                                action = Some(TreeAction::Context {
-                                    row: i,
-                                    action: chosen,
-                                });
-                                ui.close();
-                            }
-                        });
-                    }
-                });
-            }
-        });
+                // Right-click anywhere on the row opens the node menu.
+                for r in [&response, &value_response] {
+                    r.context_menu(|ui| {
+                        if let Some(chosen) = node_menu(ui, row.is_container()) {
+                            action = Some(TreeAction::Context {
+                                row: i,
+                                action: chosen,
+                            });
+                            ui.close();
+                        }
+                    });
+                }
+            });
+        }
+    });
 
     action
 }
@@ -972,6 +1000,7 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
     let grammar = session.grammar();
     let mut edit = false;
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+    let follow = cursor_moved(ui, "text", session.grid.cursor);
 
     // A fixed gutter beside a scrolling pane, rather than the number
     // embedded in each line: with the number in the text it scrolls away
@@ -999,6 +1028,20 @@ pub fn text(session: &mut Session, ui: &mut egui::Ui) -> bool {
                 egui::Sense::hover(),
             );
 
+            // Follow the cursor, so `n` shows the line it found. This view
+            // places its own rows at an exact height, so the rectangle is
+            // known without drawing it — the row need not be on screen to
+            // be scrolled to.
+            if follow {
+                let top = content.top() + cursor_row as f32 * row_height;
+                ui.scroll_to_rect(
+                    egui::Rect::from_min_size(
+                        egui::pos2(content.left(), top),
+                        egui::vec2(1.0, row_height),
+                    ),
+                    Some(egui::Align::Center),
+                );
+            }
             let first = (viewport.min.y / row_height).floor().max(0.0) as usize;
             let last = ((viewport.max.y / row_height).ceil() as usize + 1).min(lines);
             let font = egui::TextStyle::Monospace.resolve(ui.style());
