@@ -24,8 +24,15 @@ pub struct Diagnostic {
     pub message: String,
     /// Byte offset into the source this was scanned from.
     pub offset: usize,
-    pub line: usize,
-    pub column: usize,
+    /// Line and column in the source, where the problem *is* somewhere in
+    /// the source.
+    ///
+    /// `None` for a value that could not be pinned to a place in the text.
+    /// A cell has a row and a column of its own, and those are not a line
+    /// and a column: printing `124:14` for row 124 of a feed sends the
+    /// reader to line 124 of the file, which is some unrelated part of a
+    /// description — and they conclude the tool is confused, reasonably.
+    pub at: Option<(usize, usize)>,
     /// Where to go when somebody asks to be shown this.
     ///
     /// Separate from `line`/`column`, which say where it *is* for the
@@ -46,9 +53,21 @@ pub enum Place {
 }
 
 impl Diagnostic {
-    /// `line:column: message`, the form an editor can jump from.
+    /// `line:column: message`, the form an editor can jump from, or the
+    /// cell's own address where there is no line to give.
     pub fn located(&self) -> String {
-        format!("{}:{}: {}", self.line, self.column, self.message)
+        format!("{}: {}", self.position(), self.message)
+    }
+
+    /// Where this is, in whatever terms it can honestly be said.
+    pub fn position(&self) -> String {
+        match (self.at, self.place) {
+            (Some((line, column)), _) => format!("{line}:{column}"),
+            (None, Place::Cell { row, column }) => {
+                format!("row {}, column {}", row + 1, column + 1)
+            }
+            (None, Place::Text(_)) => "?".to_string(),
+        }
     }
 }
 
@@ -103,8 +122,7 @@ pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
                              most parsers reject the whole file"
                         ),
                         offset: at,
-                        line,
-                        column,
+                        at: Some((line, column)),
                         place: Place::Text(at),
                     });
                 }
@@ -135,8 +153,7 @@ pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
                                  most parsers keep only the last one"
                             ),
                             offset: start,
-                            line,
-                            column,
+                            at: Some((line, column)),
                             place: Place::Text(start),
                         });
                     } else {
@@ -160,7 +177,7 @@ pub fn scan_json(source: &[u8]) -> Vec<Diagnostic> {
 ///
 /// Only where a column is overwhelmingly one shape — nine in ten, with at
 /// least ten values to go on — so a genuinely mixed column says nothing.
-pub fn scan_columns(sheet: &dyn crate::Sheet) -> Vec<Diagnostic> {
+pub fn scan_columns(sheet: &dyn crate::Sheet, source: &[u8]) -> Vec<Diagnostic> {
     let (rows, cols) = sheet.dims();
     let first = usize::from(sheet.header_is_first_row());
     let headers = sheet.headers();
@@ -197,6 +214,7 @@ pub fn scan_columns(sheet: &dyn crate::Sheet) -> Vec<Diagnostic> {
             .cloned()
             .unwrap_or_else(|| format!("column {}", col + 1));
         for (row, value) in odd.into_iter().take(20) {
+            let at = locate_value(source, &value);
             out.push(Diagnostic {
                 severity: Severity::Warning,
                 message: format!(
@@ -204,14 +222,51 @@ pub fn scan_columns(sheet: &dyn crate::Sheet) -> Vec<Diagnostic> {
                      — it will not sort as a number",
                     row + 1
                 ),
-                offset: 0,
-                line: row + 1,
-                column: col + 1,
+                offset: at.unwrap_or(0),
+                at: at.map(|o| line_col(source, o)),
                 place: Place::Cell { row, column: col },
             });
         }
     }
     out
+}
+
+/// Where a value sits in the source, when that can be said without
+/// guessing.
+///
+/// The parsed tree carries no offsets — it is built to preserve layout,
+/// not to record where things came from — so the only honest way to point
+/// at a cell in the text is to find its value there. And only when the
+/// value occurs exactly once: a second occurrence makes any choice
+/// between them a guess, and a confidently wrong line number is worse
+/// than none. Short values are not even tried, since `0` appears
+/// everywhere.
+fn locate_value(source: &[u8], value: &str) -> Option<usize> {
+    let needle = value.as_bytes();
+    if needle.len() < 4 {
+        return None;
+    }
+    let mut found = None;
+    let mut from = 0usize;
+    while let Some(at) = find_from(source, needle, from) {
+        if found.is_some() {
+            // Two of them: nothing here says which one the row is.
+            return None;
+        }
+        found = Some(at);
+        from = at + needle.len();
+    }
+    found
+}
+
+fn find_from(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if from >= haystack.len() {
+        return None;
+    }
+    haystack[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|i| from + i)
 }
 
 /// Whether a value reads as a number.
@@ -322,7 +377,11 @@ mod tests {
         let src = b"{\n  \"a\": 1,\n  \"color\": true,\n  \"color\": \"gold\"\n}";
         let found = scan_json(src);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].line, 4, "the second occurrence is the problem");
+        assert_eq!(
+            found[0].at.map(|(l, _)| l),
+            Some(4),
+            "the second occurrence is the problem"
+        );
         assert!(found[0].message.contains("duplicate key 'color'"));
         assert!(
             found[0].message.contains("line 3"),

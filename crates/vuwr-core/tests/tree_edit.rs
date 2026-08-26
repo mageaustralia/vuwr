@@ -115,7 +115,7 @@ fn duplicate_keys_surface_as_diagnostics_with_positions() {
     s.execute(Command::Lint);
     let found = s.lint_results().expect("linted");
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].line, 3);
+    assert_eq!(found[0].at.map(|(l, _)| l), Some(3));
     assert!(found[0].message.contains("duplicate key 'color'"));
 }
 
@@ -1263,7 +1263,14 @@ fn a_value_that_disagrees_with_its_column_is_reported() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].message.contains("price reads as a number"));
     assert!(found[0].message.contains("129,00"));
-    assert_eq!(found[0].line, 22, "the row it is on");
+    // A CSV row and a file line do coincide here, and the position is
+    // resolved from the value's place in the text rather than assumed
+    // from the row number — which is what made it wrong for XML.
+    assert_eq!(found[0].at.map(|(l, _)| l), Some(22));
+    assert_eq!(
+        found[0].place,
+        vuwr_core::Place::Cell { row: 21, column: 1 }
+    );
 
     // Reporting is not rewriting.
     assert_eq!(String::from_utf8(s.doc.serialize()).unwrap(), before);
@@ -1683,4 +1690,66 @@ fn a_text_search_lands_on_the_line_that_matched() {
             .unwrap_or_default()
             .contains("</channel>")
     );
+}
+
+/// An outlier in XML is reported where it actually is, not at the line
+/// whose number happens to match its row.
+///
+/// The row number used to be printed in the line slot. In a feed, row 124
+/// is thousands of lines from line 124, so `--check` sent people to an
+/// unrelated description and the finding looked like nonsense.
+#[test]
+fn an_outlier_is_reported_at_its_place_in_the_text() {
+    let mut xml = String::from("<rss>\n<channel>\n");
+    for i in 0..30 {
+        // Long enough that the row numbers and the line numbers cannot be
+        // confused for each other.
+        xml.push_str(&format!(
+            "<item>\n<sku>{}</sku>\n<note>x</note>\n",
+            1000 + i
+        ));
+        xml.push_str("</item>\n");
+    }
+    xml.push_str("<item>\n<sku>NOT-A-NUMBER</sku>\n<note>x</note>\n</item>\n");
+    xml.push_str("</channel>\n</rss>\n");
+
+    let doc = Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap();
+    let found = doc.diagnostics();
+    let odd = found
+        .iter()
+        .find(|d| d.message.contains("NOT-A-NUMBER"))
+        .expect("the outlier is reported");
+
+    let (line, _) = odd.at.expect("with a real position");
+    let text = String::from_utf8(doc.serialize()).unwrap();
+    let on = text.lines().nth(line - 1).unwrap_or_default();
+    assert!(
+        on.contains("NOT-A-NUMBER"),
+        "line {line} is {on:?}, which does not hold the value"
+    );
+}
+
+/// A value that appears more than once cannot be pinned down, and saying
+/// nothing beats naming the wrong one.
+#[test]
+fn an_ambiguous_outlier_reports_its_cell_rather_than_a_line() {
+    let mut rows = String::from("sku,qty\n");
+    for i in 0..20 {
+        rows.push_str(&format!("SKU-{i:02},{i}\n"));
+    }
+    // "many" twice: neither occurrence is the answer on its own.
+    rows.push_str("SKU-98,many\n");
+    rows.push_str("SKU-99,many\n");
+
+    let doc = Document::parse(rows.as_bytes(), FormatHint::Csv).unwrap();
+    let found = doc.diagnostics();
+    let odd: Vec<_> = found
+        .iter()
+        .filter(|d| d.message.contains("many"))
+        .collect();
+    assert_eq!(odd.len(), 2);
+    for d in odd {
+        assert_eq!(d.at, None, "no line is claimed");
+        assert!(d.position().starts_with("row "), "{}", d.position());
+    }
 }

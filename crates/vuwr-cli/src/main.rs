@@ -103,11 +103,15 @@ fn check(args: &Args) -> ExitCode {
                     let fatal = d.severity == Severity::Error || args.strict;
                     if !args.quiet {
                         let label = if fatal { "error" } else { "warning" };
+                        // `file:line:col:` where there is a line to give,
+                        // and the cell's own address where there is not:
+                        // a row number printed in that slot reads as a
+                        // line number and sends the reader to the wrong
+                        // part of the file.
                         eprintln!(
-                            "{}:{}:{}: {label}: {}",
+                            "{}:{}: {label}: {}",
                             path.display(),
-                            d.line,
-                            d.column,
+                            d.position(),
                             d.message
                         );
                     }

@@ -1233,11 +1233,7 @@ impl VuwrApp {
                         .color(fg),
                     );
                     ui.label(
-                        egui::RichText::new(format!(
-                            "line {} · col {} — {}",
-                            d.line, d.column, d.message
-                        ))
-                        .color(fg),
+                        egui::RichText::new(format!("{} — {}", located(d), d.message)).color(fg),
                     );
 
                     // Right-aligned controls, so the message can be long.
@@ -1565,4 +1561,21 @@ pub fn run(path: Option<PathBuf>, doc: Document) -> eframe::Result {
             )))
         }),
     )
+}
+
+/// Where a diagnostic is, in the terms it can honestly be stated in.
+///
+/// A problem in the source has a line; a value that disagrees with its
+/// column has a row and a column, which are not the same thing. Printing
+/// the row as a line sent people to an unrelated part of the file.
+fn located(d: &vuwr_core::Diagnostic) -> String {
+    match d.at {
+        Some((line, column)) => format!("line {line} · col {column}"),
+        None => match d.place {
+            vuwr_core::Place::Cell { row, column } => {
+                format!("row {} · col {}", row + 1, column + 1)
+            }
+            vuwr_core::Place::Text(_) => String::new(),
+        },
+    }
 }

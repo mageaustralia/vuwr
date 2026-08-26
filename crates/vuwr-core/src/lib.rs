@@ -453,7 +453,7 @@ impl Document {
         // Whatever the format, a column that is numbers except for three
         // rows is worth knowing about.
         if let Some(sheet) = self.sheet() {
-            found.extend(diagnostics::scan_columns(sheet));
+            found.extend(diagnostics::scan_columns(sheet, &self.serialize()));
         }
         found
     }
