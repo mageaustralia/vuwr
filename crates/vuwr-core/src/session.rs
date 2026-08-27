@@ -2453,7 +2453,26 @@ impl Session {
             self.status = "nothing to insert beside here".into();
             return;
         };
-        let value = what.node();
+        // XML holds elements, not values. A `Str` inserted into an
+        // element serialises to nothing and is not a tree row either, so
+        // all three of value, object and array reported success over a
+        // document that had not changed at all — and left it marked
+        // unsaved for an edit nobody could see.
+        let value = if self.doc.is_xml() {
+            crate::Node::Element(crate::Element {
+                // Named after the sibling it is going in beside, which is
+                // nearly always the one wanted: another `<sku>` under an
+                // item, not a `<new>`.
+                tag: self.cursor_tag().unwrap_or_else(|| "new".to_string()),
+                attributes: Vec::new(),
+                children: Vec::new(),
+                self_closing: false,
+                tag_trailing: String::new(),
+                close_trailing: String::new(),
+            })
+        } else {
+            what.node()
+        };
         let key = match self.tree_root().and_then(|r| r.get_at(&parent).cloned()) {
             Some(crate::Node::Map(_)) => Some(self.unique_key(&parent, "new")),
             _ => None,
@@ -2467,6 +2486,15 @@ impl Session {
                 self.status = format!("inserted {}", what.label());
             }
             Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// The tag of the element under the cursor, for an insert to copy.
+    fn cursor_tag(&self) -> Option<String> {
+        let row = self.tree_rows.get(self.grid.cursor.0)?;
+        match self.tree_root()?.get_at(&row.path)? {
+            crate::Node::Element(e) => Some(e.tag.clone()),
+            _ => None,
         }
     }
 
