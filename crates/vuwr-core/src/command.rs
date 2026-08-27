@@ -43,6 +43,7 @@ pub enum Command {
     FindPrev,
     Filter,
     ClearFilter,
+    ToggleLinks,
     Substitute,
     SubstituteOne,
     SubstituteAll,
@@ -119,6 +120,7 @@ impl Command {
         Self::FindNext,
         Self::FindPrev,
         Self::Filter,
+        Self::ToggleLinks,
         Self::Substitute,
         Self::SubstituteOne,
         Self::SubstituteAll,
@@ -189,6 +191,7 @@ impl Command {
             Self::FindPrev => "find-prev",
             Self::Filter => "filter",
             Self::ClearFilter => "clear-filter",
+            Self::ToggleLinks => "links",
             Self::Substitute => "replace",
             Self::SubstituteOne => "replace-one",
             Self::SubstituteAll => "replace-all",
@@ -259,6 +262,7 @@ impl Command {
             Self::FindPrev => "jump to the previous match",
             Self::Filter => "show only rows matching a pattern",
             Self::ClearFilter => "clear the filter and sort",
+            Self::ToggleLinks => "follow a URL in a value with Cmd-click, or stop offering to",
             Self::Substitute => "find and replace, with $1 for a captured group",
             Self::SubstituteOne => "replace the match under the cursor, then move to the next",
             Self::SubstituteAll => "replace every remaining match, as one undo step",
@@ -330,6 +334,7 @@ impl Command {
             Self::FindPrev => "prev",
             Self::Filter => "filter",
             Self::ClearFilter => "unfilter",
+            Self::ToggleLinks => "links",
             Self::Substitute => "replace…",
             Self::SubstituteOne => "this one",
             Self::SubstituteAll => "all",
@@ -426,7 +431,7 @@ mod tests {
         for c in Command::ALL {
             assert_eq!(Command::from_name(c.name()), Some(*c), "{}", c.name());
         }
-        assert_eq!(Command::ALL.len(), 64, "update ALL when adding a command");
+        assert_eq!(Command::ALL.len(), 65, "update ALL when adding a command");
     }
 
     #[test]

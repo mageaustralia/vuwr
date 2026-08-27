@@ -310,9 +310,17 @@ fn help_never_claims_a_binding_the_gui_does_not_have() {
     let unreachable: Vec<&str> = Command::ALL
         .iter()
         .filter(|c| {
-            !reachable.contains(c)
-                && !vuwr_gui::MENU_ONLY.contains(c)
-                && !vuwr_gui::TOOLBAR_ONLY.contains(c)
+            if reachable.contains(c)
+                || vuwr_gui::MENU_ONLY.contains(c)
+                || vuwr_gui::TOOLBAR_ONLY.contains(c)
+            {
+                return false;
+            }
+            // Or help points at a `:` name the palette resolves, which is
+            // the rule the terminal's own version of this test uses.
+            let advertised = vuwr_gui::keys_for_test(**c);
+            let named = advertised.trim_start_matches(':');
+            Command::from_name(named) != Some(**c)
         })
         .map(|c| c.name())
         .collect();

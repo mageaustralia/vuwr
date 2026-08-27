@@ -149,6 +149,7 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::Find => "Ctrl-F / /",
         Command::FindNext => "n",
         Command::FindPrev => "N",
+        Command::ToggleLinks => ":links",
         Command::Filter => "&",
         Command::Substitute => "%",
         Command::SubstituteOne => ".",

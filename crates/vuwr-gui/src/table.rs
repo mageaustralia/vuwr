@@ -59,6 +59,16 @@ fn cursor_moved(ui: &egui::Ui, key: &'static str, cursor: (usize, usize)) -> boo
     })
 }
 
+/// What the modifier is called here, for a tooltip that tells the truth
+/// on both platforms.
+pub(crate) const fn cmd_key() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    }
+}
+
 /// Rows drawn per screen. egui scrolls the whole grid, so this only sets
 /// what a page-down means.
 const PAGE_ROWS: usize = 25;
@@ -320,6 +330,10 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                             continue;
                         }
                         let raw = session.table_cell(r, c).unwrap_or_default();
+                        let link = session
+                            .links_clickable
+                            .then(|| vuwr_core::as_link(&raw).map(str::to_string))
+                            .flatten();
                         // Cut to what the column can show: a
                         // description is thousands of characters, and
                         // laying the rest out costs time to draw
@@ -334,6 +348,9 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                         if search.as_ref().is_some_and(|s| s.matches(&raw)) {
                             colour = theme::warn_text();
                         }
+                        if link.is_some() {
+                            colour = theme::accent_text();
+                        }
                         let response = cell_aligned(
                             ui,
                             &text,
@@ -344,6 +361,24 @@ pub fn table(session: &mut Session, ui: &mut egui::Ui) -> bool {
                             (r, c) == cursor,
                             numeric[c],
                         );
+                        // A plain click selects the cell, as it always
+                        // has; the modifier follows the link. The same
+                        // gesture an editor uses, and the only one that
+                        // does not take selecting a cell away.
+                        if let Some(url) = &link {
+                            let response = response
+                                .on_hover_text(format!("{}-click to open {url}", cmd_key()));
+                            if response.clicked() && ui.input(|i| i.modifiers.command) {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                            } else if response.clicked() {
+                                session.grid.cursor = (r, c);
+                            }
+                            if response.double_clicked() {
+                                session.grid.cursor = (r, c);
+                                edit = true;
+                            }
+                            continue;
+                        }
                         if response.clicked() {
                             session.grid.cursor = (r, c);
                         }
@@ -870,6 +905,7 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
     let mut action = None;
 
     let follow = cursor_moved(ui, "tree", session.grid.cursor);
+    let links_clickable = session.links_clickable;
     let rows = session.tree_rows.len();
 
     // Only the rows on screen, as the table and the text view already
@@ -974,15 +1010,31 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
 
                 // A container's summary says there is more inside; a
                 // leaf's is the value itself.
+                let link = (!row.is_container() && links_clickable)
+                    .then(|| vuwr_core::as_link(&row.summary))
+                    .flatten();
                 let colour = if row.is_container() {
                     theme::placeholder()
+                } else if link.is_some() {
+                    theme::accent_text()
                 } else {
                     value_color(row.value)
                 };
                 let value = RichText::new(&row.summary).monospace().color(colour);
-                let value_response = ui.add(egui::Label::new(value).sense(egui::Sense::click()));
+                let mut value_response =
+                    ui.add(egui::Label::new(value).sense(egui::Sense::click()));
+                if let Some(url) = link {
+                    value_response =
+                        value_response.on_hover_text(format!("{}-click to open {url}", cmd_key()));
+                }
                 if value_response.clicked() {
-                    action = Some(TreeAction::Select(i));
+                    // The modifier follows the link; a plain click selects
+                    // the row, as everywhere else.
+                    if let Some(url) = link.filter(|_| ui.input(|i| i.modifiers.command)) {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                    } else {
+                        action = Some(TreeAction::Select(i));
+                    }
                 }
                 if value_response.double_clicked() {
                     action = Some(TreeAction::Edit(i));

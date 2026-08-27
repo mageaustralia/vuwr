@@ -144,6 +144,9 @@ pub fn keys_for(cmd: Command) -> &'static str {
         Command::Find => "/",
         Command::FindNext => "n",
         Command::FindPrev => "N",
+        // Followable links are a windowed idea: a terminal has its own
+        // way of opening a URL, and OSC 8 is not something to fake.
+        Command::ToggleLinks => ":links",
         Command::Filter => "&",
         Command::Substitute => "%",
         Command::SubstituteOne => ".",

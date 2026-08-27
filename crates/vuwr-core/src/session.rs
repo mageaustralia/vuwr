@@ -259,6 +259,12 @@ pub struct Session {
     /// linted since it last changed.
     lint: Option<Vec<crate::Diagnostic>>,
 
+    /// Whether a value that is a link is offered as one.
+    ///
+    /// On by default: a feed is mostly URLs, and following one is the
+    /// commonest thing anybody wants to do with a `g:link` column. Off for
+    /// anyone who would rather a cell were only ever a cell.
+    pub links_clickable: bool,
     /// Show text view with entity references decoded.
     ///
     /// Off by default: text view is the source, and the source is what it
@@ -324,6 +330,7 @@ impl Session {
             show_detail: false,
             // On by default: escaped markup is unreadable, and every
             // other view already showed it decoded.
+            links_clickable: true,
             decoded_text: true,
             block: None,
             scheme: crate::Scheme::Vuwr,
@@ -961,6 +968,14 @@ impl Session {
                 if self.show_detail && !self.can_inspect() {
                     self.status = "nothing to show here — put the cursor inside a value".into();
                 }
+            }
+            Command::ToggleLinks => {
+                self.links_clickable = !self.links_clickable;
+                self.status = if self.links_clickable {
+                    "links are followable — Cmd-click one".into()
+                } else {
+                    "links are plain text".into()
+                };
             }
             Command::ToggleHints => self.show_hints = !self.show_hints,
         }

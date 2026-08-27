@@ -42,6 +42,12 @@ pub fn set_dark(on: bool) {
     theme::set_dark(on);
 }
 
+/// The colour a link is drawn in. Exposed for the test that asks the
+/// frame whether a URL was offered as one.
+pub fn accent_text() -> egui::Color32 {
+    theme::accent_text()
+}
+
 /// The surface the views are painted on, in the current mode.
 pub fn surface() -> egui::Color32 {
     theme::surface()
@@ -602,9 +608,14 @@ fn edge_left(ui: &egui::Ui) {
 }
 
 /// A field's colour: what the value is, for reading, never for meaning.
-fn field_colour(kind: vuwr_core::FieldKind) -> egui::Color32 {
+///
+/// A URL is drawn as a link only while links are offered as links. With
+/// the setting off it is a value like any other, in every view — the
+/// panel included, which is where this was missed.
+fn field_colour(kind: vuwr_core::FieldKind, links: bool) -> egui::Color32 {
     match kind {
-        vuwr_core::FieldKind::Url => theme::accent_text(),
+        vuwr_core::FieldKind::Url if links => theme::accent_text(),
+        vuwr_core::FieldKind::Url => theme::text_body(),
         vuwr_core::FieldKind::Number => theme::text_body(),
         vuwr_core::FieldKind::Text => theme::text_body(),
     }
@@ -834,6 +845,7 @@ impl VuwrApp {
                 }
             });
             let mut toggle_detail = false;
+            let mut toggle_links = false;
             ui.menu_button("View", |ui| {
                 ui.set_min_width(MENU_WIDTH);
                 // Only the views this document actually has, exactly as
@@ -846,6 +858,7 @@ impl VuwrApp {
                 let available = session.available_views();
                 let can_inspect = session.can_inspect();
                 let showing_detail = session.show_detail;
+                let links_clickable = session.links_clickable;
                 for view in VIEW_ORDER.iter().copied().filter(|v| available.contains(v)) {
                     let (label, cmd) = match view {
                         ViewMode::Table => ("Table", Command::ViewTable),
@@ -877,6 +890,16 @@ impl VuwrApp {
                         toggle_detail = true;
                     }
                 });
+                if ui
+                    .add(egui::Button::selectable(links_clickable, "Clickable links"))
+                    .on_hover_text(format!(
+                        "{}-click a value that is a URL to open it",
+                        table::cmd_key()
+                    ))
+                    .clicked()
+                {
+                    toggle_links = true;
+                }
                 ui.separator();
                 ui.label(egui::RichText::new("Appearance").weak());
                 for (label, dark) in [("Light", false), ("Dark", true)] {
@@ -898,6 +921,9 @@ impl VuwrApp {
             });
             if toggle_detail {
                 self.run(Command::ToggleDetail, ctx);
+            }
+            if toggle_links {
+                self.run(Command::ToggleLinks, ctx);
             }
             ui.menu_button("Help", |ui| {
                 ui.set_min_width(MENU_WIDTH);
@@ -1280,7 +1306,7 @@ impl VuwrApp {
                         theme::text_muted(),
                     );
 
-                    let colour = field_colour(field.kind);
+                    let colour = field_colour(field.kind, session.links_clickable);
                     let value = ui.painter().layout_no_wrap(
                         field.value.replace('\n', " "),
                         value_font,
@@ -1294,9 +1320,18 @@ impl VuwrApp {
                     );
 
                     // A single click goes there — in the tree as well as
-                    // the table, where the record's fields are nodes.
+                    // the table, where the record's fields are nodes. The
+                    // modifier follows a link instead, the same gesture
+                    // as in the table.
+                    let link = (field.kind == vuwr_core::FieldKind::Url && session.links_clickable)
+                        .then(|| vuwr_core::as_link(&field.value))
+                        .flatten();
                     if response.clicked() {
-                        go_to = Some(i);
+                        if let Some(url) = link.filter(|_| ui.input(|i| i.modifiers.command)) {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                        } else {
+                            go_to = Some(i);
+                        }
                     }
                     // Double-click edits, as it does in the table, the
                     // tree and the text: one gesture, one meaning.
