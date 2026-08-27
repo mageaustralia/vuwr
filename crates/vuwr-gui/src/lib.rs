@@ -688,7 +688,15 @@ impl eframe::App for VuwrApp {
                     self.run(cmd, ctx);
                 }
             });
-        if self.session.as_ref().is_some_and(|s| s.show_detail) {
+        // Only where there is something in it. An empty panel that says
+        // so is worse than no panel — and the button that would close it
+        // is disabled in exactly that case, so it could not be dismissed
+        // at all.
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.show_detail && s.can_inspect())
+        {
             egui::SidePanel::right("inspector")
                 .resizable(true)
                 .default_width(INSPECTOR_WIDTH)
@@ -1174,9 +1182,6 @@ impl VuwrApp {
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        // An open panel with nothing in it is worse than a closed one: it
-        // looks like the answer. This says so instead.
-        let empty = !session.can_inspect();
         let inspector = session.inspector();
         let table = session.view_mode() == ViewMode::Table;
         let cursor_col = session.grid.cursor.1;
@@ -1231,20 +1236,6 @@ impl VuwrApp {
             .max_height(height)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                if empty {
-                    ui.add_space(FIELD_PAD);
-                    ui.horizontal(|ui| {
-                        ui.add_space(FIELD_PAD);
-                        ui.label(
-                            egui::RichText::new(
-                                "Nothing to show here.\nPut the cursor inside a value.",
-                            )
-                            .text_style(theme::meta())
-                            .color(theme::text_dim()),
-                        );
-                    });
-                    return;
-                }
                 for (i, field) in inspector.fields.iter().enumerate() {
                     let selected = table && i == cursor_col;
                     // Painted into an exact row: the key column has to

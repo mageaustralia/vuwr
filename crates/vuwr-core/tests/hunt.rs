@@ -398,3 +398,38 @@ fn a_pretty_printed_file_is_left_alone() {
         "shifted a file that was already laid out"
     );
 }
+
+/// A line too wide for the pane opens in the editor built for it.
+///
+/// The source view only offered the window for a value spanning several
+/// lines. A feed writes each description on one line, so the common case
+/// was an inline field five thousand characters long with the caret
+/// somewhere in it and both ends off the screen.
+#[test]
+fn a_long_line_edits_in_the_window() {
+    let long = "x".repeat(4000);
+    let xml = format!(
+        "<r>\n<item>\n  <sku>A1</sku>\n  <description><![CDATA[{long}]]></description>\n\
+         </item>\n</r>\n"
+    );
+    let mut s = Session::new(Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap());
+    s.execute(Command::ViewText);
+    s.set_viewport_cols(120);
+
+    s.grid.cursor = (3, 0);
+    assert!(s.value_needs_more_room(), "the long line edits in place");
+
+    // A short one still edits where it is.
+    s.grid.cursor = (2, 0);
+    assert!(!s.value_needs_more_room());
+
+    // And the structure does not: every element is a block, the root
+    // included, so this used to offer the whole file to the editor.
+    for line in [0, 1, 4, 5] {
+        s.grid.cursor = (line, 0);
+        assert!(
+            !s.value_needs_more_room(),
+            "line {line} offered the editor for markup"
+        );
+    }
+}

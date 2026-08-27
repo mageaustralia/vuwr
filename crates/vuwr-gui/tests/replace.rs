@@ -183,3 +183,32 @@ fn the_filter_warning_is_drawn_beside_both_prompts() {
         source(&app)
     );
 }
+
+/// The panel is never open with nothing in it.
+///
+/// It used to render an empty state saying "nothing to show here" — while
+/// the button that would close it was disabled for the same reason. The
+/// panel could not be dismissed at all.
+#[test]
+fn the_panel_is_not_shown_when_there_is_nothing_in_it() {
+    let ctx = ctx();
+    // A feed whose values each sit on one line: in the source view there
+    // is no value the cursor is inside, so nothing to show.
+    let xml = "<r>\n<item>\n<sku>A1</sku>\n</item>\n</r>\n";
+    let mut app = VuwrApp::new(None, doc(xml));
+    app.run(Command::ViewText, &ctx);
+
+    assert!(
+        !app.session().can_inspect(),
+        "the fixture has a value after all"
+    );
+    let shown = painted(&mut app, &ctx);
+    assert!(
+        !shown.iter().any(|t| t.contains("Nothing to show")),
+        "an empty panel was drawn: {shown:?}"
+    );
+    assert!(
+        !shown.iter().any(|t| t.starts_with("Line ")),
+        "the panel's header was drawn with nothing under it: {shown:?}"
+    );
+}

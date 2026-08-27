@@ -1057,7 +1057,22 @@ impl Session {
             // A line that is only part of a value is edited as that whole
             // value: editing one line of a description in isolation is
             // rarely what anybody means.
-            return self.block_span_read().is_some();
+            // A real value, not merely a block: every element is a block,
+            // the root included, so this used to answer yes on `<rss>`
+            // and offer the whole file to the editor.
+            if self.text_value_field().is_some() {
+                return true;
+            }
+            // And a line too wide for the pane is no more editable in
+            // place than one that spans several. A feed writes a whole
+            // description on one line, so the common case was an inline
+            // field five thousand characters long with the caret
+            // somewhere in it and both ends off the screen.
+            let width = self
+                .text_lines
+                .get(self.grid.cursor.0)
+                .map_or(0, |line| line.chars().count());
+            return width > self.viewport_cols.max(Self::INLINE_LIMIT);
         }
         let Some(text) = self.large_edit_text() else {
             return false;
