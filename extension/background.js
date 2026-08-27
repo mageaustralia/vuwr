@@ -55,9 +55,15 @@ chrome.runtime.onStartup.addListener(async () => {
   await setEnabled(enabled !== false);
 });
 
-// Clicking the toolbar button toggles it, for when you want the raw file
-// — a redirect you cannot turn off is a trap.
-chrome.action.onClicked.addListener(async () => {
-  const { enabled } = await chrome.storage.local.get("enabled");
-  await setEnabled(enabled === false);
+// The popup asks for the toggle, since the button now opens the popup —
+// which is where "it isn't working" gets an answer rather than a shrug.
+chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+  if (message?.toggle) {
+    chrome.storage.local.get("enabled").then(({ enabled }) =>
+      setEnabled(enabled === false).then(() => respond(true))
+    );
+    // Kept open for the async reply.
+    return true;
+  }
+  return false;
 });

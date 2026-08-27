@@ -14,7 +14,8 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "vuwr: turn the redirect on or off"
+    "default_title": "vuwr",
+    "default_popup": "popup.html"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

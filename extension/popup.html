@@ -1,0 +1,28 @@
+<meta charset="utf-8" />
+<title>vuwr</title>
+<style>
+  body {
+    width: 320px; margin: 0; padding: 14px;
+    font: 13px/1.5 ui-sans-serif, system-ui, sans-serif;
+    color: #383D44; background: #FDFDFE;
+  }
+  h1 { font-size: 13px; margin: 0 0 10px; }
+  .row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
+  .row span:last-child { font-family: ui-monospace, monospace; }
+  .ok { color: #2F6B3A; }
+  .bad { color: #8A5A1E; }
+  button { width: 100%; margin-top: 10px; padding: 6px; font: inherit; }
+  p { margin: 10px 0 0; color: #6B7280; }
+  code { font-family: ui-monospace, monospace; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #E6E8EB; background: #13161A; }
+    p { color: #ABB1BA; }
+    .ok { color: #A8CC8C; }
+    .bad { color: #E0B341; }
+  }
+</style>
+<h1>vuwr</h1>
+<div id="state">checking…</div>
+<button id="toggle">…</button>
+<p id="advice"></p>
+<script src="popup.js"></script>

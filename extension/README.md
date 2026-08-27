@@ -26,11 +26,24 @@ dropped on it.
 Then in Chrome: **chrome://extensions** → turn on **Developer mode** →
 **Load unpacked** → choose the `extension/` directory.
 
+## When it does nothing
+
+Click the toolbar button. The popup says which of the three things is
+wrong, because from a web page all three look the same — nothing happens:
+
+- **site access withheld.** Chrome can hold back host permissions even
+  when the manifest asks for them. On the extension's card, set **Site
+  access** to **On all sites**.
+- **viewer bundle not built.** `./extension/build.sh`, then reload the
+  extension.
+- **redirect off.** Turn it on from the same popup.
+
 ## Using it
 
 Navigate to any `.csv`, `.tsv`, `.json` or `.xml` URL and it opens in
-vuwr. The toolbar button turns the redirect off and on — the badge reads
-`off` when it is off — for when you want the file itself. Any page that
+vuwr. The toolbar button opens a popup that turns the redirect off and on
+— the badge reads `off` when it is off — for when you want the file
+itself. Any page that
 fails to load offers a link to the original rather than leaving you with
 an empty tab.
 

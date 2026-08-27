@@ -21,7 +21,13 @@ function nameOf(url) {
 }
 
 async function main() {
-  const target = new URL(location.href).searchParams.get("url");
+  // The raw tail rather than `searchParams`, because the address is
+  // spliced in by the redirect rule and cannot be encoded there: a feed
+  // URL carrying `?utm_source=x&utm_medium=y` would otherwise arrive with
+  // its own query read as ours and everything after the first `&` lost.
+  const marker = "?url=";
+  const at = location.href.indexOf(marker);
+  const target = at === -1 ? null : location.href.slice(at + marker.length);
 
   // Both halves stamped with the build id, as on the hosted page: a
   // rebuild that paired a fresh module with a cached loader fails in a
