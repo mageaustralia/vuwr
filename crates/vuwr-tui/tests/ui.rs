@@ -1745,3 +1745,117 @@ mod replace {
         );
     }
 }
+
+/// Driving the terminal the way a reader does: keys in, screen out.
+mod driving {
+    use super::*;
+
+    const STOCK: &str = "sku,city\nA1,Sydney\nA2,Perth\nA3,Hobart\n";
+
+    fn typed(a: &mut App, text: &str) {
+        for c in text.chars() {
+            a.handle_key(key(KeyCode::Char(c)));
+        }
+    }
+    fn source(a: &App) -> String {
+        String::from_utf8(a.session.doc.serialize()).unwrap()
+    }
+
+    /// Arrows and vim keys reach the same cells, and stop at the edges.
+    #[test]
+    fn arrows_and_letters_move_the_same_way() {
+        for keys in [
+            [KeyCode::Down, KeyCode::Right],
+            [KeyCode::Char('j'), KeyCode::Char('l')],
+        ] {
+            let mut a = app(STOCK);
+            a.handle_key(key(keys[0]));
+            a.handle_key(key(keys[1]));
+            assert_eq!(a.session.grid.cursor, (1, 1), "{keys:?}");
+        }
+
+        // And they stop rather than wrapping or panicking.
+        let mut a = app(STOCK);
+        for _ in 0..30 {
+            a.handle_key(key(KeyCode::Up));
+            a.handle_key(key(KeyCode::Left));
+        }
+        assert_eq!(a.session.grid.cursor, (0, 0));
+    }
+
+    /// A whole edit, from the keyboard: open, type, commit.
+    #[test]
+    fn a_cell_is_edited_from_the_keyboard() {
+        let mut a = app(STOCK);
+        a.handle_key(key(KeyCode::Down));
+        a.handle_key(key(KeyCode::Right));
+
+        a.handle_key(key(KeyCode::Char('c'))); // replace the cell
+        typed(&mut a, "Darwin");
+        a.handle_key(key(KeyCode::Enter));
+        assert!(source(&a).contains("A1,Darwin"), "{}", source(&a));
+
+        // Undone from the keyboard too.
+        a.handle_key(key(KeyCode::Char('u')));
+        assert_eq!(source(&a), STOCK, "u did not undo");
+    }
+
+    /// Escape puts a half-typed edit back.
+    #[test]
+    fn escape_abandons_an_edit_in_the_terminal() {
+        let mut a = app(STOCK);
+        a.handle_key(key(KeyCode::Down));
+        a.handle_key(key(KeyCode::Char('c')));
+        typed(&mut a, "nonsense");
+        a.handle_key(key(KeyCode::Esc));
+        assert_eq!(source(&a), STOCK);
+        // And the screen is back to the table rather than a stuck field.
+        let screen = render(&mut a, 40, 8);
+        assert!(!screen.contains("nonsense"), "{screen}");
+    }
+
+    /// Searching from the keyboard moves the cursor to the match.
+    #[test]
+    fn search_moves_the_cursor_in_the_terminal() {
+        let mut a = app(STOCK);
+        a.handle_key(key(KeyCode::Char('/')));
+        typed(&mut a, "Hobart");
+        a.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            a.session
+                .table_cell(a.session.grid.cursor.0, a.session.grid.cursor.1),
+            Some("Hobart".to_string()),
+            "cursor at {:?}",
+            a.session.grid.cursor
+        );
+    }
+
+    /// The views are reachable by their numbers, and the screen changes.
+    #[test]
+    fn the_number_keys_change_view() {
+        let doc =
+            Document::parse(b"<r>\n<item><sku>A1</sku></item>\n</r>\n", FormatHint::Xml).unwrap();
+        let mut a = App::new(PathBuf::from("t.xml"), doc);
+        for (k, expected) in [
+            ('1', ViewMode::Table),
+            ('3', ViewMode::Text),
+            ('2', ViewMode::Tree),
+        ] {
+            a.handle_key(key(KeyCode::Char(k)));
+            assert_eq!(a.session.view_mode(), expected, "key {k}");
+            // Each one draws without panicking, which is the other half.
+            let _ = render(&mut a, 60, 10);
+        }
+    }
+
+    /// Marks toggle and print, as the README says.
+    #[test]
+    fn marks_toggle_from_the_keyboard() {
+        let mut a = app(STOCK);
+        a.handle_key(key(KeyCode::Down));
+        a.handle_key(key(KeyCode::Char('m')));
+        assert_eq!(a.session.grid.marks.len(), 1, "m did not mark");
+        a.handle_key(key(KeyCode::Char('m')));
+        assert!(a.session.grid.marks.is_empty(), "m did not unmark");
+    }
+}

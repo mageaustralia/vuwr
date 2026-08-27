@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use eframe::egui;
 use vuwr_core::{Command, Document, Effect, NewNode, Session, ViewMode};
 
-pub use input::{command_for, command_for_char};
+pub use input::{command_for, command_for_char, keys_for};
 pub use table::{NodeAction, TreeAction, grip_id};
 
 /// Adopt the platform's fonts, returning the faces used. Exposed so tests
