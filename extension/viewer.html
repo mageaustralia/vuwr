@@ -1,0 +1,20 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>vuwr</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  canvas { width: 100%; height: 100%; display: block; }
+  #notice {
+    position: fixed; inset: 0; display: grid; place-content: center;
+    gap: 10px; text-align: center;
+    font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; color: #383D44;
+  }
+  #notice a { color: #1C5FA8; }
+  @media (prefers-color-scheme: dark) {
+    #notice { color: #E6E8EB; background: #13161A; }
+    #notice a { color: #6EA2E0; }
+  }
+</style>
+<canvas id="vuwr"></canvas>
+<div id="notice">loading vuwr…</div>
+<script type="module" src="viewer.js"></script>

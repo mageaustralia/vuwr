@@ -1,3 +1,4 @@
 /target
 /.tools
 web/dist/
+extension/dist/

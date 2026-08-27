@@ -130,6 +130,21 @@ vuwr examples/products.xml
 vuwr --gui examples/stock.csv
 ```
 
+## In Chrome
+
+`extension/` is the same wasm as a Chrome extension: navigate to a `.csv`,
+`.tsv`, `.json` or `.xml` URL and it opens in vuwr instead of the
+browser's own viewer. `./extension/build.sh`, then chrome://extensions →
+Developer mode → Load unpacked.
+
+An extension rather than a bookmarklet because the file has to be read
+from a page that is not its own origin, and almost nothing on the web
+sends the CORS headers that would allow it. An extension page carries host
+permissions, so it can — and it sends your cookies, so a feed behind a
+login works like any other. vuwr still fetches nothing: it is handed the
+bytes. The toolbar button turns the redirect off when you want the file
+itself.
+
 ## In the browser
 
 See [`web/README.md`](web/README.md). The same core and GUI compiled to
