@@ -1307,11 +1307,27 @@ impl VuwrApp {
                     );
 
                     let colour = field_colour(field.kind, session.links_clickable);
-                    let value = ui.painter().layout_no_wrap(
-                        field.value.replace('\n', " "),
-                        value_font,
-                        colour,
-                    );
+                    let value = {
+                        let mut job = egui::text::LayoutJob::single_section(
+                            field.value.replace('\n', " "),
+                            egui::TextFormat {
+                                font_id: value_font,
+                                color: colour,
+                                // Underlined where it is a link, so it
+                                // looks like the thing it is.
+                                underline: if field.kind == vuwr_core::FieldKind::Url
+                                    && session.links_clickable
+                                {
+                                    egui::Stroke::new(1.0_f32, colour)
+                                } else {
+                                    egui::Stroke::NONE
+                                },
+                                ..Default::default()
+                            },
+                        );
+                        job.wrap.max_width = f32::INFINITY;
+                        ui.painter().layout_job(job)
+                    };
                     let y = row.center().y - value.size().y / 2.0;
                     ui.painter().with_clip_rect(clip).galley(
                         egui::pos2(row.left() + FIELD_PAD + KEY_COLUMN, y),
@@ -1326,8 +1342,16 @@ impl VuwrApp {
                     let link = (field.kind == vuwr_core::FieldKind::Url && session.links_clickable)
                         .then(|| vuwr_core::as_link(&field.value))
                         .flatten();
+                    let response = match link {
+                        Some(url) => response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(url),
+                        None => response,
+                    };
                     if response.clicked() {
-                        if let Some(url) = link.filter(|_| ui.input(|i| i.modifiers.command)) {
+                        // A plain click, because this panel is for reading
+                        // a record rather than moving about in one.
+                        if let Some(url) = link {
                             ui.ctx().open_url(egui::OpenUrl::new_tab(url));
                         } else {
                             go_to = Some(i);

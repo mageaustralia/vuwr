@@ -25,11 +25,12 @@ file meant a text editor plus `jq` or `xmllint`.
   Step through the matches or take them all at once, as a single undo. A
   filter narrows what is replaced — usually the point, and said plainly
   beside the prompt while you type, not discovered afterwards.
-- **Clickable links.** A value that is a whole URL is drawn as one and
-  opens on Cmd-click (Ctrl elsewhere) — a plain click still selects the
-  cell, so nothing is taken away. A value that merely mentions an address
-  is not a link: following a click on a description would be a surprise.
-  View → Clickable links turns it off.
+- **Clickable links.** A value that is a whole URL is drawn underlined and
+  opens in a new tab: a plain click in the tree and in the inspector,
+  Cmd-click in the table (Ctrl elsewhere), where a plain click has to go
+  on selecting the cell. A value that merely mentions an address is not a
+  link — following a click on a description would be a surprise. View →
+  Clickable links turns it off.
 - An **inspector** beside the table: the whole record read downwards, for
   when a row is twenty-three columns wide and the window shows five
 - Light and dark in the window, under View → Appearance

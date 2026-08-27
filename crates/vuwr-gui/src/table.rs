@@ -1020,17 +1020,25 @@ pub fn tree(session: &mut Session, ui: &mut egui::Ui) -> Option<TreeAction> {
                 } else {
                     value_color(row.value)
                 };
-                let value = RichText::new(&row.summary).monospace().color(colour);
+                // Underlined, because a link that does not look like one
+                // is a link nobody clicks — which is what happened when it
+                // was colour alone behind a modifier nobody could see.
+                let mut value = RichText::new(&row.summary).monospace().color(colour);
+                if link.is_some() {
+                    value = value.underline();
+                }
                 let mut value_response =
                     ui.add(egui::Label::new(value).sense(egui::Sense::click()));
                 if let Some(url) = link {
-                    value_response =
-                        value_response.on_hover_text(format!("{}-click to open {url}", cmd_key()));
+                    value_response = value_response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(url);
                 }
                 if value_response.clicked() {
-                    // The modifier follows the link; a plain click selects
-                    // the row, as everywhere else.
-                    if let Some(url) = link.filter(|_| ui.input(|i| i.modifiers.command)) {
+                    // A plain click opens it. In the tree a row is
+                    // selected by its key or its triangle, so the value
+                    // can be a link and nothing else.
+                    if let Some(url) = link {
                         ui.ctx().open_url(egui::OpenUrl::new_tab(url));
                     } else {
                         action = Some(TreeAction::Select(i));
