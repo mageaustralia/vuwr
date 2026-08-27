@@ -43,8 +43,11 @@ file meant a text editor plus `jq` or `xmllint`.
 - Validates: `vuwr --check` replaces `jq empty` and `xmllint --noout`, and
   covers CSV too. It also reports what a parser lets through — a trailing
   comma (which vuwr itself reads, so the file can be opened and fixed),
-  duplicate JSON keys, and a value that disagrees with its column — a
-  price column of numbers with one `129,00` in it. It reports those and
+  duplicate JSON keys, a value that disagrees with its column — a price
+  column of numbers with one `129,00` in it — and an entity escaped twice
+  over, where `&amp;amp;` in the source means the value holds the five
+  characters `&amp;` and a URL written that way reaches its consumer with
+  its query string broken. It reports those and
   never rewrites them: the fix is a guess about what somebody meant.
   `--strict` makes warnings fail too.
 - A **lint** button in the window, and `:lint` in the terminal. Asked for

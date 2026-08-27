@@ -33,7 +33,7 @@ mod xml;
 
 pub use command::Command;
 pub use csv::{Cell, CsvDoc, LineEnding, Row};
-pub use diagnostics::{Diagnostic, Place, Severity, scan_columns, scan_json};
+pub use diagnostics::{Diagnostic, Place, Severity, scan_columns, scan_double_encoding, scan_json};
 pub use entities::{decode, encode};
 pub use json::{JsonDoc, Layout};
 pub use links::{as_link, links};
@@ -483,6 +483,11 @@ impl Document {
         // rows is worth knowing about.
         if let Some(sheet) = self.sheet() {
             found.extend(diagnostics::scan_columns(sheet, &self.serialize()));
+        }
+        // And a value escaped twice, which a viewer that decodes once
+        // shows as markup rather than as the mistake it is.
+        if self.is_xml() {
+            found.extend(diagnostics::scan_double_encoding(&self.serialize()));
         }
         found
     }

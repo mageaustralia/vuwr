@@ -231,6 +231,65 @@ pub fn scan_columns(sheet: &dyn crate::Sheet, source: &[u8]) -> Vec<Diagnostic> 
     out
 }
 
+/// Entities escaped twice over.
+///
+/// `&amp;amp;` in the source is the five characters `&amp;` in the value,
+/// so a URL written that way arrives at whoever consumes the feed with
+/// its query string broken — `?a=1&amp;b=2` is one parameter, not two.
+/// It is the signature of a value that was escaped, stored, and escaped
+/// again, and it is invisible in a viewer that decodes once: what you see
+/// is `&amp;`, which looks like markup rather than a mistake.
+///
+/// Reported, never fixed. Which of the two encodings was meant is a guess
+/// about what somebody intended, and rewriting on a guess is the thing
+/// this tool exists not to do.
+pub fn scan_double_encoding(source: &[u8]) -> Vec<Diagnostic> {
+    let Ok(text) = std::str::from_utf8(source) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut counts: Vec<(&str, usize, usize)> = Vec::new();
+    for pattern in [
+        "&amp;amp;",
+        "&amp;lt;",
+        "&amp;gt;",
+        "&amp;quot;",
+        "&amp;apos;",
+        "&amp;#",
+    ] {
+        let mut at = 0usize;
+        let mut n = 0usize;
+        let mut first = 0usize;
+        while let Some(offset) = text[at..].find(pattern) {
+            let found = at + offset;
+            if n == 0 {
+                first = found;
+            }
+            n += 1;
+            at = found + pattern.len();
+        }
+        if n > 0 {
+            counts.push((pattern, n, first));
+        }
+    }
+    for (pattern, n, first) in counts {
+        let (line, column) = line_col(source, first);
+        let decoded = pattern.strip_prefix("&amp;").unwrap_or(pattern);
+        out.push(Diagnostic {
+            severity: Severity::Warning,
+            message: format!(
+                "{pattern} appears {n} time{} — escaped twice, so the value holds the \
+                 characters `&{decoded}` rather than the character it stands for",
+                if n == 1 { "" } else { "s" }
+            ),
+            offset: first,
+            at: Some((line, column)),
+            place: Place::Text(first),
+        });
+    }
+    out
+}
+
 /// Where a value sits in the source, when that can be said without
 /// guessing.
 ///

@@ -433,3 +433,57 @@ fn a_long_line_edits_in_the_window() {
         );
     }
 }
+
+/// A value escaped twice is reported, because it cannot be seen.
+///
+/// `&amp;amp;` in the source is the five characters `&amp;` in the value.
+/// A viewer that decodes once shows `&amp;`, which reads as markup rather
+/// than as a mistake — and a URL written that way reaches whoever
+/// consumes the feed with its query string broken.
+#[test]
+fn double_encoding_is_reported() {
+    let xml = "<r>\n<item>\n\
+               <link>https://example.com/a?x=1&amp;amp;y=2</link>\n\
+               <name>Kettle &amp;amp; Cup</name>\n\
+               </item>\n</r>\n";
+    let doc = Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap();
+    let found = doc.diagnostics();
+    let reported = found
+        .iter()
+        .find(|d| d.message.contains("&amp;amp;"))
+        .unwrap_or_else(|| panic!("not reported: {found:?}"));
+
+    assert!(reported.message.contains("2 times"), "{}", reported.message);
+    // And it points at the first one rather than at nothing.
+    let (line, _) = reported.at.expect("a position");
+    let text = String::from_utf8(doc.serialize()).unwrap();
+    assert!(
+        text.lines()
+            .nth(line - 1)
+            .is_some_and(|l| l.contains("&amp;amp;")),
+        "line {line} does not hold it"
+    );
+}
+
+/// A value escaped once is not.
+#[test]
+fn ordinary_escaping_is_left_alone() {
+    let xml = "<r>\n<item><link>https://example.com/a?x=1&amp;y=2</link></item>\n</r>\n";
+    let doc = Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap();
+    assert!(
+        !doc.diagnostics()
+            .iter()
+            .any(|d| d.message.contains("twice")),
+        "an ordinary entity was called double-encoded"
+    );
+    // And it reads as the character it stands for.
+    let mut s = Session::new(Document::parse(xml.as_bytes(), FormatHint::Xml).unwrap());
+    s.execute(Command::ViewTree);
+    s.execute(Command::ExpandAll);
+    let link = s
+        .tree_rows
+        .iter()
+        .find(|r| r.label == "link")
+        .expect("the link row");
+    assert_eq!(link.summary, "https://example.com/a?x=1&y=2");
+}
